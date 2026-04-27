@@ -1,0 +1,9 @@
+{
+  "name": "coffee-pos",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "echo \"Run dev servers:\\n1) npm run dev --workspace apps/api\\n2) npm run dev --workspace apps/web\"",
+    "build": "npm run build --workspace apps/api && npm run build --workspace apps/web"
+  }
+}

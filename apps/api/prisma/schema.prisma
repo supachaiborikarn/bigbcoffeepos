@@ -1,0 +1,255 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Branch {
+  id         Int      @id @default(autoincrement())
+  name       String
+  location   String   @default("")
+  branchType String   @default("coffee") @map("branch_type")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  orders          Order[]
+  shifts          Shift[]
+  ingredientStocks IngredientStock[]
+  stockMovements  StockMovement[]
+  purchases       Purchase[]
+
+  @@map("branches")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  pin       String
+  role      String   @default("cashier")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  orders Order[]
+  shifts Shift[]
+
+  @@map("users")
+}
+
+model MenuItem {
+  id         Int      @id @default(autoincrement())
+  sku        String?
+  barcode    String?
+  name       String
+  category   String   @default("")
+  basePrice  Float    @default(0) @map("base_price")
+  cost       Float?
+  branchType String   @default("coffee") @map("branch_type")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  orderItems OrderItem[]
+  recipes    Recipe[]
+
+  @@map("menu_items")
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String   @unique
+  points    Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  orders Order[]
+
+  @@map("customers")
+}
+
+model Ingredient {
+  id          Int      @id @default(autoincrement())
+  name        String
+  unit        String   @default("ชิ้น")
+  costPerUnit Float    @default(0) @map("cost_per_unit")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  stocks         IngredientStock[]
+  recipes        Recipe[]
+  stockMovements StockMovement[]
+
+  @@map("ingredients")
+}
+
+model IngredientStock {
+  id           Int @id @default(autoincrement())
+  branchId     Int @map("branch_id")
+  ingredientId Int @map("ingredient_id")
+  stockQty     Float @default(0) @map("stock_qty")
+  reorderLevel Float @default(0) @map("reorder_level")
+
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([branchId, ingredientId])
+  @@map("ingredient_stocks")
+}
+
+model Recipe {
+  id           Int @id @default(autoincrement())
+  menuItemId   Int @map("menu_item_id")
+  ingredientId Int @map("ingredient_id")
+  qty          Float @default(1)
+
+  menuItem   MenuItem   @relation(fields: [menuItemId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([menuItemId, ingredientId])
+  @@map("recipes")
+}
+
+model StockMovement {
+  id           Int      @id @default(autoincrement())
+  branchId     Int      @map("branch_id")
+  ingredientId Int      @map("ingredient_id")
+  qty          Float
+  reason       String   @default("ADJUSTMENT")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@map("stock_movements")
+}
+
+model Order {
+  id                Int      @id @default(autoincrement())
+  branchId          Int      @map("branch_id")
+  customerId        Int?     @map("customer_id")
+  userId            Int?     @map("user_id")
+  shiftId           Int?     @map("shift_id")
+  status            String   @default("PAID")
+  subtotal          Float    @default(0)
+  discountType      String?  @map("discount_type")
+  discountValue     Float    @default(0) @map("discount_value")
+  discountAmount    Float    @default(0) @map("discount_amount")
+  loyaltyPointsUsed Int      @default(0) @map("loyalty_points_used")
+  loyaltyPointsEarned Int    @default(0) @map("loyalty_points_earned")
+  tax               Float    @default(0)
+  total             Float    @default(0)
+  paymentMethod     String   @default("CASH") @map("payment_method")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  branch   Branch    @relation(fields: [branchId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+  shift    Shift?    @relation(fields: [shiftId], references: [id])
+  items    OrderItem[]
+
+  @@index([branchId])
+  @@index([shiftId])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id         Int    @id @default(autoincrement())
+  orderId    Int    @map("order_id")
+  menuItemId Int    @map("menu_item_id")
+  name       String
+  qty        Float  @default(1)
+  basePrice  Float  @default(0) @map("base_price")
+  modifiers  String @default("[]")
+  lineTotal  Float  @default(0) @map("line_total")
+  note       String?
+
+  order    Order    @relation(fields: [orderId], references: [id])
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Shift {
+  id          Int       @id @default(autoincrement())
+  branchId    Int       @map("branch_id")
+  userId      Int?      @map("user_id")
+  openingCash Float     @default(0) @map("opening_cash")
+  closingCash Float?    @map("closing_cash")
+  expectedCash Float?   @map("expected_cash")
+  difference  Float?
+  totalSales  Float     @default(0) @map("total_sales")
+  totalOrders Int       @default(0) @map("total_orders")
+  cashSales   Float     @default(0) @map("cash_sales")
+  qrSales     Float     @default(0) @map("qr_sales")
+  cardSales   Float     @default(0) @map("card_sales")
+  status      String    @default("OPEN")
+  openedAt    DateTime  @default(now()) @map("opened_at")
+  closedAt    DateTime? @map("closed_at")
+
+  branch Branch  @relation(fields: [branchId], references: [id])
+  user   User?   @relation(fields: [userId], references: [id])
+  orders Order[]
+
+  @@index([branchId])
+  @@index([status])
+  @@map("shifts")
+}
+
+model IntegrationOutbox {
+  id         Int      @id @default(autoincrement())
+  provider   String
+  eventType  String   @map("event_type")
+  entityType String   @map("entity_type")
+  entityId   Int?     @map("entity_id")
+  status     String   @default("PENDING")
+  attempts   Int      @default(0)
+  payload    String   @default("{}")
+  lastError  String?  @map("last_error")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([provider])
+  @@index([status])
+  @@index([createdAt])
+  @@map("integration_outbox")
+}
+
+model Purchase {
+  id        Int      @id @default(autoincrement())
+  branchId  Int      @map("branch_id")
+  supplier  String   @default("")
+  note      String   @default("")
+  total     Float    @default(0)
+  status    String   @default("RECEIVED")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  branch Branch         @relation(fields: [branchId], references: [id])
+  items  PurchaseItem[]
+
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id           Int    @id @default(autoincrement())
+  purchaseId   Int    @map("purchase_id")
+  ingredientId Int?   @map("ingredient_id")
+  description  String @default("")
+  qty          Float  @default(0)
+  unitCost     Float  @default(0) @map("unit_cost")
+  lineTotal    Float  @default(0) @map("line_total")
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id])
+
+  @@map("purchase_items")
+}
+
+model Migration {
+  id        Int      @id @default(autoincrement())
+  filename  String   @unique
+  appliedAt DateTime @default(now()) @map("applied_at")
+
+  @@map("_migrations")
+}

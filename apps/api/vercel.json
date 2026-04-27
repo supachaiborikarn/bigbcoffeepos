@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "buildCommand": "cd ../.. && npm install && cd apps/api && npx prisma generate && npm run build",
+  "installCommand": "npm install",
+  "framework": null,
+  "builds": [
+    {
+      "src": "src/index.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/src/index.ts"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+data/
+downloads/
+debug_screenshots/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+awesome-design-md
+course_videos
+secondbrain/
+transcripts_test/

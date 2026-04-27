@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "backup": "tsx src/scripts/backup-now.ts",
     "phase13:check": "tsx src/scripts/phase13-infra-check.ts"

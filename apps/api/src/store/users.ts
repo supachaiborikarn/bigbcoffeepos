@@ -5,10 +5,10 @@ export type UserRole = "admin" | "manager" | "cashier";
 export async function authenticatePin(pin: string) {
   const user = await prisma.user.findFirst({
     where: { pin, active: true },
-    select: { id: true, name: true, role: true }
+    select: { id: true, name: true, role: true, branchId: true }
   });
   if (!user) return null;
-  return { id: user.id, name: user.name, role: user.role as UserRole };
+  return { id: user.id, name: user.name, role: user.role as UserRole, branchId: user.branchId };
 }
 
 export async function getUsers() {

@@ -1,13 +1,25 @@
-import { useState } from "react";
-import { Navigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useBranch } from "../contexts/BranchContext";
 
 export default function LoginPage() {
   const { user, login, error } = useAuth();
+  const { setBranchId } = useBranch();
+  const navigate = useNavigate();
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
 
-  if (user) return <Navigate to="/branch" replace />;
+  useEffect(() => {
+    if (user) {
+      if (user.branchId) {
+        setBranchId(user.branchId);
+        navigate("/pos", { replace: true });
+      } else {
+        navigate("/branch", { replace: true });
+      }
+    }
+  }, [user, navigate, setBranchId]);
 
   const handleSubmit = async () => {
     if (pin.length < 4) return;

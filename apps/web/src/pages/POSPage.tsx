@@ -90,9 +90,15 @@ export default function POSPage() {
   }, [selectedMember, subtotal, discountAmount, pointsToUse, setPointsToUse]);
 
   const categories = useMemo(() => {
-    const unique = new Set(menu.map((item) => item.category));
+    const bt = activeBranch?.branchType;
+    const branchMenu = menu.filter((item) => {
+      if (!item.active) return false;
+      if (bt && (item as Record<string, any>).branchType && (item as Record<string, any>).branchType !== bt) return false;
+      return true;
+    });
+    const unique = new Set(branchMenu.map((item) => item.category));
     return ["ทั้งหมด", ...Array.from(unique)];
-  }, [menu]);
+  }, [menu, activeBranch]);
 
   const promotionCategories = useMemo(() => categories.filter((item) => item !== "ทั้งหมด"), [categories]);
 

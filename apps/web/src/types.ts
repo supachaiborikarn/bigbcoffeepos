@@ -33,6 +33,7 @@ export type User = {
   id: number;
   name: string;
   role: "admin" | "manager" | "cashier";
+  branchId?: number | null;
 };
 
 export type Shift = {

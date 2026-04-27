@@ -21,6 +21,7 @@ model Branch {
   ingredientStocks IngredientStock[]
   stockMovements  StockMovement[]
   purchases       Purchase[]
+  users           User[]
 
   @@map("branches")
 }
@@ -30,11 +31,13 @@ model User {
   name      String
   pin       String
   role      String   @default("cashier")
+  branchId  Int?     @map("branch_id")
   active    Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
 
   orders Order[]
   shifts Shift[]
+  branch Branch? @relation(fields: [branchId], references: [id])
 
   @@map("users")
 }

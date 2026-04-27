@@ -10,7 +10,7 @@ export async function createPurchase(branchId: number, supplier: string, note: s
   const totalCost = items.reduce((sum, i) => sum + i.qty * i.unitCost, 0);
 
   // Prisma transaction
-  const purchase = await prisma.$transaction(async (tx) => {
+  const purchase = await prisma.$transaction(async (tx: any) => {
     // 1. Create Purchase and PurchaseItems
     const po = await tx.purchase.create({
       data: {
@@ -85,11 +85,11 @@ export async function getPurchase(id: number) {
   // Let's check: ingredientId is Int?, but no relation to Ingredient. 
   // I will just fetch ingredients to get the name and unit.
   
-  const ingredientIds = po.items.map(i => i.ingredientId).filter(Boolean) as number[];
+  const ingredientIds = po.items.map((i: any) => i.ingredientId).filter(Boolean) as number[];
   const ingredients = await prisma.ingredient.findMany({
     where: { id: { in: ingredientIds } }
   });
-  const ingMap = new Map(ingredients.map(i => [i.id, i]));
+  const ingMap = new Map(ingredients.map((i: any) => [i.id, i]));
 
   return {
     id: po.id,
@@ -100,7 +100,7 @@ export async function getPurchase(id: number) {
     status: po.status,
     receivedAt: po.createdAt.toISOString(),
     createdAt: po.createdAt.toISOString(),
-    items: po.items.map(pi => {
+    items: po.items.map((pi: any) => {
       const ing = pi.ingredientId ? ingMap.get(pi.ingredientId) : null;
       return {
         id: pi.id,
@@ -128,7 +128,7 @@ export async function getPurchases(branchId?: number) {
     take: 50
   });
 
-  return pos.map(po => ({
+  return pos.map((po: any) => ({
     id: po.id,
     branchId: po.branchId,
     branchName: po.branch.name,

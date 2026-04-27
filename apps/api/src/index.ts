@@ -1,8 +1,9 @@
 import cors from "cors";
 import express from "express";
-// SQLite local DB — only loads in local dev mode
+
+// Detect local vs cloud mode
 const isLocalMode = !process.env.DATABASE_URL || process.env.DATABASE_URL.startsWith("file:") || process.env.DATABASE_URL.includes("placeholder");
-if (isLocalMode) await import("./db.js");
+
 import {
   getBranches, getCustomers, addCustomer, updateCustomer,
   getMenu, addMenuItem, updateMenuItem,
@@ -16,12 +17,6 @@ import {
   createPurchase, getPurchases,
   getIntegrationStatus, getIntegrationEvents, retryIntegrationEvent
 } from "./store/index.js";
-import {
-  createDatabaseBackup,
-  getBackupStatus,
-  listDatabaseBackups,
-  startAutoBackup
-} from "./backup.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 5175);
@@ -33,13 +28,14 @@ function parseId(raw: string | number | undefined) { const id = Number(raw); ret
 function isStr(v: unknown): v is string { return typeof v === "string" && v.trim().length > 0; }
 function parseMoney(v: unknown) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null; }
 
-/* ─── Health ─── */
+/* ─── Local Mode Init ─── */
 if (isLocalMode) {
-  const { runMigrations } = await import("./db-migrate.js");
-  runMigrations();
-  startAutoBackup();
+  import("./db.js").then(() => import("./db-migrate.js")).then(({ runMigrations }) => {
+    runMigrations();
+    import("./backup.js").then(({ startAutoBackup }) => startAutoBackup());
+  }).catch(err => console.error("[Local Init Error]", err));
 } else {
-  console.log("[DB] Cloud mode — SQLite migrations & backup skipped");
+  console.log("[DB] Cloud mode — using Neon PostgreSQL");
 }
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
@@ -295,17 +291,23 @@ app.get("/api/reports/staff", async (req, res) => {
   return res.json(await getStaffPerformance({ from, to, branchId }));
 });
 
-/* ─── Backups ─── */
-app.get("/api/backups/status", requireAdmin, (_req, res) => {
+/* ─── Backups (local mode only) ─── */
+app.get("/api/backups/status", requireAdmin, async (_req, res) => {
+  if (!isLocalMode) return res.json({ status: { enabled: false, message: "Backups not available in cloud mode" } });
+  const { getBackupStatus } = await import("./backup.js");
   return res.json({ status: getBackupStatus() });
 });
 
-app.get("/api/backups", requireAdmin, (_req, res) => {
+app.get("/api/backups", requireAdmin, async (_req, res) => {
+  if (!isLocalMode) return res.json({ items: [] });
+  const { listDatabaseBackups } = await import("./backup.js");
   return res.json({ items: listDatabaseBackups() });
 });
 
 app.post("/api/backups", requireAdmin, async (req, res) => {
+  if (!isLocalMode) return res.status(503).json({ error: "Backups not available in cloud mode" });
   try {
+    const { createDatabaseBackup } = await import("./backup.js");
     const reason = isStr(req.body?.reason) ? req.body.reason.trim() : "manual";
     const backup = await createDatabaseBackup(reason);
     return res.status(201).json({ backup });
@@ -361,13 +363,18 @@ app.post("/api/integrations/events/:id/retry", requireAdmin, async (req, res) =>
   return res.json({ event });
 });
 
-import { syncPosposData } from "./scripts/pospos-sync.js";
+// pospos-sync is dynamically imported in local mode only (requires Playwright)
 
 app.post("/api/migration/sync", async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   if (!branchId) return res.status(400).json({ error: "กรุณาเลือกสาขาที่จะนำเข้าข้อมูล" });
   
+  if (!isLocalMode) {
+    return res.status(503).json({ error: "ฟีเจอร์ดึงข้อมูล POSPOS ใช้ได้เฉพาะบนเครื่อง Local เท่านั้น" });
+  }
+  
   try {
+    const { syncPosposData } = await import("./scripts/pospos-sync.js");
     const result = await syncPosposData(branchId);
     return res.status(200).json(result);
   } catch (e) {

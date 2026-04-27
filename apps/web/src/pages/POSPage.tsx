@@ -6,6 +6,8 @@ import { useCart } from "../contexts/CartContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import { CashDrawerModal, printReceipt } from "../components/ReceiptPrinter";
+import ProductGrid from "../components/pos/ProductGrid";
+import CartPanel from "../components/pos/CartPanel";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -255,232 +257,113 @@ export default function POSPage() {
   }, [clearCart, handleCheckoutClick]);
 
   return (
-    <main className="app__grid" style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: "24px", height: "calc(100vh - 100px)" }}>
-      <section className="panel" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-        <div className="panel__header">
-          <div>
-            <h2>เมนูขาย</h2>
-            <p className="muted">{activeBranch?.name}</p>
+    <main style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: "24px", height: "100%", width: "100%" }}>
+      {/* Center Panel: Products */}
+      <section className="panel" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0 }}>
+        <div style={{ padding: "24px 24px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+            <div>
+              <h2 style={{ fontSize: "24px" }}>เมนูขาย</h2>
+              <p className="muted" style={{ fontSize: "14px" }}>{activeBranch?.name}</p>
+            </div>
           </div>
-          <input
-            ref={searchInputRef}
-            className="input"
-            placeholder="ค้นหาสินค้า (F1)"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={handleProductSearchKeyDown}
-          />
-        </div>
-
-        <div className={`scanner-strip scanner-strip--${scanFeedback.tone}`} style={{ padding: "12px", background: scanFeedback.tone === "error" ? "#fef2f2" : scanFeedback.tone === "success" ? "#f0fdf4" : "var(--bg-alt)", borderBottom: "1px solid var(--border)" }}>
-          <div className="scanner-strip__copy">
-            <strong>ช่องยิงบาร์โค้ด: </strong>
-            <span>{scanFeedback.message}</span>
-          </div>
-          <input
-            ref={scannerInputRef}
-            className="input scanner-input"
-            inputMode="none"
-            placeholder="ยิงบาร์โค้ด แล้วกด Enter อัตโนมัติ"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                processBarcodeScan(e.currentTarget.value);
-                e.currentTarget.value = "";
-              }
-            }}
-          />
-        </div>
-
-        <div className="tab-row" style={{ padding: "0 24px", borderBottom: "1px solid var(--border)" }}>
-          {categories.map((item) => (
-            <button key={item} className={`tab ${category === item ? "tab--active" : ""}`} onClick={() => setCategory(item)}>
-              {item}
-            </button>
-          ))}
-        </div>
-
-        <div className="menu-grid" style={{ overflowY: "auto", padding: "24px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "16px", alignContent: "start", flex: 1 }}>
-          {visibleMenu.map((item) => (
-            <button
-              key={item.id}
-              className="menu-card panel"
-              onClick={() => {
-                addCartItem(item);
-                setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} แล้ว` });
+          
+          <div style={{ display: "flex", gap: "16px" }}>
+            <input
+              ref={searchInputRef}
+              className="input"
+              placeholder="ค้นหาสินค้า (F1)"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={handleProductSearchKeyDown}
+              style={{ flex: 1 }}
+            />
+            
+            <input
+              ref={scannerInputRef}
+              className="input scanner-input"
+              inputMode="none"
+              placeholder="ยิงบาร์โค้ด (Enter)"
+              style={{ width: "220px", borderColor: scanFeedback.tone === "error" ? "var(--danger)" : scanFeedback.tone === "success" ? "var(--success)" : "var(--border)" }}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  processBarcodeScan(e.currentTarget.value);
+                  e.currentTarget.value = "";
+                }
               }}
-              style={{ cursor: "pointer", textAlign: "left", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}
-            >
-              <strong style={{ fontSize: "16px" }}>{item.name}</strong>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
-                <span className="muted">{item.category}</span>
-                <span style={{ fontWeight: 600, color: "var(--accent)" }}>{formatMoney(item.basePrice)}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-        <div className="panel__header">
-          <div>
-            <h2>ออเดอร์ปัจจุบัน</h2>
-            <p className="muted">{activeShift ? `กะ #${activeShift.id}` : "ยังไม่ได้เปิดกะ"}</p>
+            />
           </div>
-          <button className="btn btn--ghost" onClick={clearCart}>ล้าง (F8)</button>
-        </div>
-
-        <div className="order-list" style={{ overflowY: "auto", flex: 1, padding: "0 24px" }}>
-          {cart.length === 0 ? (
-            <div className="empty">ยังไม่มีรายการ</div>
-          ) : (
-            cart.map((item) => (
-              <div key={item.id} style={{ display: "flex", justifyContent: "space-between", padding: "12px 0", borderBottom: "1px solid var(--border)" }}>
-                <div>
-                  <strong>{item.name}</strong>
-                  <div className="muted" style={{ fontSize: "12px" }}>{formatMoney(item.basePrice)} · {item.category}</div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <button className="btn btn--ghost" style={{ padding: "4px 8px" }} onClick={() => updateQty(item.id, -1)}>-</button>
-                  <span style={{ width: "24px", textAlign: "center" }}>{item.qty}</span>
-                  <button className="btn btn--ghost" style={{ padding: "4px 8px" }} onClick={() => updateQty(item.id, 1)}>+</button>
-                  <button className="btn btn--ghost" style={{ color: "#b5482b", marginLeft: "8px" }} onClick={() => removeItem(item.id)}>x</button>
-                </div>
-              </div>
-            ))
+          {scanFeedback.message && (
+            <div style={{ fontSize: "12px", color: scanFeedback.tone === "error" ? "var(--danger)" : "var(--success)", marginTop: "8px" }}>
+              {scanFeedback.message}
+            </div>
           )}
         </div>
 
-        <div className="cart-footer" style={{ padding: "20px", borderTop: "1px solid var(--border)", background: "var(--bg-alt)", overflowY: "auto", maxHeight: "58vh" }}>
-          <div className="panel" style={{ padding: 12, marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-              <strong>สมาชิก</strong>
-              {selectedMember ? <button className="btn btn--ghost" onClick={() => { setSelectedMember(null); setPointsToUse(""); }}>ยกเลิก</button> : null}
-            </div>
-            {selectedMember ? (
-              <div style={{ marginTop: 8 }}>
-                <div><strong>{selectedMember.name}</strong> <span className="muted">{selectedMember.phone}</span></div>
-                <div className="member-points">แต้มคงเหลือ {selectedMember.points} · ใช้ได้สูงสุด {maxRedeemablePoints}</div>
-                <input className="input" type="number" min={0} max={maxRedeemablePoints} value={pointsToUse}
-                  onChange={(e) => setPointsToUse(String(Math.min(maxRedeemablePoints, Number(e.target.value) || 0)))}
-                  placeholder="แต้มที่ใช้แลกส่วนลด" style={{ width: "100%", marginTop: 8 }} />
-              </div>
-            ) : (
-              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                <input className="input" value={memberQuery} onChange={(e) => setMemberQuery(e.target.value)} placeholder="ค้นหาชื่อ/เบอร์สมาชิก" />
-                {matchingCustomers.map((customer) => (
-                  <button key={customer.id} className="btn btn--ghost" style={{ justifyContent: "space-between" }} onClick={() => setSelectedMember(customer)}>
-                    <span>{customer.name}</span>
-                    <span className="muted">{customer.phone} · {customer.points} แต้ม</span>
-                  </button>
-                ))}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8 }}>
-                  <input className="input" value={newMember.name} onChange={(e) => setNewMember({ ...newMember, name: e.target.value })} placeholder="ชื่อใหม่" />
-                  <input className="input" value={newMember.phone} onChange={(e) => setNewMember({ ...newMember, phone: e.target.value })} placeholder="เบอร์" />
-                  <button className="btn btn--ghost" onClick={handleCreateMember}>สมัคร</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="panel discount-panel" style={{ padding: 12, marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-              <strong>โปรโมชัน / ส่วนลด</strong>
-              {discountRules.length ? <button className="btn btn--ghost" onClick={clearDiscountRules}>ล้าง</button> : null}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.8fr", gap: 8, marginTop: 8 }}>
-              <select className="input" value={discountDraft.type} onChange={(e) => setDiscountDraft({ ...discountDraft, type: e.target.value as DiscountRule["type"] })}>
-                <option value="ORDER_PERCENT">ลดทั้งบิล %</option>
-                <option value="ORDER_FIXED">ลดทั้งบิล บาท</option>
-                <option value="CATEGORY_PERCENT">ลดเฉพาะหมวด %</option>
-                <option value="BUY_X_GET_Y">ซื้อ X แถม Y</option>
-              </select>
-              {discountDraft.type !== "BUY_X_GET_Y" ? (
-                <input className="input" type="number" value={discountDraft.value} onChange={(e) => setDiscountDraft({ ...discountDraft, value: e.target.value })} placeholder="ส่วนลด" />
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <input className="input" type="number" value={discountDraft.buyQty} onChange={(e) => setDiscountDraft({ ...discountDraft, buyQty: e.target.value })} />
-                  <input className="input" type="number" value={discountDraft.getQty} onChange={(e) => setDiscountDraft({ ...discountDraft, getQty: e.target.value })} />
-                </div>
-              )}
-              {(discountDraft.type === "CATEGORY_PERCENT" || discountDraft.type === "BUY_X_GET_Y") ? (
-                <select className="input" value={discountDraft.category} onChange={(e) => setDiscountDraft({ ...discountDraft, category: e.target.value })}>
-                  {promotionCategories.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-              ) : (
-                <input className="input" type="number" value={discountDraft.maxDiscount} onChange={(e) => setDiscountDraft({ ...discountDraft, maxDiscount: e.target.value })} placeholder="เพดานลด (ถ้ามี)" />
-              )}
-              {(discountDraft.type === "CATEGORY_PERCENT" || discountDraft.type === "BUY_X_GET_Y") ? (
-                <input className="input" type="number" value={discountDraft.maxDiscount} onChange={(e) => setDiscountDraft({ ...discountDraft, maxDiscount: e.target.value })} placeholder="เพดานลด (ถ้ามี)" />
-              ) : null}
-              <button className="btn btn--ghost" onClick={handleAddDiscountRule}>เพิ่มโปร</button>
-            </div>
-            {discountRules.length ? (
-              <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
-                {discountRules.map((rule) => (
-                  <div key={rule.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                    <span className="badge">{rule.label}</span>
-                    <button className="btn btn--ghost" onClick={() => removeDiscountRule(rule.id)}>ลบ</button>
-                  </div>
-                ))}
-              </div>
-            ) : <p className="muted" style={{ margin: "8px 0 0" }}>ยังไม่มีโปรโมชันในบิลนี้</p>}
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>ยอดรวม</span>
-              <strong>{formatMoney(subtotal)}</strong>
-            </div>
-            {discountAmount > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", color: "var(--accent)" }}>
-                <span>ส่วนลด</span>
-                <strong>-{formatMoney(discountAmount)}</strong>
-              </div>
-            )}
-            {(Number(pointsToUse) || 0) > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", color: "var(--accent)" }}>
-                <span>แลกแต้ม</span>
-                <strong>-{formatMoney(Number(pointsToUse) || 0)}</strong>
-              </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "20px", fontWeight: 700 }}>
-              <span>ยอดสุทธิ</span>
-              <span>{formatMoney(total)}</span>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: "8px", margin: "16px 0" }}>
-            {(["CASH", "QR", "CARD", "EWALLET"] as PaymentMethod[]).map((method) => (
-              <button
-                key={method}
-                className={`btn ${paymentMethod === method ? "btn--primary" : "btn--ghost"}`}
-                style={{ flex: 1 }}
-                onClick={() => setPaymentMethod(method)}
-              >
-                {method === "CASH" ? "สด" : method === "QR" ? "โอน" : method === "CARD" ? "บัตร" : "Wallet"}
+        <div style={{ padding: "16px 24px 0", borderBottom: "1px solid var(--border)" }}>
+          <div className="tab-row" style={{ marginBottom: "16px" }}>
+            {categories.map((item) => (
+              <button key={item} className={`tab ${category === item ? "tab--active" : ""}`} onClick={() => setCategory(item)}>
+                {item}
               </button>
             ))}
           </div>
-
-          <button
-            className="btn btn--primary btn--full"
-            style={{ padding: "16px", fontSize: "18px" }}
-            disabled={cart.length === 0 || isSubmitting || !activeShift}
-            onClick={handleCheckoutClick}
-          >
-            {!activeShift ? "เปิดกะก่อนขาย" : isSubmitting ? "กำลังทำรายการ..." : `ชำระเงิน ${formatMoney(total)} (F12)`}
-          </button>
-
-          {showCashDrawer && (
-            <CashDrawerModal
-              total={total}
-              onConfirm={(cashReceived, change) => handleCheckout(cashReceived, change)}
-              onCancel={() => setShowCashDrawer(false)}
-            />
-          )}
         </div>
+
+        <ProductGrid 
+          menu={menu} 
+          category={category} 
+          search={search} 
+          branchType={activeBranch?.branchType} 
+          onItemClick={(item) => {
+            addCartItem(item);
+            setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} แล้ว` });
+          }} 
+        />
       </section>
+
+      {/* Right Panel: Cart & Payment */}
+      <CartPanel 
+        cart={cart}
+        subtotal={subtotal}
+        discountAmount={discountAmount}
+        total={total}
+        pointsToUse={pointsToUse}
+        setPointsToUse={setPointsToUse}
+        updateQty={updateQty}
+        removeItem={removeItem}
+        clearCart={clearCart}
+        selectedMember={selectedMember}
+        setSelectedMember={setSelectedMember}
+        memberQuery={memberQuery}
+        setMemberQuery={setMemberQuery}
+        matchingCustomers={matchingCustomers}
+        newMember={newMember}
+        setNewMember={setNewMember}
+        handleCreateMember={handleCreateMember}
+        maxRedeemablePoints={maxRedeemablePoints}
+        discountRules={discountRules}
+        clearDiscountRules={clearDiscountRules}
+        discountDraft={discountDraft}
+        setDiscountDraft={setDiscountDraft}
+        promotionCategories={promotionCategories}
+        handleAddDiscountRule={handleAddDiscountRule}
+        removeDiscountRule={removeDiscountRule}
+        paymentMethod={paymentMethod}
+        setPaymentMethod={setPaymentMethod}
+        handleCheckoutClick={handleCheckoutClick}
+        isSubmitting={isSubmitting}
+        activeShift={activeShift}
+      />
+
+      {showCashDrawer && (
+        <CashDrawerModal
+          total={total}
+          onConfirm={(cashReceived, change) => handleCheckout(cashReceived, change)}
+          onCancel={() => setShowCashDrawer(false)}
+        />
+      )}
     </main>
   );
 }

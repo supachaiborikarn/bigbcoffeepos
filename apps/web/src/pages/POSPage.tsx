@@ -309,16 +309,19 @@ export default function POSPage() {
           )}
         </div>
 
-        <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--pos-bg)" }}>
-          <div className="tab-row" style={{ marginBottom: "0", background: "transparent", padding: 0, border: "none" }}>
+        <div className="hide-scrollbar" style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--pos-bg)", overflowX: "auto", whiteSpace: "nowrap" }}>
+          <div className="tab-row" style={{ marginBottom: "0", background: "transparent", padding: 0, border: "none", display: "inline-flex", gap: "8px" }}>
             {categories.map((item) => (
               <button key={item} className={`tab ${category === item ? "tab--active" : ""}`} 
                 style={{ 
-                  borderRadius: "4px", 
-                  background: category === item ? "var(--pos-topbar)" : "#fff",
-                  color: category === item ? "#fff" : "#333",
-                  border: "1px solid #ddd",
-                  padding: "8px 16px"
+                  borderRadius: "20px", 
+                  background: category === item ? "var(--brand)" : "#fff",
+                  color: category === item ? "#fff" : "var(--text-secondary)",
+                  border: `1px solid ${category === item ? "var(--brand)" : "var(--border)"}`,
+                  padding: "8px 16px",
+                  fontWeight: 500,
+                  boxShadow: category === item ? "0 2px 4px rgba(139, 94, 60, 0.2)" : "none",
+                  whiteSpace: "nowrap"
                 }} 
                 onClick={() => setCategory(item)}>
                 {item}

@@ -39,9 +39,9 @@ export default function LoginPage() {
       }}>
         <div style={{
           width: 56, height: 56, borderRadius: 16,
-          background: "linear-gradient(135deg, #10B981, #059669)",
+          background: "linear-gradient(135deg, var(--brand), var(--brand-hover))",
           color: "white", display: "flex", alignItems: "center", justifyContent: "center",
-          margin: "0 auto 20px", boxShadow: "0 4px 12px rgba(16,185,129,0.3)"
+          margin: "0 auto 20px", boxShadow: "0 4px 12px rgba(139,94,60,0.3)"
         }}>
           <Coffee size={24} />
         </div>

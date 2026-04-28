@@ -11,6 +11,7 @@ import MigrationPage from "./pages/MigrationPage";
 import SettingsPage from "./pages/SettingsPage";
 import OrderQueuePage from "./pages/OrderQueuePage";
 import CustomersPage from "./pages/CustomersPage";
+import OrdersPage from "./pages/OrdersPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -21,11 +22,12 @@ export const router = createBrowserRouter([
     children: [
       { path: "/dashboard", element: <DashboardPage branchId={null} /> },
       { path: "/pos", element: <POSPage /> },
+      { path: "/orders", element: <OrdersPage /> },
       { path: "/inventory", element: <InventoryPage /> },
       { path: "/customers", element: <CustomersPage /> },
       { path: "/staff", element: <StaffPage /> },
       { path: "/reports", element: <ReportsPage /> },
-      { path: "/finance", element: <div style={{ padding: 40, textAlign: "center" }}><h2>การเงิน</h2><p className="muted" style={{ marginTop: 8 }}>Coming Soon — ระบบบัญชีและการเงินกำลังพัฒนา</p></div> },
+      { path: "/marketing", element: <div style={{ padding: 40, textAlign: "center" }}><h2>การตลาด & โปรโมชั่น</h2><p className="muted" style={{ marginTop: 8 }}>Coming Soon — ระบบจัดการโปรโมชั่นส่วนลดต่างๆ</p></div> },
       { path: "/migration", element: <MigrationPage /> },
       { path: "/settings", element: <SettingsPage /> },
     ],

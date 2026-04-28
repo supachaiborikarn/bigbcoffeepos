@@ -99,9 +99,9 @@ export default function StaffPage() {
   };
 
   const getRoleLabel = (role: string) => {
-    if (role === 'admin') return 'ผู้ดูแลระบบ';
-    if (role === 'manager') return 'ผู้จัดการ';
-    return 'แคชเชียร์';
+    if (role === 'admin') return 'ผู้ดูแลระบบ (Owner)';
+    if (role === 'manager') return 'ผู้จัดการร้าน (Cafe Manager)';
+    return 'บาริสต้า / แคชเชียร์';
   };
 
   return (
@@ -109,8 +109,8 @@ export default function StaffPage() {
       <section className="panel" style={{ overflow: "hidden" }}>
         <div className="panel__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <h2>บุคลากร</h2>
-            <p className="muted">จัดการพนักงานและสิทธิ์การใช้งานระบบ</p>
+            <h2>ทีมงานบาริสต้า & พนักงาน</h2>
+            <p className="muted">จัดการสิทธิ์พนักงานร้านกาแฟแต่ละสาขา</p>
           </div>
           <button className="btn btn--primary" onClick={openAddModal} style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <Plus size={18} /> เพิ่มพนักงาน
@@ -221,8 +221,8 @@ export default function StaffPage() {
               <div>
                 <label style={{ display: "block", marginBottom: 8, fontWeight: 500 }}>ตำแหน่ง / สิทธิ์การใช้งาน</label>
                 <select className="input" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
-                  <option value="cashier">แคชเชียร์ (ขายหน้าร้าน)</option>
-                  <option value="manager">ผู้จัดการ (ดูรายงาน, จัดการสต็อก)</option>
+                  <option value="cashier">บาริสต้า / แคชเชียร์ (ขายหน้าร้าน)</option>
+                  <option value="manager">ผู้จัดการร้าน (ดูรายงาน, จัดการสต็อก)</option>
                   <option value="admin">ผู้ดูแลระบบ (ทุกอย่าง)</option>
                 </select>
               </div>

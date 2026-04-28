@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getInventory, getSalesSummary, getShifts, getUsers } from "../api";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
-import { TrendingUp, ShoppingCart, Receipt, AlertTriangle, Users, Sparkles, ArrowUpRight, ArrowDownRight, Package } from "lucide-react";
+import { Coffee, TrendingUp, ShoppingCart, Receipt, AlertTriangle, Users, Sparkles, ArrowUpRight, ArrowDownRight, Package } from "lucide-react";
 
 type DashboardData = {
   totalOrders: number;
@@ -71,10 +71,12 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
   const yesterdayRevenue = yesterdayData?.revenue ?? 0;
   const revChange = yesterdayRevenue > 0 ? Math.round(((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100) : 0;
 
+  const todayDrinks = todaySummary?.topItems.reduce((acc, item) => acc + item.qty, 0) ?? 0;
+
   const kpis = [
     { label: "ยอดขายวันนี้", value: formatMoney(todayRevenue), icon: TrendingUp, change: revChange, color: "#10B981" },
     { label: "ออเดอร์วันนี้", value: String(todaySummary?.totalOrders ?? 0), icon: ShoppingCart, color: "#3B82F6" },
-    { label: "เฉลี่ย/บิล", value: formatMoney(todaySummary?.averageTicket ?? 0), icon: Receipt, color: "#8B5CF6" },
+    { label: "แก้วที่ขายได้", value: String(todayDrinks), icon: Coffee, color: "#8B5CF6" },
     { label: "สต็อกต่ำ", value: String(inventory.length), icon: AlertTriangle, color: inventory.length > 0 ? "#F59E0B" : "#10B981" },
     { label: "พนักงาน", value: String(staffCount), icon: Users, color: "#6366F1" },
   ];
@@ -82,8 +84,8 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
   // AI Insight cards
   const insights = [
     revChange > 0 && { icon: "📈", text: `รายได้ +${revChange}% เทียบกับเมื่อวาน`, type: "success" as const },
-    inventory.length > 0 && { icon: "⚠️", text: `${inventory.length} รายการสต็อกใกล้หมด`, type: "warning" as const },
-    todaySummary && todaySummary.topItems.length > 0 && { icon: "🏆", text: `${todaySummary.topItems[0]?.name} ขายดีสุดวันนี้`, type: "info" as const },
+    inventory.length > 0 && { icon: "⚠️", text: `เมล็ดกาแฟ/วัตถุดิบ ${inventory.length} รายการใกล้หมด`, type: "warning" as const },
+    todaySummary && todaySummary.topItems.length > 0 && { icon: "☕", text: `${todaySummary.topItems[0]?.name} ยอดฮิตวันนี้`, type: "info" as const },
     activeShift && { icon: "🟢", text: `กะเปิดอยู่ · ยอดขาย ${formatMoney(activeShift.totalSales)}`, type: "success" as const },
   ].filter(Boolean) as { icon: string; text: string; type: "success" | "warning" | "info" }[];
 

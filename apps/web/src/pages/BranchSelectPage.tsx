@@ -1,7 +1,7 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
-import { Coffee, Wrench, ChevronRight, LogOut } from "lucide-react";
+import { Coffee, Store, ChevronRight, LogOut } from "lucide-react";
 
 const ROLE_LABELS: Record<string, string> = { admin: "ผู้ดูแลระบบ", manager: "ผู้จัดการ", cashier: "แคชเชียร์" };
 
@@ -18,9 +18,9 @@ export default function BranchSelectPage() {
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{
             width: 56, height: 56, borderRadius: 16,
-            background: "linear-gradient(135deg, #10B981, #059669)",
+            background: "linear-gradient(135deg, var(--brand), var(--brand-hover))",
             color: "white", display: "flex", alignItems: "center", justifyContent: "center",
-            margin: "0 auto 20px", boxShadow: "0 4px 12px rgba(16,185,129,0.3)"
+            margin: "0 auto 20px", boxShadow: "0 4px 12px rgba(139,94,60,0.3)"
           }}>
             <Coffee size={24} />
           </div>
@@ -48,11 +48,11 @@ export default function BranchSelectPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{
                   width: 40, height: 40, borderRadius: 12,
-                  background: b.branchType === "coffee" ? "var(--brand-subtle)" : "var(--warning-bg)",
-                  color: b.branchType === "coffee" ? "var(--brand)" : "#92400E",
+                  background: "var(--brand-subtle)",
+                  color: "var(--brand)",
                   display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
                 }}>
-                  {b.branchType === "coffee" ? <Coffee size={18} /> : <Wrench size={18} />}
+                  {b.branchType === "coffee" ? <Coffee size={18} /> : <Store size={18} />}
                 </div>
                 <div>
                   <strong style={{ fontSize: 15, display: "block" }}>{b.name}</strong>

@@ -72,8 +72,18 @@ export default function CartPanel(props: CartPanelProps) {
                 style={{ display: "flex", justifyContent: "space-between", padding: "16px 0", borderBottom: "1px solid var(--border)" }}
               >
                 <div>
-                  <strong style={{ fontSize: "15px" }}>{item.name}</strong>
-                  <div className="muted" style={{ fontSize: "13px", marginTop: 4 }}>{formatMoney(item.basePrice)}</div>
+                  <strong style={{ fontSize: "15px", color: "var(--text-primary)" }}>{item.name}</strong>
+                  {item.modifiers && item.modifiers.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px", marginTop: 4 }}>
+                      {item.modifiers.map((mod, i) => (
+                        <span key={i} style={{ fontSize: "12px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 2 }}>
+                          {mod.value} {mod.price > 0 && <span style={{ color: "var(--brand)" }}>(+฿{mod.price})</span>}
+                          {i < item.modifiers.length - 1 && <span style={{ color: "var(--border)" }}>|</span>}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="muted" style={{ fontSize: "13px", marginTop: 4, fontWeight: 600, color: "var(--brand)" }}>{formatMoney(item.basePrice + (item.modifiers?.reduce((sum, m) => sum + m.price, 0) || 0))}</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                   <div style={{ display: "flex", alignItems: "center", background: "var(--canvas-alt)", borderRadius: "var(--radius-sm)", padding: "4px" }}>
@@ -182,11 +192,11 @@ export default function CartPanel(props: CartPanelProps) {
             padding: "20px", 
             fontSize: "18px", 
             fontWeight: 700,
-            background: (!activeShift || cart.length === 0) ? "var(--muted)" : "var(--pos-topbar)",
-            color: "#fff",
+            background: (!activeShift || cart.length === 0) ? "var(--bg-muted)" : "var(--brand)",
+            color: (!activeShift || cart.length === 0) ? "var(--text-muted)" : "#fff",
             border: "none",
             borderRadius: "var(--radius-md)",
-            boxShadow: "var(--shadow-lg)"
+            boxShadow: "var(--shadow-card-hover)"
           }}
           disabled={cart.length === 0 || isSubmitting || !activeShift}
           onClick={handleCheckoutClick}

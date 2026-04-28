@@ -625,18 +625,18 @@ export default function InventoryPage() {
           <h1>สต็อกสินค้า</h1>
           <p className="muted">{activeBranch?.name ?? "ยังไม่ได้เลือกสาขา"} · จัดการสินค้าเปิดขายและสต็อกวัตถุดิบของสาขา</p>
         </div>
-        <div className="inventory-kpis">
-          <div>
-            <span>สินค้าเปิดขาย</span>
-            <strong>{activeProductCount}</strong>
+        <div className="inventory-kpis" style={{ display: "flex", gap: "16px", marginTop: "16px" }}>
+          <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>สินค้าเปิดขาย</span>
+            <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{activeProductCount}</strong>
           </div>
-          <div>
-            <span>วัตถุดิบ</span>
-            <strong>{inventory.length}</strong>
+          <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>วัตถุดิบ (เมล็ด, นม, แก้ว)</span>
+            <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{inventory.length}</strong>
           </div>
-          <div>
-            <span>ต่ำกว่าเกณฑ์</span>
-            <strong className={lowStockItems.length ? "negative" : "positive"}>{lowStockItems.length}</strong>
+          <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>แจ้งเตือนสต็อกต่ำ</span>
+            <strong className={lowStockItems.length ? "negative" : "positive"} style={{ display: "block", fontSize: "28px", color: lowStockItems.length > 0 ? "var(--warning)" : "var(--success)", marginTop: "4px" }}>{lowStockItems.length}</strong>
           </div>
         </div>
       </section>
@@ -741,19 +741,18 @@ export default function InventoryPage() {
               </button>
             </div>
             <div className="inventory-form-grid">
-              <input className="input" value={productEditForm.name} onChange={(e) => setProductEditForm({ ...productEditForm, name: e.target.value })} placeholder="ชื่อสินค้า" />
-              <input className="input" value={productEditForm.category} onChange={(e) => setProductEditForm({ ...productEditForm, category: e.target.value })} placeholder="หมวดหมู่" />
+              <input className="input" value={productEditForm.name} onChange={(e) => setProductEditForm({ ...productEditForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
+              <input className="input" value={productEditForm.category} onChange={(e) => setProductEditForm({ ...productEditForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
               <input className="input" type="number" value={productEditForm.basePrice} onChange={(e) => setProductEditForm({ ...productEditForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
-              <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุน" min="0" step="0.01" />
+              <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
               <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
               <input className="input" value={productEditForm.barcode} onChange={(e) => setProductEditForm({ ...productEditForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
-              <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })}>
+              <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
                 <option value="coffee">ร้านกาแฟ</option>
-                <option value="oil_service">ศูนย์บริการน้ำมัน</option>
               </select>
-              <label className="toggle-line">
+              <label className="toggle-line" style={{ gridColumn: "1 / -1", background: "var(--bg-subtle)", padding: "12px", borderRadius: "8px" }}>
                 <input type="checkbox" checked={productEditForm.active} onChange={(e) => setProductEditForm({ ...productEditForm, active: e.target.checked })} />
-                เปิดขายหน้าร้าน
+                <span style={{ fontWeight: 500 }}>เปิดขายหน้าร้าน</span>
               </label>
             </div>
             <div className="inventory-editor__actions">

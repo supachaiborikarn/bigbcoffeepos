@@ -8,6 +8,7 @@ import { useToast } from "../contexts/ToastContext";
 import { CashDrawerModal, printReceipt } from "../components/ReceiptPrinter";
 import ProductGrid from "../components/pos/ProductGrid";
 import CartPanel from "../components/pos/CartPanel";
+import ModifierModal from "../components/pos/ModifierModal";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -43,6 +44,7 @@ export default function POSPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCashDrawer, setShowCashDrawer] = useState(false);
   const [lastOrder, setLastOrder] = useState<any>(null);
+  const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const { activeBranch } = useBranch();
@@ -125,16 +127,17 @@ export default function POSPage() {
     ? Math.min(selectedMember.points, Math.floor(Math.max(0, subtotal - discountAmount)))
     : 0;
 
-  const addCartItem = (item: MenuItem) => {
+  const addCartItem = (item: MenuItem, qty: number = 1, modifiers: import("../types").Modifier[] = []) => {
     addItem({
       id: Math.random().toString(36).slice(2, 9),
       menuItemId: item.id,
       name: item.name,
       category: item.category,
       basePrice: item.basePrice,
-      qty: 1,
-      modifiers: []
+      qty,
+      modifiers
     });
+    setModifierProduct(null);
   };
 
   const processBarcodeScan = (rawCode: string) => {
@@ -145,8 +148,7 @@ export default function POSPage() {
       setScanFeedback({ tone: "error", message: `ไม่พบสินค้า: ${code}`, code });
       return;
     }
-    addCartItem(item);
-    setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} เข้าตะกร้าแล้ว`, code: item.barcode || item.sku || undefined });
+    setModifierProduct(item);
     window.requestAnimationFrame(() => scannerInputRef.current?.focus());
   };
 
@@ -332,8 +334,7 @@ export default function POSPage() {
             search={search} 
             branchType={activeBranch?.branchType} 
             onItemClick={(item) => {
-              addCartItem(item);
-              setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} แล้ว` });
+              setModifierProduct(item);
             }} 
           />
         </div>
@@ -378,6 +379,17 @@ export default function POSPage() {
           total={total}
           onConfirm={(cashReceived, change) => handleCheckout(cashReceived, change)}
           onCancel={() => setShowCashDrawer(false)}
+        />
+      )}
+
+      {modifierProduct && (
+        <ModifierModal
+          item={modifierProduct}
+          onClose={() => setModifierProduct(null)}
+          onAdd={(item, qty, mods) => {
+            addCartItem(item, qty, mods);
+            setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} เข้าตะกร้าแล้ว` });
+          }}
         />
       )}
     </main>

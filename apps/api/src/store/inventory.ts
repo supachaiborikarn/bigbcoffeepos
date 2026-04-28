@@ -224,7 +224,6 @@ export async function getRecipe(menuItemId: number) {
   const recipes = await prisma.recipe.findMany({
     where: { menuItemId }
   });
-  if (recipes.length === 0) return null;
 
   return {
     menuItemId,

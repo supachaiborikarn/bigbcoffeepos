@@ -9,11 +9,13 @@ import {
   getInventory,
   getMenu,
   getPurchases,
+  getRecipe,
   getStockMovements,
   updateInventoryItem,
-  updateMenuItem
+  updateMenuItem,
+  updateRecipe
 } from "../api";
-import type { Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, StockMovement } from "../types";
+import type { Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, RecipeIngredient, StockMovement } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 
@@ -29,6 +31,35 @@ const branchTypeLabels: Record<MenuItem["branchType"], string> = {
 };
 
 const PRODUCT_PAGE_SIZE = 50;
+
+const recipePresets = [
+  {
+    id: "iced",
+    label: "เย็น",
+    items: [
+      { label: "แก้วเย็น", qty: 1, keywords: ["แก้วเย็น", "แก้วใส", "แก้วพลาสติก"] },
+      { label: "ฝาแก้วเย็น", qty: 1, keywords: ["ฝาแบน", "ฝาเย็น", "ฝาแก้ว"] },
+      { label: "หลอด", qty: 1, keywords: ["หลอด"] }
+    ]
+  },
+  {
+    id: "blended",
+    label: "ปั่น",
+    items: [
+      { label: "แก้วปั่น", qty: 1, keywords: ["แก้วปั่น", "แก้วเย็น", "แก้วใส"] },
+      { label: "ฝาโดม", qty: 1, keywords: ["ฝาโดม", "ฝาปั่น", "ฝาแก้ว"] },
+      { label: "หลอดปั่น", qty: 1, keywords: ["หลอดปั่น", "หลอดใหญ่", "หลอด"] }
+    ]
+  },
+  {
+    id: "hot",
+    label: "ร้อน",
+    items: [
+      { label: "แก้วร้อน", qty: 1, keywords: ["แก้วร้อน", "แก้วกระดาษ"] },
+      { label: "ฝาร้อน", qty: 1, keywords: ["ฝาร้อน", "ฝาแก้ว"] }
+    ]
+  }
+];
 
 type ProductFormState = {
   name: string;
@@ -47,6 +78,11 @@ type StockFormState = {
   costPerUnit: string;
   stockQty: string;
   reorderLevel: string;
+};
+
+type RecipeLineForm = {
+  ingredientId: string;
+  qty: string;
 };
 
 function formatMoney(value: number) {
@@ -94,6 +130,10 @@ function stockToForm(item: InventoryItem): StockFormState {
   };
 }
 
+function normalizeText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, "");
+}
+
 export default function InventoryPage() {
   const { activeBranch } = useBranch();
   const toast = useToast();
@@ -123,6 +163,12 @@ export default function InventoryPage() {
   const [stockSearch, setStockSearch] = useState("");
   const [selectedStock, setSelectedStock] = useState<InventoryItem | null>(null);
   const [stockEditForm, setStockEditForm] = useState<StockFormState | null>(null);
+
+  const [recipeProductSearch, setRecipeProductSearch] = useState("");
+  const [recipeIngredientSearch, setRecipeIngredientSearch] = useState("");
+  const [selectedRecipeProduct, setSelectedRecipeProduct] = useState<MenuItem | null>(null);
+  const [recipeLines, setRecipeLines] = useState<RecipeLineForm[]>([]);
+  const [isRecipeLoading, setIsRecipeLoading] = useState(false);
 
   const lowStockItems = useMemo(
     () => inventory.filter((item) => item.stockQty <= item.reorderLevel),
@@ -168,11 +214,47 @@ export default function InventoryPage() {
 
   const activeProductCount = useMemo(() => menu.filter((item) => item.active).length, [menu]);
 
+  const recipeProducts = useMemo(() => {
+    const query = recipeProductSearch.trim().toLowerCase();
+    const branchType = activeBranch?.branchType;
+    return menu
+      .filter((item) => {
+        if (branchType && item.branchType !== branchType) return false;
+        if (!item.active) return false;
+        if (!query) return true;
+        return `${item.name} ${item.category} ${item.sku ?? ""}`.toLowerCase().includes(query);
+      })
+      .slice(0, 30);
+  }, [activeBranch, menu, recipeProductSearch]);
+
+  const recipeIngredientMatches = useMemo(() => {
+    const query = normalizeText(recipeIngredientSearch.trim());
+    return inventory
+      .filter((item) => {
+        if (!query) return ["แก้ว", "ฝา", "หลอด", "กาแฟ", "นม"].some((keyword) => normalizeText(item.name).includes(keyword));
+        return normalizeText(`${item.name} ${item.unit}`).includes(query);
+      })
+      .slice(0, 10);
+  }, [inventory, recipeIngredientSearch]);
+
+  const recipeSummary = useMemo(() => {
+    return recipeLines
+      .map((line) => {
+        const ingredientId = Number(line.ingredientId);
+        const qty = toNumber(line.qty);
+        const item = inventory.find((stockItem) => stockItem.ingredientId === ingredientId);
+        if (!item || qty === null || qty <= 0) return null;
+        return { ...item, qty };
+      })
+      .filter((item): item is InventoryItem & { qty: number } => Boolean(item));
+  }, [inventory, recipeLines]);
+
   const refreshInventory = async () => {
     const [menuItems, ingredientItems] = await Promise.all([getMenu(), getIngredients()]);
     setMenu(menuItems);
     setIngredients(ingredientItems);
     setSelectedProduct((current) => (current ? menuItems.find((item) => item.id === current.id) ?? null : null));
+    setSelectedRecipeProduct((current) => (current ? menuItems.find((item) => item.id === current.id) ?? null : null));
 
     if (!activeBranch) {
       setInventory([]);
@@ -247,6 +329,110 @@ export default function InventoryPage() {
   const handleProductEditStart = (item: MenuItem) => {
     setSelectedProduct(item);
     setProductEditForm(productToForm(item));
+  };
+
+  const handleRecipeProductSelect = async (item: MenuItem) => {
+    setSelectedRecipeProduct(item);
+    setIsRecipeLoading(true);
+    try {
+      const recipe = await getRecipe(item.id);
+      setRecipeLines(recipe.ingredients.map((ingredient) => ({
+        ingredientId: String(ingredient.ingredientId),
+        qty: String(ingredient.qty)
+      })));
+    } catch {
+      setRecipeLines([]);
+    } finally {
+      setIsRecipeLoading(false);
+    }
+  };
+
+  const upsertRecipeLine = (ingredientId: number, qty = 1) => {
+    setRecipeLines((prev) => {
+      const existing = prev.find((line) => Number(line.ingredientId) === ingredientId);
+      if (existing) {
+        return prev.map((line) => Number(line.ingredientId) === ingredientId ? { ...line, qty: String(qty) } : line);
+      }
+      return [...prev, { ingredientId: String(ingredientId), qty: String(qty) }];
+    });
+  };
+
+  const handleAddRecipeIngredient = (item: InventoryItem) => {
+    upsertRecipeLine(item.ingredientId, 1);
+    setRecipeIngredientSearch("");
+  };
+
+  const handleApplyRecipePreset = (presetId: string) => {
+    if (!selectedRecipeProduct) {
+      toast.error("เลือกเมนูขายก่อนตั้งสูตร");
+      return;
+    }
+
+    const preset = recipePresets.find((item) => item.id === presetId);
+    if (!preset) return;
+
+    const missing: string[] = [];
+    let added = 0;
+
+    preset.items.forEach((presetItem) => {
+      const stockItem = inventory.find((item) => {
+        const name = normalizeText(item.name);
+        return presetItem.keywords.some((keyword) => name.includes(normalizeText(keyword)));
+      });
+      if (!stockItem) {
+        missing.push(presetItem.label);
+        return;
+      }
+      upsertRecipeLine(stockItem.ingredientId, presetItem.qty);
+      added += 1;
+    });
+
+    if (added > 0) toast.success(`ใส่สูตร${preset.label}แล้ว`);
+    if (missing.length > 0) toast.error(`ยังไม่พบในสต็อก: ${missing.join(", ")}`);
+  };
+
+  const handleRecipeQtyChange = (ingredientId: number, qty: string) => {
+    setRecipeLines((prev) => prev.map((line) => Number(line.ingredientId) === ingredientId ? { ...line, qty } : line));
+  };
+
+  const handleRemoveRecipeLine = (ingredientId: number) => {
+    setRecipeLines((prev) => prev.filter((line) => Number(line.ingredientId) !== ingredientId));
+  };
+
+  const handleSaveRecipe = async () => {
+    if (!selectedRecipeProduct) {
+      toast.error("เลือกเมนูขายก่อนบันทึกสูตร");
+      return;
+    }
+
+    const normalized = recipeLines.reduce<RecipeIngredient[]>((acc, line) => {
+      const ingredientId = Number(line.ingredientId);
+      const qty = toNumber(line.qty);
+      if (!ingredientId || qty === null || qty <= 0) return acc;
+      const existing = acc.find((item) => item.ingredientId === ingredientId);
+      if (existing) existing.qty += qty;
+      else acc.push({ ingredientId, qty });
+      return acc;
+    }, []);
+
+    if (recipeLines.length > 0 && normalized.length !== recipeLines.length) {
+      toast.error("ตรวจจำนวนที่ใช้ต่อแก้วให้ถูกต้อง");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const recipe = await updateRecipe(selectedRecipeProduct.id, normalized);
+      setRecipeLines((recipe?.ingredients ?? normalized).map((ingredient) => ({
+        ingredientId: String(ingredient.ingredientId),
+        qty: String(ingredient.qty)
+      })));
+      toast.success("บันทึกสูตรตัดสต็อกแล้ว");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleProductEditCancel = () => {
@@ -510,9 +696,14 @@ export default function InventoryPage() {
                   <td>{branchTypeLabels[item.branchType]}</td>
                   <td><span className={`status-badge ${item.active ? "status-badge--active" : "status-badge--inactive"}`}>{item.active ? "เปิดขาย" : "ปิดขาย"}</span></td>
                   <td>
-                    <button type="button" className="icon-action" onClick={() => handleProductEditStart(item)} aria-label={`แก้ไข ${item.name}`}>
-                      <Edit2 size={16} />
-                    </button>
+                    <div className="row-actions">
+                      <button type="button" className="icon-action" onClick={() => handleProductEditStart(item)} aria-label={`แก้ไข ${item.name}`}>
+                        <Edit2 size={16} />
+                      </button>
+                      <button type="button" className="icon-action" onClick={() => handleRecipeProductSelect(item)} aria-label={`ตั้งสูตร ${item.name}`}>
+                        <PackageCheck size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -574,6 +765,114 @@ export default function InventoryPage() {
             </div>
           </form>
         )}
+      </section>
+
+      <section className="panel recipe-builder-panel">
+        <div className="panel__header">
+          <div>
+            <h2>สูตรตัดสต็อกเมนูกาแฟ</h2>
+            <p className="muted">กำหนดวัตถุดิบที่จะถูกตัดทุกครั้งที่ขายเมนูนี้</p>
+          </div>
+          {selectedRecipeProduct && <span className="badge">{recipeSummary.length} รายการในสูตร</span>}
+        </div>
+
+        <div className="recipe-builder">
+          <div className="recipe-products">
+            <label className="inventory-search">
+              <Search size={16} />
+              <input value={recipeProductSearch} onChange={(e) => setRecipeProductSearch(e.target.value)} placeholder="ค้นหาเมนูขาย" />
+            </label>
+            <div className="recipe-product-list">
+              {recipeProducts.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className={`recipe-product-row ${selectedRecipeProduct?.id === item.id ? "is-selected" : ""}`}
+                  onClick={() => handleRecipeProductSelect(item)}
+                >
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small>{item.category} · {formatMoney(item.basePrice)}</small>
+                  </span>
+                  <PackageCheck size={16} />
+                </button>
+              ))}
+              {recipeProducts.length === 0 && <div className="empty">ไม่พบเมนูขาย</div>}
+            </div>
+          </div>
+
+          <div className="recipe-editor">
+            {selectedRecipeProduct ? (
+              <>
+                <div className="recipe-editor__head">
+                  <div>
+                    <h3>{selectedRecipeProduct.name}</h3>
+                    <p className="muted">{isRecipeLoading ? "กำลังโหลดสูตร" : "จำนวนด้านล่างคือวัตถุดิบที่ใช้ต่อการขาย 1 แก้ว/1 รายการ"}</p>
+                  </div>
+                  <div className="recipe-preset-row">
+                    {recipePresets.map((preset) => (
+                      <button type="button" key={preset.id} className="btn btn--ghost" onClick={() => handleApplyRecipePreset(preset.id)}>
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="recipe-add-box">
+                  <label className="inventory-search">
+                    <Search size={16} />
+                    <input value={recipeIngredientSearch} onChange={(e) => setRecipeIngredientSearch(e.target.value)} placeholder="ค้นหาวัตถุดิบ เช่น แก้วเย็น" />
+                  </label>
+                  <div className="recipe-ingredient-picks">
+                    {recipeIngredientMatches.map((item) => (
+                      <button type="button" key={item.ingredientId} className="recipe-ingredient-chip" onClick={() => handleAddRecipeIngredient(item)}>
+                        <Plus size={14} />
+                        <span>{item.name}</span>
+                        <small>{item.stockQty} {item.unit}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="recipe-lines">
+                  {recipeSummary.map((item) => (
+                    <div key={item.ingredientId} className="recipe-line">
+                      <div>
+                        <strong>{item.name}</strong>
+                        <small>คงเหลือ {item.stockQty} {item.unit} · จุดสั่งซื้อ {item.reorderLevel}</small>
+                      </div>
+                      <div className="recipe-line__qty">
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={recipeLines.find((line) => Number(line.ingredientId) === item.ingredientId)?.qty ?? ""}
+                          onChange={(e) => handleRecipeQtyChange(item.ingredientId, e.target.value)}
+                        />
+                        <span>{item.unit}/รายการ</span>
+                        <button type="button" className="icon-action" onClick={() => handleRemoveRecipeLine(item.ingredientId)} aria-label={`ลบ ${item.name} ออกจากสูตร`}>
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {recipeSummary.length === 0 && <div className="stock-editor-empty">ยังไม่มีวัตถุดิบในสูตร</div>}
+                </div>
+
+                <div className="inventory-editor__actions">
+                  <button type="button" className="btn btn--ghost" onClick={() => setRecipeLines([])} disabled={isSubmitting || recipeLines.length === 0}>ล้างสูตร</button>
+                  <button type="button" className="btn btn--primary" onClick={handleSaveRecipe} disabled={isSubmitting}>
+                    <Save size={16} />
+                    บันทึกสูตร
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="stock-editor-empty">เลือกเมนูขายเพื่อเริ่มตั้งสูตรตัดสต็อก</div>
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="inventory-layout">

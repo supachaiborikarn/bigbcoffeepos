@@ -145,10 +145,11 @@ export async function syncPosposData(branchId: number) {
 
     const branchType = BRANCH_TYPE_MAP[branchId] || branch.branchType || "coffee";
 
-    if (productApiData && productApiData.length > 0) {
-      console.log(`  ✓ Got ${productApiData.length} products from API`);
+    const apiData = productApiData as any[] | null;
+    if (apiData && apiData.length > 0) {
+      console.log(`  ✓ Got ${apiData.length} products from API`);
 
-      for (const p of productApiData) {
+      for (const p of apiData) {
         const name = (p.name || "").trim();
         if (!name || p.delete) continue;
 

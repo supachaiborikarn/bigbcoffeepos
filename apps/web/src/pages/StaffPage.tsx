@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getUsers, getBranches, addUser, updateUser, deleteUser } from "../api";
 import type { User, Branch } from "../types";
 import { useToast } from "../contexts/ToastContext";
-import { FiPlus, FiEdit2, FiTrash2, FiX, FiCheck, FiUser } from "react-icons/fi";
+import { Plus, Pencil, Trash2, X, Check, UserIcon } from "lucide-react";
 
 export default function StaffPage() {
   const [staffList, setStaffList] = useState<User[]>([]);
@@ -113,7 +113,7 @@ export default function StaffPage() {
             <p className="muted">จัดการพนักงานและสิทธิ์การใช้งานระบบ</p>
           </div>
           <button className="btn btn--primary" onClick={openAddModal} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <FiPlus /> เพิ่มพนักงาน
+            <Plus size={18} /> เพิ่มพนักงาน
           </button>
         </div>
         
@@ -137,7 +137,7 @@ export default function StaffPage() {
                     <td style={{ padding: "16px 24px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                         <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--bg-alt)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>
-                          <FiUser />
+                          <UserIcon size={20} />
                         </div>
                         <div>
                           <div style={{ fontWeight: 500 }}>{user.name}</div>
@@ -155,7 +155,7 @@ export default function StaffPage() {
                     </td>
                     <td style={{ padding: "16px 24px" }}>
                       {user.active !== false ? (
-                        <span style={{ color: "var(--success)", display: "flex", alignItems: "center", gap: 4, fontSize: 14 }}><FiCheck /> ใช้งานปกติ</span>
+                        <span style={{ color: "var(--success)", display: "flex", alignItems: "center", gap: 4, fontSize: 14 }}><Check size={16} /> ใช้งานปกติ</span>
                       ) : (
                         <span style={{ color: "var(--danger)", fontSize: 14 }}>ระงับการใช้งาน</span>
                       )}
@@ -163,10 +163,10 @@ export default function StaffPage() {
                     <td style={{ padding: "16px 24px", textAlign: "right" }}>
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                         <button className="btn btn--outline" onClick={() => openEditModal(user)} style={{ padding: 8 }}>
-                          <FiEdit2 size={16} />
+                          <Pencil size={16} />
                         </button>
                         <button className="btn btn--outline" onClick={() => handleDelete(user.id, user.name)} style={{ padding: 8, color: "var(--danger)", borderColor: "var(--danger-light)" }}>
-                          <FiTrash2 size={16} />
+                          <Trash2 size={16} />
                         </button>
                       </div>
                     </td>
@@ -189,7 +189,7 @@ export default function StaffPage() {
           <div className="panel" style={{ width: 480, maxWidth: "90vw", animation: "slideUp 0.2s ease-out" }}>
             <div className="panel__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 16 }}>
               <h3 style={{ margin: 0 }}>{formData.id > 0 ? "แก้ไขข้อมูลพนักงาน" : "เพิ่มพนักงานใหม่"}</h3>
-              <button className="btn" onClick={() => setShowModal(false)} style={{ padding: 4, border: "none", background: "none" }}><FiX size={24} /></button>
+              <button className="btn" onClick={() => setShowModal(false)} style={{ padding: 4, border: "none", background: "none" }}><X size={24} /></button>
             </div>
             <form onSubmit={handleSave} style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               <div>

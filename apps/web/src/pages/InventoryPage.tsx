@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Edit2, PackageCheck, Plus, Save, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Edit2, PackageCheck, Plus, Save, Search, X } from "lucide-react";
 import {
   createIngredient,
   createMenuItem,
@@ -27,6 +27,8 @@ const branchTypeLabels: Record<MenuItem["branchType"], string> = {
   coffee: "ร้านกาแฟ",
   oil_service: "ศูนย์บริการน้ำมัน"
 };
+
+const PRODUCT_PAGE_SIZE = 50;
 
 type ProductFormState = {
   name: string;
@@ -114,6 +116,7 @@ export default function InventoryPage() {
   const [productSearch, setProductSearch] = useState("");
   const [productCategory, setProductCategory] = useState("ทั้งหมด");
   const [productStatus, setProductStatus] = useState<"all" | "active" | "inactive">("all");
+  const [productPage, setProductPage] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState<MenuItem | null>(null);
   const [productEditForm, setProductEditForm] = useState<ProductFormState | null>(null);
 
@@ -142,6 +145,14 @@ export default function InventoryPage() {
       return true;
     });
   }, [menu, productCategory, productSearch, productStatus]);
+
+  const productPageCount = Math.max(1, Math.ceil(visibleProducts.length / PRODUCT_PAGE_SIZE));
+  const paginatedProducts = useMemo(() => {
+    const start = (productPage - 1) * PRODUCT_PAGE_SIZE;
+    return visibleProducts.slice(start, start + PRODUCT_PAGE_SIZE);
+  }, [productPage, visibleProducts]);
+  const productStartIndex = visibleProducts.length === 0 ? 0 : (productPage - 1) * PRODUCT_PAGE_SIZE + 1;
+  const productEndIndex = Math.min(productPage * PRODUCT_PAGE_SIZE, visibleProducts.length);
 
   const visibleStock = useMemo(() => {
     const query = stockSearch.trim().toLowerCase();
@@ -186,6 +197,14 @@ export default function InventoryPage() {
   useEffect(() => {
     setMenuForm((prev) => ({ ...prev, branchType: defaultBranchType }));
   }, [defaultBranchType]);
+
+  useEffect(() => {
+    setProductPage(1);
+  }, [productCategory, productSearch, productStatus]);
+
+  useEffect(() => {
+    setProductPage((current) => Math.min(current, productPageCount));
+  }, [productPageCount]);
 
   useEffect(() => {
     refreshInventory().catch(() => {});
@@ -475,7 +494,7 @@ export default function InventoryPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleProducts.map((item) => (
+              {paginatedProducts.map((item) => (
                 <tr key={item.id} className={selectedProduct?.id === item.id ? "is-selected" : ""}>
                   <td>
                     <strong>{item.name}</strong>
@@ -501,6 +520,23 @@ export default function InventoryPage() {
           </table>
           {visibleProducts.length === 0 && <div className="empty">ไม่พบสินค้า</div>}
         </div>
+
+        {visibleProducts.length > 0 && (
+          <div className="inventory-pagination">
+            <span>แสดง {productStartIndex}-{productEndIndex} จาก {visibleProducts.length} รายการ</span>
+            <div>
+              <button type="button" className="btn btn--ghost" onClick={() => setProductPage((page) => Math.max(1, page - 1))} disabled={productPage === 1}>
+                <ChevronLeft size={16} />
+                ก่อนหน้า
+              </button>
+              <strong>หน้า {productPage} / {productPageCount}</strong>
+              <button type="button" className="btn btn--ghost" onClick={() => setProductPage((page) => Math.min(productPageCount, page + 1))} disabled={productPage === productPageCount}>
+                ถัดไป
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {selectedProduct && productEditForm && (
           <form className="inventory-editor" onSubmit={handleProductUpdate}>

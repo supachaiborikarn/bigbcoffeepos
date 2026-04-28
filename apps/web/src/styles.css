@@ -713,6 +713,11 @@ h3 {
   cursor: not-allowed;
 }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn--ghost {
   background: var(--canvas-alt);
   border: 1px solid var(--border);
@@ -1137,6 +1142,26 @@ h3 {
   font-size: 11px;
 }
 
+.inventory-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inventory-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+}
+
+.inventory-pagination strong {
+  white-space: nowrap;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -1327,6 +1352,12 @@ h3 {
   }
 
   .inventory-editor__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inventory-pagination,
+  .inventory-pagination > div {
     align-items: stretch;
     flex-direction: column;
   }

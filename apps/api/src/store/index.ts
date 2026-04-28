@@ -1,7 +1,7 @@
 export { getBranches, getBranch } from "./branches.js";
 export { getCustomers, getCustomer, addCustomer, updateCustomer, updateCustomerPoints } from "./customers.js";
 export { getMenu, getMenuItem, addMenuItem, updateMenuItem } from "./menu.js";
-export { getIngredients, addIngredient, updateIngredient, getInventoryItems, adjustStock, getStockMovements, getRecipes, getRecipe, setRecipe } from "./inventory.js";
+export { getIngredients, addIngredient, updateIngredient, getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, getRecipes, getRecipe, setRecipe } from "./inventory.js";
 export { getOrders, getOrder, updateOrderStatus, createOrder } from "./orders.js";
 export { openShift, closeShift, getCurrentShift, getShift, getShifts, getShiftSummary } from "./shifts.js";
 export { authenticatePin, getUsers, getUser, addUser, updateUser, deleteUser } from "./users.js";

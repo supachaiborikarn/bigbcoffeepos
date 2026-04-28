@@ -114,12 +114,13 @@ export type Customer = {
 
 export type MenuItem = {
   id: number;
-  sku?: string;
-  barcode?: string;
+  sku?: string | null;
+  barcode?: string | null;
   name: string;
   category: string;
   basePrice: number;
-  cost?: number;
+  cost?: number | null;
+  branchType: "coffee" | "oil_service";
   active: boolean;
   createdAt: string;
 };

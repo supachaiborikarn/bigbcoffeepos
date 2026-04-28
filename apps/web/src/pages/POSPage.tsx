@@ -146,7 +146,7 @@ export default function POSPage() {
       return;
     }
     addCartItem(item);
-    setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} เข้าตะกร้าแล้ว`, code: item.barcode || item.sku });
+    setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} เข้าตะกร้าแล้ว`, code: item.barcode || item.sku || undefined });
     window.requestAnimationFrame(() => scannerInputRef.current?.focus());
   };
 

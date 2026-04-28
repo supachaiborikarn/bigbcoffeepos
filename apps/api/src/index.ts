@@ -8,7 +8,7 @@ import {
   getBranches, getCustomers, addCustomer, updateCustomer,
   getMenu, addMenuItem, updateMenuItem,
   getIngredients, addIngredient, updateIngredient,
-  getInventoryItems, adjustStock, getStockMovements,
+  getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
   getRecipes, getRecipe, setRecipe,
   getOrders, getOrder, createOrder, updateOrderStatus,
   openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
@@ -27,6 +27,8 @@ app.use(express.json({ limit: "2mb" }));
 function parseId(raw: string | number | undefined) { const id = Number(raw); return Number.isFinite(id) ? id : null; }
 function isStr(v: unknown): v is string { return typeof v === "string" && v.trim().length > 0; }
 function parseMoney(v: unknown) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null; }
+function parseNonNegativeNumber(v: unknown) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) / 1000 : null; }
+function parseBranchType(v: unknown) { return v === "coffee" || v === "oil_service" ? v : undefined; }
 
 /* ─── Local Mode Init ─── */
 if (isLocalMode) {
@@ -132,17 +134,19 @@ app.post("/api/menu", async (req, res) => {
   const category = isStr(req.body?.category) ? req.body.category.trim() : "";
   const basePrice = parseMoney(req.body?.basePrice);
   if (!name || !category || basePrice === null) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
-  const item = await addMenuItem({ name, category, basePrice, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(), cost: parseMoney(req.body?.cost) ?? undefined, branchType: req.body?.branchType });
+  const item = await addMenuItem({ name, category, basePrice, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(), cost: parseMoney(req.body?.cost) ?? undefined, branchType: parseBranchType(req.body?.branchType) });
   return res.status(201).json({ item });
 });
 app.put("/api/menu/:id", async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const cost = req.body?.cost === null || req.body?.cost === "" ? null : req.body?.cost !== undefined ? parseMoney(req.body.cost) ?? undefined : undefined;
   const item = await updateMenuItem(id, {
     name: req.body?.name?.trim(), category: req.body?.category?.trim(),
     basePrice: req.body?.basePrice !== undefined ? parseMoney(req.body.basePrice) ?? undefined : undefined,
     active: req.body?.active, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(),
-    cost: req.body?.cost !== undefined ? parseMoney(req.body.cost) ?? undefined : undefined
+    cost,
+    branchType: parseBranchType(req.body?.branchType)
   });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
   return res.json({ item });
@@ -171,6 +175,35 @@ app.get("/api/inventory", async (req, res) => {
   const branchId = parseId(req.query.branchId as string);
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
   res.json({ items: await getInventoryItems(branchId) });
+});
+app.put("/api/inventory/:ingredientId", async (req, res) => {
+  const branchId = parseId(req.body?.branchId);
+  const ingredientId = parseId(req.params.ingredientId);
+  if (branchId === null || ingredientId === null) return res.status(400).json({ error: "ระบุสาขาและสินค้า" });
+
+  const costPerUnit = req.body?.costPerUnit !== undefined ? parseMoney(req.body.costPerUnit) : undefined;
+  const stockQty = req.body?.stockQty !== undefined ? parseNonNegativeNumber(req.body.stockQty) : undefined;
+  const reorderLevel = req.body?.reorderLevel !== undefined ? parseNonNegativeNumber(req.body.reorderLevel) : undefined;
+
+  if (req.body?.costPerUnit !== undefined && costPerUnit === null) return res.status(400).json({ error: "ต้นทุนไม่ถูกต้อง" });
+  if (req.body?.stockQty !== undefined && stockQty === null) return res.status(400).json({ error: "จำนวนคงเหลือไม่ถูกต้อง" });
+  if (req.body?.reorderLevel !== undefined && reorderLevel === null) return res.status(400).json({ error: "จุดสั่งซื้อไม่ถูกต้อง" });
+
+  const normalizedCostPerUnit = costPerUnit === null ? undefined : costPerUnit;
+  const normalizedStockQty = stockQty === null ? undefined : stockQty;
+  const normalizedReorderLevel = reorderLevel === null ? undefined : reorderLevel;
+
+  const item = await updateInventoryItem({
+    branchId,
+    ingredientId,
+    name: req.body?.name?.trim(),
+    unit: req.body?.unit?.trim(),
+    costPerUnit: normalizedCostPerUnit,
+    stockQty: normalizedStockQty,
+    reorderLevel: normalizedReorderLevel
+  });
+  if (!item) return res.status(404).json({ error: "ไม่พบสินค้าในสต็อก" });
+  return res.json({ item });
 });
 app.post("/api/stock-adjustments", async (req, res) => {
   const branchId = parseId(req.body?.branchId);

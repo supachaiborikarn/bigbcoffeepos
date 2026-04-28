@@ -83,6 +83,89 @@ export async function getInventoryItems(branchId: number) {
   });
 }
 
+export async function updateInventoryItem(input: {
+  branchId: number;
+  ingredientId: number;
+  name?: string;
+  unit?: string;
+  costPerUnit?: number;
+  stockQty?: number;
+  reorderLevel?: number;
+}) {
+  const ingredient = await prisma.ingredient.findUnique({
+    where: { id: input.ingredientId }
+  });
+  if (!ingredient) return null;
+
+  const currentStock = await prisma.ingredientStock.findUnique({
+    where: {
+      branchId_ingredientId: {
+        branchId: input.branchId,
+        ingredientId: input.ingredientId
+      }
+    }
+  });
+  const currentQty = currentStock?.stockQty ?? 0;
+  const hasIngredientUpdates =
+    input.name !== undefined ||
+    input.unit !== undefined ||
+    input.costPerUnit !== undefined;
+  const hasStockUpdates =
+    input.stockQty !== undefined ||
+    input.reorderLevel !== undefined;
+
+  await prisma.$transaction(async (tx) => {
+    if (hasIngredientUpdates) {
+      await tx.ingredient.update({
+        where: { id: input.ingredientId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.unit !== undefined ? { unit: input.unit } : {}),
+          ...(input.costPerUnit !== undefined ? { costPerUnit: input.costPerUnit } : {})
+        }
+      });
+    }
+
+    if (hasStockUpdates) {
+      await tx.ingredientStock.upsert({
+        where: {
+          branchId_ingredientId: {
+            branchId: input.branchId,
+            ingredientId: input.ingredientId
+          }
+        },
+        update: {
+          ...(input.stockQty !== undefined ? { stockQty: input.stockQty } : {}),
+          ...(input.reorderLevel !== undefined ? { reorderLevel: input.reorderLevel } : {})
+        },
+        create: {
+          branchId: input.branchId,
+          ingredientId: input.ingredientId,
+          stockQty: input.stockQty ?? 0,
+          reorderLevel: input.reorderLevel ?? 0
+        }
+      });
+
+      if (input.stockQty !== undefined) {
+        const diff = input.stockQty - currentQty;
+        if (diff !== 0) {
+          await tx.stockMovement.create({
+            data: {
+              branchId: input.branchId,
+              ingredientId: input.ingredientId,
+              qty: diff,
+              reason: "STOCK_EDIT"
+            }
+          });
+        }
+      }
+    }
+  });
+
+  const items = await getInventoryItems(input.branchId);
+  return items.find((item) => item.ingredientId === input.ingredientId) ?? null;
+}
+
 export async function adjustStock(input: { branchId: number; ingredientId: number; qty: number; reason: string }) {
   // Upsert stock record
   const stock = await prisma.ingredientStock.upsert({

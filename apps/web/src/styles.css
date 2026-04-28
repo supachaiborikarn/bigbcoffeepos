@@ -692,6 +692,10 @@ h3 {
   padding: 8px 14px;
   border-radius: 8px;
   font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 
@@ -994,6 +998,338 @@ h3 {
 .negative {
   color: #b5482b;
   font-weight: 600;
+}
+
+.inventory-workspace {
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: var(--pos-bg);
+}
+
+.inventory-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: var(--shadow-soft);
+}
+
+.inventory-summary h1 {
+  font-size: 24px;
+}
+
+.inventory-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.inventory-kpis div {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.inventory-kpis span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inventory-kpis strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 24px;
+}
+
+.inventory-product-panel,
+.inventory-stock-panel {
+  border-radius: 8px;
+}
+
+.inventory-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 220px 160px;
+  gap: 10px;
+}
+
+.inventory-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--canvas-alt);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--muted);
+  min-height: 46px;
+}
+
+.inventory-search input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+}
+
+.inventory-search--small {
+  min-width: 260px;
+}
+
+.inventory-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.inventory-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+.inventory-table th {
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.inventory-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  font-size: 13px;
+}
+
+.inventory-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.inventory-table tbody tr:hover,
+.inventory-table tbody tr.is-selected {
+  background: var(--accent-subtle);
+}
+
+.inventory-table td strong,
+.inventory-table td small {
+  display: block;
+}
+
+.inventory-table td small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.status-badge--active {
+  background: var(--success-bg);
+  color: #047857;
+}
+
+.status-badge--inactive {
+  background: var(--danger-bg);
+  color: #b91c1c;
+}
+
+.icon-action {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.icon-action:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
+.inventory-editor {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.inventory-editor__header,
+.inventory-editor__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inventory-editor__actions {
+  justify-content: flex-end;
+}
+
+.inventory-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.inventory-form-grid--compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.toggle-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.inventory-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.stock-manager {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.stock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.stock-row {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.stock-row:hover,
+.stock-row.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.stock-row span:first-child {
+  min-width: 0;
+}
+
+.stock-row small,
+.movement-row small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.stock-editor-empty {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.purchase-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.purchase-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+@media (max-width: 1180px) {
+  .inventory-summary,
+  .inventory-toolbar,
+  .inventory-layout,
+  .stock-manager {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-kpis,
+  .inventory-form-grid,
+  .inventory-form-grid--compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .inventory-workspace {
+    padding: 12px;
+  }
+
+  .inventory-kpis,
+  .inventory-form-grid,
+  .inventory-form-grid--compact {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-search--small {
+    min-width: 0;
+  }
+
+  .inventory-editor__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .recipe-panel {

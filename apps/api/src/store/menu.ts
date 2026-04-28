@@ -24,7 +24,7 @@ export async function addMenuItem(input: {
       basePrice: input.basePrice,
       sku: input.sku || null,
       barcode: input.barcode || null,
-      cost: input.cost || null,
+      cost: input.cost ?? null,
       branchType: input.branchType || "coffee"
     }
   });
@@ -39,7 +39,8 @@ export async function updateMenuItem(
     active: boolean;
     sku: string;
     barcode: string;
-    cost: number;
+    cost: number | null;
+    branchType: string;
   }>
 ) {
   const item = await getMenuItem(id);
@@ -54,7 +55,8 @@ export async function updateMenuItem(
       ...(input.active !== undefined ? { active: input.active } : {}),
       ...(input.sku !== undefined ? { sku: input.sku || null } : {}),
       ...(input.barcode !== undefined ? { barcode: input.barcode || null } : {}),
-      ...(input.cost !== undefined ? { cost: input.cost } : {})
+      ...(input.cost !== undefined ? { cost: input.cost } : {}),
+      ...(input.branchType !== undefined ? { branchType: input.branchType } : {})
     }
   });
 }

@@ -16,7 +16,7 @@ const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
 const navItems = [
   { to: "/dashboard", label: "แดชบอร์ด", icon: LayoutDashboard, minRole: 2 },
   { to: "/pos", label: "หน้าร้าน", icon: Store, minRole: 1 },
-  { to: "/inventory", label: "สินค้า & สต็อก", icon: Package, minRole: 2 },
+  { to: "/inventory", label: "สต็อกสินค้า", icon: Package, minRole: 2 },
   { to: "/staff", label: "พนักงาน", icon: Users, minRole: 3 },
   { to: "/reports", label: "รายงาน", icon: BarChart3, minRole: 2 },
   { to: "/migration", label: "ย้ายข้อมูล", icon: Database, minRole: 3 },

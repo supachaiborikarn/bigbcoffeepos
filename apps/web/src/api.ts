@@ -106,6 +106,7 @@ export async function createMenuItem(input: {
   sku?: string;
   barcode?: string;
   cost?: number;
+  branchType?: MenuItem["branchType"];
 }) {
   const payload = await fetchJson<{ item: MenuItem }>(`${API_URL}/menu`, {
     method: "POST",
@@ -123,7 +124,8 @@ export async function updateMenuItem(
     active: boolean;
     sku: string;
     barcode: string;
-    cost: number;
+    cost: number | null;
+    branchType: MenuItem["branchType"];
   }>
 ) {
   const payload = await fetchJson<{ item: MenuItem }>(`${API_URL}/menu/${id}`,
@@ -143,6 +145,26 @@ export async function getIngredients() {
 export async function getInventory(branchId: number) {
   const payload = await fetchJson<{ items: InventoryItem[] }>(`${API_URL}/inventory?branchId=${branchId}`);
   return payload.items;
+}
+
+export async function updateInventoryItem(
+  ingredientId: number,
+  input: Partial<{
+    branchId: number;
+    name: string;
+    unit: string;
+    costPerUnit: number;
+    stockQty: number;
+    reorderLevel: number;
+  }>
+) {
+  const payload = await fetchJson<{ item: InventoryItem }>(`${API_URL}/inventory/${ingredientId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input)
+    }
+  );
+  return payload.item;
 }
 
 export async function createIngredient(input: {

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
+import { Coffee } from "lucide-react";
 
 export default function LoginPage() {
   const { user, login, error } = useAuth();
@@ -29,32 +30,50 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="page-center">
-      <div className="panel login-card">
-        <div className="brand__mark" style={{ width: 72, height: 72, fontSize: 24, margin: "0 auto 16px" }}>BB</div>
-        <h1 style={{ fontSize: 24, marginBottom: 4, textAlign: "center" }}>Big B Coffee</h1>
-        <p className="muted" style={{ marginBottom: 24, textAlign: "center" }}>กรุณาใส่ PIN เพื่อเข้าสู่ระบบ</p>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "var(--bg-page)", padding: 20 }}>
+      <div style={{
+        background: "var(--bg-surface)", borderRadius: 24, padding: "48px 40px",
+        boxShadow: "var(--shadow-lg)", width: 400, maxWidth: "100%", textAlign: "center",
+        animation: "scaleIn 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+        border: "1px solid var(--border)",
+      }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 16,
+          background: "linear-gradient(135deg, #10B981, #059669)",
+          color: "white", display: "flex", alignItems: "center", justifyContent: "center",
+          margin: "0 auto 20px", boxShadow: "0 4px 12px rgba(16,185,129,0.3)"
+        }}>
+          <Coffee size={24} />
+        </div>
+
+        <h1 style={{ fontSize: 24, marginBottom: 4, fontWeight: 700, letterSpacing: "-0.02em" }}>Big B Coffee</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 32 }}>กรุณาใส่ PIN เพื่อเข้าสู่ระบบ</p>
+
         <input
           className="input"
           type="password"
           inputMode="numeric"
           maxLength={4}
-          placeholder="PIN 4 หลัก"
+          placeholder="● ● ● ●"
           value={pin}
-          onChange={(e) => setPin(e.target.value)}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
           onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
-          style={{ textAlign: "center", fontSize: 28, letterSpacing: "0.5em" }}
+          style={{ textAlign: "center", fontSize: 28, letterSpacing: "0.5em", padding: "14px 16px", borderRadius: 12 }}
           autoFocus
         />
-        {error && <p style={{ color: "#b5482b", marginTop: 8, textAlign: "center" }}>{error}</p>}
+
+        {error && <p style={{ color: "var(--danger)", marginTop: 12, fontSize: 13, fontWeight: 500 }}>{error}</p>}
+
         <button
-          className="btn btn--primary btn--full"
-          style={{ marginTop: 16 }}
+          className="btn btn--primary btn--full btn--lg"
+          style={{ marginTop: 20 }}
           onClick={handleSubmit}
           disabled={loading || pin.length < 4}
         >
           {loading ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
         </button>
+
+        <p style={{ marginTop: 24, fontSize: 11, color: "var(--text-muted)" }}>Big B Coffee POS Platform</p>
       </div>
     </div>
   );

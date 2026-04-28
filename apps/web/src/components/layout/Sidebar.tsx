@@ -1,48 +1,64 @@
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
-import { 
-  LayoutDashboard, 
-  Store, 
-  Package, 
-  Users, 
-  BarChart3, 
-  Settings, 
+import { useBranch } from "../../contexts/BranchContext";
+import {
+  LayoutDashboard,
+  Store,
+  Package,
+  Users,
+  BarChart3,
+  Settings,
   LogOut,
-  Database
+  Coffee,
+  UserCircle,
+  Wallet,
 } from "lucide-react";
 
 const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
 
 const navItems = [
   { to: "/dashboard", label: "แดชบอร์ด", icon: LayoutDashboard, minRole: 2 },
-  { to: "/pos", label: "หน้าร้าน", icon: Store, minRole: 1 },
+  { to: "/pos", label: "ขายสินค้า", icon: Store, minRole: 1 },
   { to: "/inventory", label: "สต็อกสินค้า", icon: Package, minRole: 2 },
+  { to: "/customers", label: "ลูกค้า", icon: UserCircle, minRole: 2 },
   { to: "/staff", label: "พนักงาน", icon: Users, minRole: 3 },
   { to: "/reports", label: "รายงาน", icon: BarChart3, minRole: 2 },
-  { to: "/migration", label: "ย้ายข้อมูล", icon: Database, minRole: 3 },
+  { to: "/finance", label: "การเงิน", icon: Wallet, minRole: 3 },
   { to: "/settings", label: "ตั้งค่า", icon: Settings, minRole: 3 },
 ];
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
+  const { branches, activeBranch, setBranchId } = useBranch();
   const userLevel = ROLE_LEVEL[user?.role ?? "cashier"] ?? 0;
 
   return (
     <aside className="sidebar">
+      {/* Brand */}
       <div className="sidebar__brand">
-        <span style={{ fontWeight: 800 }}>POSPOS</span><span style={{ fontWeight: 400, fontSize: 12, marginLeft: 4 }}>Smart</span>
-      </div>
-
-      <div className="sidebar__user-panel">
-        <div className="sidebar__user-avatar">{user?.name?.charAt(0) || "U"}</div>
-        <div className="sidebar__user-info">
-          <strong>{user?.name}</strong>
-          <span>ออนไลน์</span>
+        <div className="sidebar__brand-icon">
+          <Coffee size={18} />
+        </div>
+        <div className="sidebar__brand-text">
+          <span className="sidebar__brand-name">Big B Coffee</span>
+          <span className="sidebar__brand-sub">POS Platform</span>
         </div>
       </div>
 
-      <div className="sidebar__nav-header">เมนูหลัก</div>
+      {/* Branch Selector */}
+      <select
+        className="sidebar__branch-select"
+        value={activeBranch?.id ?? ""}
+        onChange={(e) => setBranchId(Number(e.target.value))}
+      >
+        {branches.map((b) => (
+          <option key={b.id} value={b.id}>{b.name}</option>
+        ))}
+      </select>
 
+      <div className="sidebar__section-label">เมนูหลัก</div>
+
+      {/* Navigation */}
       <nav className="sidebar__nav">
         {navItems.filter((n) => userLevel >= n.minRole).map((item) => {
           const Icon = item.icon;
@@ -50,7 +66,9 @@ export default function Sidebar() {
             <NavLink
               key={item.to}
               to={item.to}
-              className={({ isActive }) => `sidebar__link ${isActive ? "sidebar__link--active" : ""}`}
+              className={({ isActive }) =>
+                `sidebar__link ${isActive ? "sidebar__link--active" : ""}`
+              }
             >
               <Icon className="sidebar__icon" size={18} />
               <span>{item.label}</span>
@@ -59,26 +77,19 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div style={{ padding: "15px", marginTop: "auto" }}>
-        <button 
-          onClick={logout} 
-          style={{
-            width: "100%",
-            background: "#d9534f",
-            color: "white",
-            border: "none",
-            padding: "10px",
-            borderRadius: "4px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px",
-            cursor: "pointer",
-            fontSize: "14px",
-            fontWeight: "bold"
-          }}
-        >
-          <LogOut size={16} />
+      {/* Footer */}
+      <div className="sidebar__footer">
+        <div className="sidebar__user-panel">
+          <div className="sidebar__user-avatar">
+            {user?.name?.charAt(0) || "U"}
+          </div>
+          <div className="sidebar__user-info">
+            <strong>{user?.name}</strong>
+            <span>ออนไลน์</span>
+          </div>
+        </div>
+        <button className="sidebar__logout" onClick={logout}>
+          <LogOut size={14} />
           ออกจากระบบ
         </button>
       </div>

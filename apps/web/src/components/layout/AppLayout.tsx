@@ -16,15 +16,16 @@ export default function AppLayout() {
 
   return (
     <div className="app-layout">
-      <TopBar />
       <div className="app-layout__body">
         <Sidebar />
         <div className="app-layout__main">
-          <div className="app-layout__content" style={{ padding: isPOSPage ? "0" : "16px" }}>
+          <div className="app-layout__content" style={{ padding: isPOSPage ? "0" : undefined, overflow: isPOSPage ? "hidden" : undefined }}>
             <Outlet />
           </div>
         </div>
       </div>
+      {/* TopBar renders shift modals only (no header bar) */}
+      <TopBar />
     </div>
   );
 }

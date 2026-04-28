@@ -1035,26 +1035,28 @@ export default function InventoryPage() {
                 <p className="muted">รับเข้า/ตัดออกแบบ manual พร้อม movement log</p>
               </div>
             </div>
-            <form onSubmit={handleStockAdjust} className="inventory-form-grid inventory-form-grid--compact">
-              <select className="input" value={adjustForm.ingredientId} onChange={(e) => setAdjustForm({ ...adjustForm, ingredientId: e.target.value })}>
-                <option value="">เลือกวัตถุดิบ</option>
-                {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-              <input className="input" type="number" value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: e.target.value })} placeholder="+ รับเข้า / - ตัดออก" step="0.001" />
-              <input className="input" value={adjustForm.reason} onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })} placeholder="เหตุผล" />
-              <button className="btn btn--primary" disabled={isSubmitting}>บันทึกการปรับสต็อก</button>
-            </form>
-            <div className="movement-list">
-              <strong>Movement ล่าสุด</strong>
-              {movements.slice(0, 8).map((movement) => (
-                <div key={movement.id} className="movement-row">
-                  <span>
-                    {ingredientNameById.get(movement.ingredientId) ?? `สินค้า #${movement.ingredientId}`}
-                    <small>{movement.reason}</small>
-                  </span>
-                  <strong className={movement.qty >= 0 ? "positive" : "negative"}>{movement.qty >= 0 ? "+" : ""}{movement.qty}</strong>
-                </div>
-              ))}
+            <div className="panel__body">
+              <form onSubmit={handleStockAdjust} className="inventory-form-grid inventory-form-grid--compact">
+                <select className="input" value={adjustForm.ingredientId} onChange={(e) => setAdjustForm({ ...adjustForm, ingredientId: e.target.value })}>
+                  <option value="">เลือกวัตถุดิบ</option>
+                  {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+                <input className="input" type="number" value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: e.target.value })} placeholder="+ รับเข้า / - ตัดออก" step="0.001" />
+                <input className="input" value={adjustForm.reason} onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })} placeholder="เหตุผล" />
+                <button className="btn btn--primary" disabled={isSubmitting}>บันทึกการปรับสต็อก</button>
+              </form>
+              <div className="movement-list">
+                <strong>Movement ล่าสุด</strong>
+                {movements.slice(0, 8).map((movement) => (
+                  <div key={movement.id} className="movement-row">
+                    <span>
+                      {ingredientNameById.get(movement.ingredientId) ?? `สินค้า #${movement.ingredientId}`}
+                      <small>{movement.reason}</small>
+                    </span>
+                    <strong className={movement.qty >= 0 ? "positive" : "negative"}>{movement.qty >= 0 ? "+" : ""}{movement.qty}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
 
@@ -1065,34 +1067,36 @@ export default function InventoryPage() {
                 <p className="muted">ทำรายการซื้อและเพิ่มสต็อกทันที</p>
               </div>
             </div>
-            <div className="inventory-form-grid inventory-form-grid--compact">
-              <input className="input" value={purchaseForm.supplier} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplier: e.target.value })} placeholder="ผู้ขาย/ซัพพลายเออร์" />
-              <input className="input" value={purchaseForm.note} onChange={(e) => setPurchaseForm({ ...purchaseForm, note: e.target.value })} placeholder="หมายเหตุ" />
-              <select className="input" value={purchaseForm.ingredientId} onChange={(e) => setPurchaseForm({ ...purchaseForm, ingredientId: e.target.value })}>
-                <option value="">เลือกวัตถุดิบ</option>
-                {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-              <input className="input" type="number" value={purchaseForm.qty} onChange={(e) => setPurchaseForm({ ...purchaseForm, qty: e.target.value })} placeholder="จำนวน" min="0" step="0.001" />
-              <input className="input" type="number" value={purchaseForm.unitCost} onChange={(e) => setPurchaseForm({ ...purchaseForm, unitCost: e.target.value })} placeholder="ต้นทุน" min="0" step="0.01" />
-              <button type="button" className="btn btn--ghost" onClick={handleAddPurchaseLine}>เพิ่มรายการ</button>
-            </div>
-            <div className="purchase-lines">
-              {purchaseItems.map((item, index) => (
-                <div key={`${item.ingredientId}-${index}`} className="purchase-line">
-                  <span>{item.ingredientName} · {item.qty} {item.unit}</span>
-                  <strong>{formatMoney(item.lineTotal ?? item.qty * item.unitCost)}</strong>
-                </div>
-              ))}
-            </div>
-            <button type="button" className="btn btn--primary" disabled={isSubmitting || !purchaseItems.length} onClick={handleReceivePurchase}>รับสินค้าเข้า</button>
-            <div className="movement-list">
-              <strong>ประวัติรับเข้า</strong>
-              {purchases.slice(0, 5).map((purchase) => (
-                <div key={purchase.id} className="movement-row">
-                  <span>{purchase.supplier || "ไม่ระบุผู้ขาย"}<small>{purchase.itemCount} รายการ</small></span>
-                  <strong>{formatMoney(purchase.totalCost)}</strong>
-                </div>
-              ))}
+            <div className="panel__body">
+              <div className="inventory-form-grid inventory-form-grid--compact">
+                <input className="input" value={purchaseForm.supplier} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplier: e.target.value })} placeholder="ผู้ขาย/ซัพพลายเออร์" />
+                <input className="input" value={purchaseForm.note} onChange={(e) => setPurchaseForm({ ...purchaseForm, note: e.target.value })} placeholder="หมายเหตุ" />
+                <select className="input" value={purchaseForm.ingredientId} onChange={(e) => setPurchaseForm({ ...purchaseForm, ingredientId: e.target.value })}>
+                  <option value="">เลือกวัตถุดิบ</option>
+                  {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+                <input className="input" type="number" value={purchaseForm.qty} onChange={(e) => setPurchaseForm({ ...purchaseForm, qty: e.target.value })} placeholder="จำนวน" min="0" step="0.001" />
+                <input className="input" type="number" value={purchaseForm.unitCost} onChange={(e) => setPurchaseForm({ ...purchaseForm, unitCost: e.target.value })} placeholder="ต้นทุน" min="0" step="0.01" />
+                <button type="button" className="btn btn--ghost" onClick={handleAddPurchaseLine}>เพิ่มรายการ</button>
+              </div>
+              <div className="purchase-lines">
+                {purchaseItems.map((item, index) => (
+                  <div key={`${item.ingredientId}-${index}`} className="purchase-line">
+                    <span>{item.ingredientName} · {item.qty} {item.unit}</span>
+                    <strong>{formatMoney(item.lineTotal ?? item.qty * item.unitCost)}</strong>
+                  </div>
+                ))}
+              </div>
+              <button type="button" className="btn btn--primary" disabled={isSubmitting || !purchaseItems.length} onClick={handleReceivePurchase}>รับสินค้าเข้า</button>
+              <div className="movement-list">
+                <strong>ประวัติรับเข้า</strong>
+                {purchases.slice(0, 5).map((purchase) => (
+                  <div key={purchase.id} className="movement-row">
+                    <span>{purchase.supplier || "ไม่ระบุผู้ขาย"}<small>{purchase.itemCount} รายการ</small></span>
+                    <strong>{formatMoney(purchase.totalCost)}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
         </section>

@@ -175,6 +175,7 @@ button { font-family: inherit; }
 .panel__header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 24px; }
 .panel__header h2 { font-size: 16px; }
 .panel__header .muted { font-size: 12px; margin-top: 2px; }
+.panel__body { padding: 0 24px 24px; display: flex; flex-direction: column; gap: 20px; flex: 1; }
 
 /* ═══ BUTTONS ═══ */
 .btn { border: none; background: transparent; cursor: pointer; font-family: inherit; padding: 8px 16px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: all var(--duration-fast) var(--ease-out); position: relative; overflow: hidden; white-space: nowrap; }
@@ -321,6 +322,8 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .scanner-input:focus { border-color: var(--brand); }
 /* ═══ INVENTORY ═══ */
 .inventory-workspace { height: 100%; overflow: auto; padding: 0; display: flex; flex-direction: column; gap: 20px; }
+.inventory-layout { display: flex; gap: 20px; align-items: flex-start; }
+@media (max-width: 1024px) { .inventory-layout { flex-direction: column; } }
 .inventory-summary { display: flex; justify-content: space-between; align-items: center; gap: 20px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 24px; box-shadow: var(--shadow-card); }
 .inventory-summary h1 { font-size: 22px; }
 .inventory-kpis { display: flex; gap: 12px; }
@@ -371,6 +374,15 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .stock-row .positive { color: var(--success); font-weight: 600; font-size: 13px; }
 .stock-row .negative { color: var(--danger); font-weight: 600; font-size: 13px; }
 .stock-editor-empty { display: flex; align-items: center; justify-content: center; padding: 40px; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--text-muted); font-size: 14px; text-align: center; height: fit-content; }
+
+/* ═══ MOVEMENTS ═══ */
+.movement-list { display: flex; flex-direction: column; gap: 8px; }
+.movement-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-subtle); }
+.movement-row span { display: flex; flex-direction: column; font-size: 13px; font-weight: 500; }
+.movement-row small { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-top: 2px; }
+.movement-row strong { font-size: 14px; font-weight: 700; }
+.purchase-lines { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding-right: 4px; }
+.purchase-line { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-surface); font-size: 13px; }
 
 /* Recipe Builder */
 .recipe-builder-panel { border-radius: var(--radius-md); }

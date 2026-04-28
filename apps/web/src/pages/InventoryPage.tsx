@@ -170,6 +170,9 @@ export default function InventoryPage() {
   const [recipeLines, setRecipeLines] = useState<RecipeLineForm[]>([]);
   const [isRecipeLoading, setIsRecipeLoading] = useState(false);
 
+  type TabType = "products" | "recipes" | "ingredients" | "movements";
+  const [activeTab, setActiveTab] = useState<TabType>("products");
+
   const lowStockItems = useMemo(
     () => inventory.filter((item) => item.stockQty <= item.reorderLevel),
     [inventory]
@@ -641,7 +644,42 @@ export default function InventoryPage() {
         </div>
       </section>
 
-      <section className="panel inventory-product-panel">
+      {/* TABS */}
+      <div style={{ display: "flex", gap: "12px", marginBottom: "24px", borderBottom: "1px solid var(--border)", paddingBottom: "16px" }}>
+        <button 
+          className={`btn ${activeTab === "products" ? "btn--primary" : "btn--ghost"}`}
+          onClick={() => setActiveTab("products")}
+          style={{ borderRadius: "20px", padding: "8px 16px" }}
+        >
+          สินค้า & เมนูขาย
+        </button>
+        <button 
+          className={`btn ${activeTab === "recipes" ? "btn--primary" : "btn--ghost"}`}
+          onClick={() => setActiveTab("recipes")}
+          style={{ borderRadius: "20px", padding: "8px 16px" }}
+        >
+          สูตรส่วนผสม
+        </button>
+        <button 
+          className={`btn ${activeTab === "ingredients" ? "btn--primary" : "btn--ghost"}`}
+          onClick={() => setActiveTab("ingredients")}
+          style={{ borderRadius: "20px", padding: "8px 16px" }}
+        >
+          สต็อกวัตถุดิบ
+        </button>
+        <button 
+          className={`btn ${activeTab === "movements" ? "btn--primary" : "btn--ghost"}`}
+          onClick={() => setActiveTab("movements")}
+          style={{ borderRadius: "20px", padding: "8px 16px" }}
+        >
+          เข้า/ออกสต็อก
+        </button>
+      </div>
+
+      {/* PRODUCTS TAB */}
+      {activeTab === "products" && (
+        <section className="inventory-layout" style={{ animation: "slideUp 0.2s ease-out" }}>
+          <section className="panel inventory-product-panel" style={{ flex: 2 }}>
         <div className="panel__header">
           <div>
             <h2>รายการสินค้า</h2>
@@ -762,11 +800,40 @@ export default function InventoryPage() {
                 บันทึกสินค้า
               </button>
             </div>
-          </form>
-        )}
-      </section>
+            </form>
+          )}
+        </section>
 
-      <section className="panel recipe-builder-panel">
+        <form onSubmit={handleAddMenu} className="panel" style={{ flex: 1, height: "fit-content" }}>
+          <div className="panel__header">
+            <div>
+              <h2>เพิ่มสินค้าใหม่</h2>
+              <p className="muted">สร้างสินค้าเพื่อขายในหน้า POS</p>
+            </div>
+            <Plus size={18} />
+          </div>
+          <div className="inventory-form-grid inventory-form-grid--compact">
+            <input className="input" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
+            <input className="input" value={menuForm.category} onChange={(e) => setMenuForm({ ...menuForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
+            <input className="input" type="number" value={menuForm.basePrice} onChange={(e) => setMenuForm({ ...menuForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
+            <input className="input" type="number" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
+            <input className="input" value={menuForm.sku} onChange={(e) => setMenuForm({ ...menuForm, sku: e.target.value })} placeholder="SKU" />
+            <input className="input" value={menuForm.barcode} onChange={(e) => setMenuForm({ ...menuForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
+            <select className="input" value={menuForm.branchType} onChange={(e) => setMenuForm({ ...menuForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
+              <option value="coffee">ร้านกาแฟ</option>
+            </select>
+          </div>
+          <button type="submit" className="btn btn--primary" disabled={isSubmitting} style={{ marginTop: 16, width: "100%" }}>
+            <PackageCheck size={16} />
+            บันทึกสินค้า
+          </button>
+        </form>
+      </section>
+      )}
+
+      {/* RECIPES TAB */}
+      {activeTab === "recipes" && (
+        <section className="panel recipe-builder-panel" style={{ animation: "slideUp 0.2s ease-out" }}>
         <div className="panel__header">
           <div>
             <h2>สูตรตัดสต็อกเมนูกาแฟ</h2>
@@ -873,182 +940,163 @@ export default function InventoryPage() {
           </div>
         </div>
       </section>
+      )}
 
-      <section className="inventory-layout">
-        <form onSubmit={handleAddMenu} className="panel">
-          <div className="panel__header">
-            <div>
-              <h2>เพิ่มสินค้าใหม่</h2>
-              <p className="muted">สร้างสินค้าเพื่อขายในหน้า POS</p>
-            </div>
-            <Plus size={18} />
-          </div>
-          <div className="inventory-form-grid inventory-form-grid--compact">
-            <input className="input" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} placeholder="ชื่อสินค้า" />
-            <input className="input" value={menuForm.category} onChange={(e) => setMenuForm({ ...menuForm, category: e.target.value })} placeholder="หมวดหมู่" />
-            <input className="input" type="number" value={menuForm.basePrice} onChange={(e) => setMenuForm({ ...menuForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
-            <input className="input" type="number" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} placeholder="ต้นทุน" min="0" step="0.01" />
-            <input className="input" value={menuForm.sku} onChange={(e) => setMenuForm({ ...menuForm, sku: e.target.value })} placeholder="SKU" />
-            <input className="input" value={menuForm.barcode} onChange={(e) => setMenuForm({ ...menuForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
-            <select className="input" value={menuForm.branchType} onChange={(e) => setMenuForm({ ...menuForm, branchType: e.target.value as MenuItem["branchType"] })}>
-              <option value="coffee">ร้านกาแฟ</option>
-              <option value="oil_service">ศูนย์บริการน้ำมัน</option>
-            </select>
-          </div>
-          <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
-            <PackageCheck size={16} />
-            บันทึกสินค้า
-          </button>
-        </form>
-
-        <form onSubmit={handleAddIngredient} className="panel">
-          <div className="panel__header">
-            <div>
-              <h2>เพิ่มวัตถุดิบ</h2>
-              <p className="muted">ตั้งต้นสินค้าในสต็อกของสาขา</p>
-            </div>
-            <Plus size={18} />
-          </div>
-          <div className="inventory-form-grid inventory-form-grid--compact">
-            <input className="input" value={ingredientForm.name} onChange={(e) => setIngredientForm({ ...ingredientForm, name: e.target.value })} placeholder="ชื่อวัตถุดิบ" />
-            <input className="input" value={ingredientForm.unit} onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })} placeholder="หน่วย" />
-            <input className="input" type="number" value={ingredientForm.costPerUnit} onChange={(e) => setIngredientForm({ ...ingredientForm, costPerUnit: e.target.value })} placeholder="ต้นทุน/หน่วย" min="0" step="0.01" />
-            <input className="input" type="number" value={ingredientForm.stockQty} onChange={(e) => setIngredientForm({ ...ingredientForm, stockQty: e.target.value })} placeholder="จำนวนตั้งต้น" min="0" step="0.001" />
-            <input className="input" type="number" value={ingredientForm.reorderLevel} onChange={(e) => setIngredientForm({ ...ingredientForm, reorderLevel: e.target.value })} placeholder="จุดสั่งซื้อ" min="0" step="0.001" />
-          </div>
-          <button type="submit" className="btn btn--ghost" disabled={isSubmitting}>บันทึกวัตถุดิบ</button>
-        </form>
-      </section>
-
-      <section className="panel inventory-stock-panel">
-        <div className="panel__header">
-          <div>
-            <h2>สต็อกสาขา</h2>
-            <p className="muted">{activeBranch?.name} · ต่ำกว่าเกณฑ์ {lowStockItems.length} รายการ</p>
-          </div>
-          <label className="inventory-search inventory-search--small">
-            <Search size={16} />
-            <input value={stockSearch} onChange={(e) => setStockSearch(e.target.value)} placeholder="ค้นหาสต็อก" />
-          </label>
-        </div>
-
-        <div className="stock-manager">
-          <div className="stock-list">
-            {visibleStock.map((item) => (
-              <button type="button" key={item.ingredientId} className={`stock-row ${selectedStock?.ingredientId === item.ingredientId ? "is-selected" : ""}`} onClick={() => handleStockEditStart(item)}>
-                <span>
-                  <strong>{item.name}</strong>
-                  <small>จุดสั่งซื้อ {item.reorderLevel} {item.unit} · ต้นทุน {formatMoney(item.costPerUnit)}</small>
-                </span>
-                <span className={item.stockQty <= item.reorderLevel ? "negative" : "positive"}>
-                  {item.stockQty} {item.unit}
-                </span>
-              </button>
-            ))}
-            {visibleStock.length === 0 && <div className="empty">ไม่มีข้อมูลสต็อก</div>}
-          </div>
-
-          {selectedStock && stockEditForm ? (
-            <form className="inventory-editor inventory-editor--stock" onSubmit={handleStockUpdate}>
-              <div className="inventory-editor__header">
-                <div>
-                  <h3>แก้ไขสต็อก</h3>
-                  <p className="muted">{selectedStock.name}</p>
-                </div>
-                <button type="button" className="icon-action" onClick={handleStockEditCancel} aria-label="ปิดฟอร์มแก้ไขสต็อก">
-                  <X size={16} />
-                </button>
+      {/* INGREDIENTS TAB */}
+      {activeTab === "ingredients" && (
+        <section className="inventory-layout" style={{ animation: "slideUp 0.2s ease-out" }}>
+          <section className="panel inventory-stock-panel" style={{ flex: 2 }}>
+            <div className="panel__header">
+              <div>
+                <h2>สต็อกสาขา</h2>
+                <p className="muted">{activeBranch?.name} · ต่ำกว่าเกณฑ์ {lowStockItems.length} รายการ</p>
               </div>
-              <div className="inventory-form-grid inventory-form-grid--compact">
-                <input className="input" value={stockEditForm.name} onChange={(e) => setStockEditForm({ ...stockEditForm, name: e.target.value })} placeholder="ชื่อวัตถุดิบ" />
-                <input className="input" value={stockEditForm.unit} onChange={(e) => setStockEditForm({ ...stockEditForm, unit: e.target.value })} placeholder="หน่วย" />
-                <input className="input" type="number" value={stockEditForm.costPerUnit} onChange={(e) => setStockEditForm({ ...stockEditForm, costPerUnit: e.target.value })} placeholder="ต้นทุน/หน่วย" min="0" step="0.01" />
-                <input className="input" type="number" value={stockEditForm.stockQty} onChange={(e) => setStockEditForm({ ...stockEditForm, stockQty: e.target.value })} placeholder="จำนวนคงเหลือ" min="0" step="0.001" />
-                <input className="input" type="number" value={stockEditForm.reorderLevel} onChange={(e) => setStockEditForm({ ...stockEditForm, reorderLevel: e.target.value })} placeholder="จุดสั่งซื้อ" min="0" step="0.001" />
-              </div>
-              <div className="inventory-editor__actions">
-                <button type="button" className="btn btn--ghost" onClick={handleStockEditCancel}>ยกเลิก</button>
-                <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
-                  <Save size={16} />
-                  บันทึกสต็อก
-                </button>
-              </div>
-            </form>
-          ) : (
-            <div className="stock-editor-empty">เลือกสต็อกหนึ่งรายการเพื่อแก้ไขชื่อ หน่วย ต้นทุน จุดสั่งซื้อ หรือยอดคงเหลือ</div>
-          )}
-        </div>
-      </section>
-
-      <section className="inventory-layout">
-        <section className="panel">
-          <div className="panel__header">
-            <div>
-              <h2>ปรับสต็อก</h2>
-              <p className="muted">รับเข้า/ตัดออกแบบ manual พร้อม movement log</p>
+              <label className="inventory-search inventory-search--small">
+                <Search size={16} />
+                <input value={stockSearch} onChange={(e) => setStockSearch(e.target.value)} placeholder="ค้นหาสต็อก" />
+              </label>
             </div>
-          </div>
-          <form onSubmit={handleStockAdjust} className="inventory-form-grid inventory-form-grid--compact">
-            <select className="input" value={adjustForm.ingredientId} onChange={(e) => setAdjustForm({ ...adjustForm, ingredientId: e.target.value })}>
-              <option value="">เลือกวัตถุดิบ</option>
-              {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-            <input className="input" type="number" value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: e.target.value })} placeholder="+ รับเข้า / - ตัดออก" step="0.001" />
-            <input className="input" value={adjustForm.reason} onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })} placeholder="เหตุผล" />
-            <button className="btn btn--primary" disabled={isSubmitting}>บันทึกการปรับสต็อก</button>
+
+            <div className="stock-manager">
+              <div className="stock-list">
+                {visibleStock.map((item) => (
+                  <button type="button" key={item.ingredientId} className={`stock-row ${selectedStock?.ingredientId === item.ingredientId ? "is-selected" : ""}`} onClick={() => handleStockEditStart(item)}>
+                    <span>
+                      <strong>{item.name}</strong>
+                      <small>จุดสั่งซื้อ {item.reorderLevel} {item.unit} · ต้นทุน {formatMoney(item.costPerUnit)}</small>
+                    </span>
+                    <span className={item.stockQty <= item.reorderLevel ? "negative" : "positive"}>
+                      {item.stockQty} {item.unit}
+                    </span>
+                  </button>
+                ))}
+                {visibleStock.length === 0 && <div className="empty">ไม่มีข้อมูลสต็อก</div>}
+              </div>
+
+              {selectedStock && stockEditForm ? (
+                <form className="inventory-editor inventory-editor--stock" onSubmit={handleStockUpdate}>
+                  <div className="inventory-editor__header">
+                    <div>
+                      <h3>แก้ไขสต็อก</h3>
+                      <p className="muted">{selectedStock.name}</p>
+                    </div>
+                    <button type="button" className="icon-action" onClick={handleStockEditCancel} aria-label="ปิดฟอร์มแก้ไขสต็อก">
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div className="inventory-form-grid inventory-form-grid--compact">
+                    <input className="input" value={stockEditForm.name} onChange={(e) => setStockEditForm({ ...stockEditForm, name: e.target.value })} placeholder="ชื่อวัตถุดิบ" />
+                    <input className="input" value={stockEditForm.unit} onChange={(e) => setStockEditForm({ ...stockEditForm, unit: e.target.value })} placeholder="หน่วย" />
+                    <input className="input" type="number" value={stockEditForm.costPerUnit} onChange={(e) => setStockEditForm({ ...stockEditForm, costPerUnit: e.target.value })} placeholder="ต้นทุน/หน่วย" min="0" step="0.01" />
+                    <input className="input" type="number" value={stockEditForm.stockQty} onChange={(e) => setStockEditForm({ ...stockEditForm, stockQty: e.target.value })} placeholder="จำนวนคงเหลือ" min="0" step="0.001" />
+                    <input className="input" type="number" value={stockEditForm.reorderLevel} onChange={(e) => setStockEditForm({ ...stockEditForm, reorderLevel: e.target.value })} placeholder="จุดสั่งซื้อ" min="0" step="0.001" />
+                  </div>
+                  <div className="inventory-editor__actions">
+                    <button type="button" className="btn btn--ghost" onClick={handleStockEditCancel}>ยกเลิก</button>
+                    <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
+                      <Save size={16} />
+                      บันทึกสต็อก
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="stock-editor-empty">เลือกสต็อกหนึ่งรายการเพื่อแก้ไขชื่อ หน่วย ต้นทุน จุดสั่งซื้อ หรือยอดคงเหลือ</div>
+              )}
+            </div>
+          </section>
+
+          <form onSubmit={handleAddIngredient} className="panel" style={{ flex: 1, height: "fit-content" }}>
+            <div className="panel__header">
+              <div>
+                <h2>เพิ่มวัตถุดิบ</h2>
+                <p className="muted">ตั้งต้นสินค้าในสต็อกของสาขา</p>
+              </div>
+              <Plus size={18} />
+            </div>
+            <div className="inventory-form-grid inventory-form-grid--compact">
+              <input className="input" value={ingredientForm.name} onChange={(e) => setIngredientForm({ ...ingredientForm, name: e.target.value })} placeholder="ชื่อวัตถุดิบ" />
+              <input className="input" value={ingredientForm.unit} onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })} placeholder="หน่วย" />
+              <input className="input" type="number" value={ingredientForm.costPerUnit} onChange={(e) => setIngredientForm({ ...ingredientForm, costPerUnit: e.target.value })} placeholder="ต้นทุน/หน่วย" min="0" step="0.01" />
+              <input className="input" type="number" value={ingredientForm.stockQty} onChange={(e) => setIngredientForm({ ...ingredientForm, stockQty: e.target.value })} placeholder="จำนวนตั้งต้น" min="0" step="0.001" />
+              <input className="input" type="number" value={ingredientForm.reorderLevel} onChange={(e) => setIngredientForm({ ...ingredientForm, reorderLevel: e.target.value })} placeholder="จุดสั่งซื้อ" min="0" step="0.001" />
+            </div>
+            <button type="submit" className="btn btn--primary" disabled={isSubmitting} style={{ marginTop: 16, width: "100%" }}>บันทึกวัตถุดิบ</button>
           </form>
-          <div className="movement-list">
-            <strong>Movement ล่าสุด</strong>
-            {movements.slice(0, 8).map((movement) => (
-              <div key={movement.id} className="movement-row">
-                <span>
-                  {ingredientNameById.get(movement.ingredientId) ?? `สินค้า #${movement.ingredientId}`}
-                  <small>{movement.reason}</small>
-                </span>
-                <strong className={movement.qty >= 0 ? "positive" : "negative"}>{movement.qty >= 0 ? "+" : ""}{movement.qty}</strong>
-              </div>
-            ))}
-          </div>
         </section>
+      )}
 
-        <section className="panel">
-          <div className="panel__header">
-            <div>
-              <h2>รับสินค้าเข้า</h2>
-              <p className="muted">ทำรายการซื้อและเพิ่มสต็อกทันที</p>
+      {/* MOVEMENTS TAB */}
+      {activeTab === "movements" && (
+        <section className="inventory-layout" style={{ animation: "slideUp 0.2s ease-out" }}>
+          <section className="panel">
+            <div className="panel__header">
+              <div>
+                <h2>ปรับสต็อก</h2>
+                <p className="muted">รับเข้า/ตัดออกแบบ manual พร้อม movement log</p>
+              </div>
             </div>
-          </div>
-          <div className="inventory-form-grid inventory-form-grid--compact">
-            <input className="input" value={purchaseForm.supplier} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplier: e.target.value })} placeholder="ผู้ขาย/ซัพพลายเออร์" />
-            <input className="input" value={purchaseForm.note} onChange={(e) => setPurchaseForm({ ...purchaseForm, note: e.target.value })} placeholder="หมายเหตุ" />
-            <select className="input" value={purchaseForm.ingredientId} onChange={(e) => setPurchaseForm({ ...purchaseForm, ingredientId: e.target.value })}>
-              <option value="">เลือกวัตถุดิบ</option>
-              {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-            <input className="input" type="number" value={purchaseForm.qty} onChange={(e) => setPurchaseForm({ ...purchaseForm, qty: e.target.value })} placeholder="จำนวน" min="0" step="0.001" />
-            <input className="input" type="number" value={purchaseForm.unitCost} onChange={(e) => setPurchaseForm({ ...purchaseForm, unitCost: e.target.value })} placeholder="ต้นทุน" min="0" step="0.01" />
-            <button type="button" className="btn btn--ghost" onClick={handleAddPurchaseLine}>เพิ่มรายการ</button>
-          </div>
-          <div className="purchase-lines">
-            {purchaseItems.map((item, index) => (
-              <div key={`${item.ingredientId}-${index}`} className="purchase-line">
-                <span>{item.ingredientName} · {item.qty} {item.unit}</span>
-                <strong>{formatMoney(item.lineTotal ?? item.qty * item.unitCost)}</strong>
+            <form onSubmit={handleStockAdjust} className="inventory-form-grid inventory-form-grid--compact">
+              <select className="input" value={adjustForm.ingredientId} onChange={(e) => setAdjustForm({ ...adjustForm, ingredientId: e.target.value })}>
+                <option value="">เลือกวัตถุดิบ</option>
+                {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              <input className="input" type="number" value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: e.target.value })} placeholder="+ รับเข้า / - ตัดออก" step="0.001" />
+              <input className="input" value={adjustForm.reason} onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })} placeholder="เหตุผล" />
+              <button className="btn btn--primary" disabled={isSubmitting}>บันทึกการปรับสต็อก</button>
+            </form>
+            <div className="movement-list">
+              <strong>Movement ล่าสุด</strong>
+              {movements.slice(0, 8).map((movement) => (
+                <div key={movement.id} className="movement-row">
+                  <span>
+                    {ingredientNameById.get(movement.ingredientId) ?? `สินค้า #${movement.ingredientId}`}
+                    <small>{movement.reason}</small>
+                  </span>
+                  <strong className={movement.qty >= 0 ? "positive" : "negative"}>{movement.qty >= 0 ? "+" : ""}{movement.qty}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel__header">
+              <div>
+                <h2>รับสินค้าเข้า</h2>
+                <p className="muted">ทำรายการซื้อและเพิ่มสต็อกทันที</p>
               </div>
-            ))}
-          </div>
-          <button type="button" className="btn btn--primary" disabled={isSubmitting || !purchaseItems.length} onClick={handleReceivePurchase}>รับสินค้าเข้า</button>
-          <div className="movement-list">
-            <strong>ประวัติรับเข้า</strong>
-            {purchases.slice(0, 5).map((purchase) => (
-              <div key={purchase.id} className="movement-row">
-                <span>{purchase.supplier || "ไม่ระบุผู้ขาย"}<small>{purchase.itemCount} รายการ</small></span>
-                <strong>{formatMoney(purchase.totalCost)}</strong>
-              </div>
-            ))}
-          </div>
+            </div>
+            <div className="inventory-form-grid inventory-form-grid--compact">
+              <input className="input" value={purchaseForm.supplier} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplier: e.target.value })} placeholder="ผู้ขาย/ซัพพลายเออร์" />
+              <input className="input" value={purchaseForm.note} onChange={(e) => setPurchaseForm({ ...purchaseForm, note: e.target.value })} placeholder="หมายเหตุ" />
+              <select className="input" value={purchaseForm.ingredientId} onChange={(e) => setPurchaseForm({ ...purchaseForm, ingredientId: e.target.value })}>
+                <option value="">เลือกวัตถุดิบ</option>
+                {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              <input className="input" type="number" value={purchaseForm.qty} onChange={(e) => setPurchaseForm({ ...purchaseForm, qty: e.target.value })} placeholder="จำนวน" min="0" step="0.001" />
+              <input className="input" type="number" value={purchaseForm.unitCost} onChange={(e) => setPurchaseForm({ ...purchaseForm, unitCost: e.target.value })} placeholder="ต้นทุน" min="0" step="0.01" />
+              <button type="button" className="btn btn--ghost" onClick={handleAddPurchaseLine}>เพิ่มรายการ</button>
+            </div>
+            <div className="purchase-lines">
+              {purchaseItems.map((item, index) => (
+                <div key={`${item.ingredientId}-${index}`} className="purchase-line">
+                  <span>{item.ingredientName} · {item.qty} {item.unit}</span>
+                  <strong>{formatMoney(item.lineTotal ?? item.qty * item.unitCost)}</strong>
+                </div>
+              ))}
+            </div>
+            <button type="button" className="btn btn--primary" disabled={isSubmitting || !purchaseItems.length} onClick={handleReceivePurchase}>รับสินค้าเข้า</button>
+            <div className="movement-list">
+              <strong>ประวัติรับเข้า</strong>
+              {purchases.slice(0, 5).map((purchase) => (
+                <div key={purchase.id} className="movement-row">
+                  <span>{purchase.supplier || "ไม่ระบุผู้ขาย"}<small>{purchase.itemCount} รายการ</small></span>
+                  <strong>{formatMoney(purchase.totalCost)}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
         </section>
-      </section>
+      )}
     </main>
   );
 }

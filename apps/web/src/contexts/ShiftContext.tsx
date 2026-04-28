@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import type { Shift } from "../types";
+import type { Shift, ShiftCloseResult } from "../types";
 import {
   getCurrentShift,
   openShift as apiOpenShift,
@@ -12,7 +12,7 @@ type ShiftContextType = {
   activeShift: Shift | null;
   loading: boolean;
   openShift: (openingCash: number) => Promise<void>;
-  closeShift: (closingCash: number) => Promise<Shift>;
+  closeShift: (closingCash: number, details?: { cashCounts?: Record<string, number>; note?: string }) => Promise<ShiftCloseResult>;
   refreshShift: () => Promise<void>;
 };
 
@@ -57,11 +57,11 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
     }
   }, [activeBranch, user]);
 
-  const closeShift = useCallback(async (closingCash: number): Promise<Shift> => {
+  const closeShift = useCallback(async (closingCash: number, details?: { cashCounts?: Record<string, number>; note?: string }): Promise<ShiftCloseResult> => {
     if (!activeShift) throw new Error("ไม่มีกะที่เปิดอยู่");
     setLoading(true);
     try {
-      const closed = await apiCloseShift(activeShift.id, closingCash);
+      const closed = await apiCloseShift(activeShift.id, closingCash, details);
       setActiveShift(null);
       return closed;
     } finally {

@@ -48,7 +48,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   
   const { activeBranch } = useBranch();
   const { user } = useAuth();
-  const { activeShift } = useShift();
+  const { activeShift, refreshShift } = useShift();
   const toast = useToast();
   const previousBranchId = useRef<number | null>(null);
 
@@ -170,13 +170,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
         shiftId: activeShift.id,
       });
       clearCart();
+      await refreshShift();
       toast.success("ชำระเงินสำเร็จ");
       return order;
     } catch (e) {
       toast.error((e as Error).message);
       throw e;
     }
-  }, [cart, activeBranch, activeShift, user, discountType, discountValue, discountRules, clearCart, toast]);
+  }, [cart, activeBranch, activeShift, user, discountType, discountValue, discountRules, clearCart, refreshShift, toast]);
 
   return (
     <CartContext.Provider value={{

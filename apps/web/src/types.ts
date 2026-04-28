@@ -56,6 +56,54 @@ export type Shift = {
   closedAt: string | null;
 };
 
+export type ShiftPaymentSummary = {
+  method: PaymentMethod;
+  count: number;
+  total: number;
+};
+
+export type ShiftSummary = {
+  shift: Shift;
+  branch: { id: number; name: string; location?: string };
+  user: { id: number; name: string; role: string } | null;
+  openedAt: string | null;
+  closedAt: string | null;
+  durationMinutes: number;
+  totals: {
+    totalSales: number;
+    subtotal: number;
+    discountAmount: number;
+    loyaltyPointsUsed: number;
+    tax: number;
+    totalOrders: number;
+    averageTicket: number;
+    paidOrders: number;
+    readyOrders: number;
+  };
+  cash: {
+    openingCash: number;
+    cashSales: number;
+    expectedCash: number;
+    closingCash: number | null;
+    difference: number | null;
+  };
+  payments: ShiftPaymentSummary[];
+  topItems: Array<{ menuItemId: number; name: string; qty: number; revenue: number }>;
+  orders: Array<{
+    id: number;
+    status: OrderStatus;
+    total: number;
+    paymentMethod: PaymentMethod;
+    itemCount: number;
+    createdAt: string | null;
+  }>;
+};
+
+export type ShiftCloseResult = {
+  shift: Shift;
+  summary: ShiftSummary | null;
+};
+
 export type Customer = {
   id: number;
   name: string;

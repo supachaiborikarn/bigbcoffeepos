@@ -2348,7 +2348,7 @@ h3 {
 
 @media print {
   body * { visibility: hidden; }
-  .receipt-print, .receipt-print * { visibility: visible !important; }
+  .receipt-print, .receipt-print *, .shift-print, .shift-print * { visibility: visible !important; }
   .receipt-print {
     display: block !important;
     position: fixed;
@@ -2366,6 +2366,59 @@ h3 {
   .receipt-print__items { border-bottom: 1px dashed #000; padding-bottom: 4px; margin-bottom: 4px; }
   .receipt-print__total { font-size: 16px; font-weight: 700; }
   .receipt-print__footer { text-align: center; margin-top: 8px; font-size: 10px; border-top: 1px dashed #000; padding-top: 8px; }
+
+  .shift-print {
+    display: block !important;
+    position: fixed;
+    inset: 0 auto auto 0;
+    width: 80mm;
+    min-height: 100vh;
+    padding: 4mm;
+    background: #fff;
+    color: #000;
+    font-family: "IBM Plex Sans Thai", monospace;
+    font-size: 11px;
+  }
+  .shift-print hr {
+    border: none;
+    border-top: 1px dashed #000;
+    margin: 8px 0;
+  }
+  .shift-print__header {
+    text-align: center;
+    border-bottom: 1px dashed #000;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  .shift-print__header h1 {
+    font-family: inherit;
+    font-size: 16px;
+    margin: 0;
+    color: #000;
+  }
+  .shift-print__header p,
+  .shift-print__footer p,
+  .shift-print__section {
+    margin: 2px 0;
+    color: #000;
+    font-size: 10px;
+    text-align: center;
+  }
+  .shift-print__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+  }
+  .shift-print__total {
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .shift-print__footer {
+    border-top: 1px dashed #000;
+    margin-top: 8px;
+    padding-top: 8px;
+  }
 }
 
 /* ─── Shortcut Hints ─── */
@@ -2590,6 +2643,27 @@ h3 {
   gap: 8px;
 }
 
+.shift-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(47, 122, 67, 0.24);
+  background: rgba(47, 122, 67, 0.08);
+  color: #2f7a43;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.shift-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2f7a43;
+  box-shadow: 0 0 0 3px rgba(47, 122, 67, 0.12);
+}
+
 /* ─── Modal ─── */
 .modal-backdrop {
   position: fixed;
@@ -2636,6 +2710,131 @@ h3 {
   line-height: 1;
 }
 .modal__close:hover { color: var(--ink); }
+
+.shift-modal {
+  max-width: 520px;
+}
+
+.shift-modal--wide {
+  max-width: 980px;
+}
+
+.shift-step-note {
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.shift-preset-row,
+.shift-modal-actions,
+.shift-count-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shift-preset-row {
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.shift-cash-display {
+  font-size: 32px;
+  text-align: center;
+  font-weight: 700;
+  margin-bottom: 8px;
+  height: 60px;
+}
+
+.shift-close-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.shift-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.shift-money-panel,
+.shift-payment-list {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shift-money-panel div,
+.shift-payment-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shift-money-panel__total {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  font-size: 16px;
+}
+
+.shift-count-header {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.cash-count-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.cash-count-row {
+  display: grid;
+  grid-template-columns: 86px 1fr 100px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-alt);
+}
+
+.cash-count-row input {
+  text-align: center;
+}
+
+.cash-count-row strong {
+  text-align: right;
+}
+
+.shift-modal-actions {
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.shift-print {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .shift-close-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .cash-count-row {
+    grid-template-columns: 78px 1fr 88px;
+  }
+}
 
 @keyframes fadeIn { from { opacity: 0; } }
 @keyframes slideUp { from { transform: translateY(12px); opacity: 0; } }

@@ -3,7 +3,7 @@ export { getCustomers, getCustomer, addCustomer, updateCustomer, updateCustomerP
 export { getMenu, getMenuItem, addMenuItem, updateMenuItem } from "./menu.js";
 export { getIngredients, addIngredient, updateIngredient, getInventoryItems, adjustStock, getStockMovements, getRecipes, getRecipe, setRecipe } from "./inventory.js";
 export { getOrders, getOrder, updateOrderStatus, createOrder } from "./orders.js";
-export { openShift, closeShift, getCurrentShift, getShift, getShifts } from "./shifts.js";
+export { openShift, closeShift, getCurrentShift, getShift, getShifts, getShiftSummary } from "./shifts.js";
 export { authenticatePin, getUsers, getUser, addUser, updateUser, deleteUser } from "./users.js";
 export { getSalesSummary, getProfitReport, getStaffPerformance } from "./reports.js";
 export { createPurchase, getPurchases, getPurchase } from "./purchases.js";

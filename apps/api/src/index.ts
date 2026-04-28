@@ -11,7 +11,7 @@ import {
   getInventoryItems, adjustStock, getStockMovements,
   getRecipes, getRecipe, setRecipe,
   getOrders, getOrder, createOrder, updateOrderStatus,
-  openShift, closeShift, getCurrentShift, getShifts,
+  openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
   authenticatePin, getUsers, addUser, updateUser, deleteUser,
   getSalesSummary, getProfitReport, getStaffPerformance,
   createPurchase, getPurchases,
@@ -270,8 +270,17 @@ app.post("/api/shifts/:id/close", async (req, res) => {
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
     const shift = await closeShift(id, Number(req.body?.closingCash) || 0);
-    return res.json({ shift });
+    const summary = await getShiftSummary(id);
+    return res.json({ shift, summary });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/shifts/:id/summary", async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const summary = await getShiftSummary(id);
+  if (!summary) return res.status(404).json({ error: "ไม่พบกะที่ระบุ" });
+  return res.json({ summary });
 });
 
 /* ─── Reports ─── */

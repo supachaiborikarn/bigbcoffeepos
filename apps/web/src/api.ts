@@ -19,6 +19,8 @@ import type {
   Recipe,
   SalesSummary,
   Shift,
+  ShiftCloseResult,
+  ShiftSummary,
   StockMovement,
   User,
   DiscountRule,
@@ -324,12 +326,17 @@ export async function openShift(input: { branchId: number; userId?: number; open
   return payload.shift;
 }
 
-export async function closeShift(shiftId: number, closingCash: number) {
-  const payload = await fetchJson<{ shift: Shift }>(`${API_URL}/shifts/${shiftId}/close`, {
+export async function closeShift(shiftId: number, closingCash: number, details?: { cashCounts?: Record<string, number>; note?: string }) {
+  const payload = await fetchJson<ShiftCloseResult>(`${API_URL}/shifts/${shiftId}/close`, {
     method: "POST",
-    body: JSON.stringify({ closingCash })
+    body: JSON.stringify({ closingCash, ...details })
   });
-  return payload.shift;
+  return payload;
+}
+
+export async function getShiftSummary(shiftId: number) {
+  const payload = await fetchJson<{ summary: ShiftSummary }>(`${API_URL}/shifts/${shiftId}/summary`);
+  return payload.summary;
 }
 
 export async function getShifts(branchId: number) {

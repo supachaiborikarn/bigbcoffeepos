@@ -25,11 +25,13 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
     <div style={{
       display: "grid",
       gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+      gridAutoRows: "max-content",
       gap: "16px",
       alignContent: "start",
       padding: "20px 24px",
       overflowY: "auto",
-      flex: 1
+      flex: 1,
+      minHeight: 0
     }}>
       {visibleMenu.length === 0 ? (
         <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px", color: "var(--muted)" }}>

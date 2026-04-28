@@ -13,7 +13,7 @@ export async function authenticatePin(pin: string) {
 
 export async function getUsers() {
   return prisma.user.findMany({
-    select: { id: true, name: true, role: true, active: true, createdAt: true },
+    select: { id: true, name: true, role: true, active: true, createdAt: true, branchId: true, branch: { select: { id: true, name: true } } },
     orderBy: { id: "asc" }
   });
 }
@@ -21,23 +21,23 @@ export async function getUsers() {
 export async function getUser(id: number) {
   return prisma.user.findUnique({
     where: { id },
-    select: { id: true, name: true, role: true, active: true, createdAt: true }
+    select: { id: true, name: true, role: true, active: true, createdAt: true, branchId: true, branch: { select: { id: true, name: true } } }
   });
 }
 
-export async function addUser(data: { name: string; pin: string; role: UserRole }) {
+export async function addUser(data: { name: string; pin: string; role: UserRole; branchId?: number }) {
   const existing = await prisma.user.findFirst({ where: { pin: data.pin } });
   if (existing) throw new Error("PIN นี้ถูกใช้แล้ว");
 
   const created = await prisma.user.create({
-    data: { name: data.name, pin: data.pin, role: data.role }
+    data: { name: data.name, pin: data.pin, role: data.role, branchId: data.branchId }
   });
   return getUser(created.id);
 }
 
 export async function updateUser(
   id: number,
-  data: { name?: string; pin?: string; role?: UserRole; active?: boolean | number }
+  data: { name?: string; pin?: string; role?: UserRole; active?: boolean | number; branchId?: number | null }
 ) {
   const user = await getUser(id);
   if (!user) return null;
@@ -59,7 +59,8 @@ export async function updateUser(
       ...(data.name !== undefined ? { name: data.name } : {}),
       ...(data.pin !== undefined ? { pin: data.pin } : {}),
       ...(data.role !== undefined ? { role: data.role } : {}),
-      ...(activeBool !== undefined ? { active: activeBool } : {})
+      ...(activeBool !== undefined ? { active: activeBool } : {}),
+      ...(data.branchId !== undefined ? { branchId: data.branchId } : {})
     }
   });
 

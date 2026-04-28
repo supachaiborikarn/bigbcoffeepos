@@ -54,6 +54,29 @@ export async function getUsers() {
   return payload.items;
 }
 
+export async function addUser(data: { name: string; pin: string; role: string; branchId?: number }) {
+  const payload = await fetchJson<{ user: User }>(`${API_URL}/users`, {
+    method: "POST",
+    body: JSON.stringify(data)
+  });
+  return payload.user;
+}
+
+export async function updateUser(id: number, data: { name?: string; pin?: string; role?: string; branchId?: number | null; active?: boolean }) {
+  const payload = await fetchJson<{ user: User }>(`${API_URL}/users/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data)
+  });
+  return payload.user;
+}
+
+export async function deleteUser(id: number) {
+  const payload = await fetchJson<{ user: User }>(`${API_URL}/users/${id}`, {
+    method: "DELETE"
+  });
+  return payload.user;
+}
+
 export async function getCustomers(search?: string) {
   const query = new URLSearchParams();
   if (search) query.set("search", search);

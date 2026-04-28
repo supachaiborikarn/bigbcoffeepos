@@ -63,10 +63,11 @@ app.post("/api/users", async (req, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const pin = isStr(req.body?.pin) ? req.body.pin.trim() : "";
   const role = req.body?.role || "cashier";
+  const branchId = parseId(req.body?.branchId);
   if (!name || !pin) return res.status(400).json({ error: "กรุณากรอกชื่อและ PIN" });
   if (pin.length !== 4 || !/^\d{4}$/.test(pin)) return res.status(400).json({ error: "PIN ต้องเป็นตัวเลข 4 หลัก" });
   if (!["admin", "manager", "cashier"].includes(role)) return res.status(400).json({ error: "Role ไม่ถูกต้อง" });
-  try { return res.status(201).json({ user: await addUser({ name, pin, role: role as "admin"|"manager"|"cashier" }) }); }
+  try { return res.status(201).json({ user: await addUser({ name, pin, role: role as "admin"|"manager"|"cashier", branchId: branchId ?? undefined }) }); }
   catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
@@ -81,6 +82,10 @@ app.put("/api/users/:id", async (req, res) => {
   }
   if (req.body?.role && ["admin", "manager", "cashier"].includes(req.body.role)) data.role = req.body.role;
   if (req.body?.active !== undefined) data.active = req.body.active ? 1 : 0;
+  if (req.body?.branchId !== undefined) {
+    const bId = parseId(req.body.branchId);
+    data.branchId = bId !== null ? bId : null;
+  }
   try {
     const user = await updateUser(id, data);
     if (!user) return res.status(404).json({ error: "ไม่พบพนักงาน" });

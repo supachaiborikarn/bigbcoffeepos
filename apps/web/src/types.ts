@@ -34,6 +34,8 @@ export type User = {
   name: string;
   role: "admin" | "manager" | "cashier";
   branchId?: number | null;
+  branch?: { id: number; name: string } | null;
+  active?: boolean;
 };
 
 export type Shift = {

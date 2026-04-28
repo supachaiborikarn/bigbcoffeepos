@@ -2,11 +2,14 @@ import { useState } from "react";
 import { useBranch } from "../../contexts/BranchContext";
 import { useShift } from "../../contexts/ShiftContext";
 import { useToast } from "../../contexts/ToastContext";
+import { useAuth } from "../../contexts/AuthContext";
+import Numpad from "../ui/Numpad";
 
 const formatter = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
 function formatMoney(v: number) { return formatter.format(v); }
 
 export default function TopBar() {
+  const { user } = useAuth();
   const { branches, activeBranch, setBranchId } = useBranch();
   const { activeShift, openShift, closeShift, loading } = useShift();
   const toast = useToast();
@@ -48,15 +51,26 @@ export default function TopBar() {
           </select>
         </div>
         <div className="topbar__right">
-          {activeShift ? (
-            <button className="btn btn--ghost" onClick={() => { setCashInput(""); setShowShiftModal("close"); }}>
-              🔒 ปิดกะ
-            </button>
-          ) : (
-            <button className="btn btn--primary" onClick={() => { setCashInput(""); setShowShiftModal("open"); }}>
-              🟢 เปิดกะ
-            </button>
-          )}
+          <div className="topbar__item" style={{ gap: "12px", cursor: "default" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+              <strong style={{ fontSize: "14px" }}>{user?.name}</strong>
+              <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.7)" }}>{user?.role}</span>
+            </div>
+            <div style={{ width: 32, height: 32, background: "rgba(255,255,255,0.2)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold" }}>
+              {user?.name?.charAt(0) || "U"}
+            </div>
+          </div>
+          <div className="topbar__item" style={{ borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
+            {activeShift ? (
+              <button className="btn btn--ghost" style={{ color: "white", borderColor: "rgba(255,255,255,0.3)" }} onClick={() => { setCashInput(""); setShowShiftModal("close"); }}>
+                🔒 ปิดกะ
+              </button>
+            ) : (
+              <button className="btn btn--primary" style={{ background: "#f39c12", color: "white" }} onClick={() => { setCashInput(""); setShowShiftModal("open"); }}>
+                🟢 เปิดกะ
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -68,14 +82,17 @@ export default function TopBar() {
               <h3>🟢 เปิดกะขาย</h3>
               <button className="modal__close" onClick={() => setShowShiftModal(null)}>×</button>
             </div>
-            <p className="muted">ใส่จำนวนเงินทอนเริ่มต้นในลิ้นชัก</p>
-            <input className="input" type="number" min={0} placeholder="เงินทอนเริ่มต้น (บาท)"
-              value={cashInput} onChange={(e) => setCashInput(e.target.value)} autoFocus
-              onKeyDown={(e) => { if (e.key === "Enter") handleOpenShift(); }}
-              style={{ fontSize: 20, textAlign: "center", margin: "16px 0" }} />
-            <button className="btn btn--primary btn--full" onClick={handleOpenShift} disabled={loading}>
-              {loading ? "กำลังเปิดกะ..." : "ยืนยันเปิดกะ"}
-            </button>
+            <p className="muted" style={{ marginBottom: 16 }}>ใส่จำนวนเงินทอนเริ่มต้นในลิ้นชัก</p>
+            
+            <input className="input" type="text" readOnly value={cashInput} placeholder="เงินทอนเริ่มต้น (บาท)"
+              style={{ fontSize: 32, textAlign: "center", marginBottom: 8, fontWeight: "bold" }} />
+              
+            <Numpad 
+              value={cashInput} 
+              onChange={setCashInput} 
+              onEnter={() => !loading && handleOpenShift()} 
+              enterLabel={loading ? "กำลังเปิดกะ..." : "ยืนยันเปิดกะ"}
+            />
           </div>
         </div>
       )}
@@ -93,14 +110,17 @@ export default function TopBar() {
               <div className="summary-card"><span>ออเดอร์</span><strong>{activeShift.totalOrders}</strong></div>
               <div className="summary-card"><span>เงินสดรับ</span><strong>{formatMoney(activeShift.cashSales)}</strong></div>
             </div>
-            <p className="muted">ยอดเงินสดที่ควรมี: <strong>{formatMoney(activeShift.openingCash + activeShift.cashSales)}</strong></p>
-            <input className="input" type="number" min={0} placeholder="นับเงินจริงในลิ้นชัก (บาท)"
-              value={cashInput} onChange={(e) => setCashInput(e.target.value)} autoFocus
-              onKeyDown={(e) => { if (e.key === "Enter") handleCloseShift(); }}
-              style={{ fontSize: 20, textAlign: "center", margin: "16px 0" }} />
-            <button className="btn btn--primary btn--full" onClick={handleCloseShift} disabled={loading}>
-              {loading ? "กำลังปิดกะ..." : "ยืนยันปิดกะ"}
-            </button>
+            <p className="muted" style={{ marginBottom: 16 }}>ยอดเงินสดที่ควรมี: <strong style={{ fontSize: 20, color: "var(--accent-dark)" }}>{formatMoney(activeShift.openingCash + activeShift.cashSales)}</strong></p>
+            
+            <input className="input" type="text" readOnly value={cashInput} placeholder="นับเงินจริงในลิ้นชัก (บาท)"
+              style={{ fontSize: 32, textAlign: "center", marginBottom: 8, fontWeight: "bold" }} />
+              
+            <Numpad 
+              value={cashInput} 
+              onChange={setCashInput} 
+              onEnter={() => !loading && handleCloseShift()} 
+              enterLabel={loading ? "กำลังปิดกะ..." : "ยืนยันปิดกะ"}
+            />
           </div>
         </div>
       )}

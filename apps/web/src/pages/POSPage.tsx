@@ -263,14 +263,14 @@ export default function POSPage() {
   }, [clearCart, handleCheckoutClick]);
 
   return (
-    <main style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: "24px", height: "100%", width: "100%" }}>
+    <main style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
       {/* Center Panel: Products */}
-      <section className="panel" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0 }}>
-        <div style={{ padding: "24px 24px 16px", borderBottom: "1px solid var(--border)" }}>
+      <section style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRight: "1px solid var(--border)" }}>
+        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
             <div>
-              <h2 style={{ fontSize: "24px" }}>เมนูขาย</h2>
-              <p className="muted" style={{ fontSize: "14px" }}>{activeBranch?.name}</p>
+              <h2 style={{ fontSize: "20px", fontWeight: "bold", color: "var(--pos-sidebar)" }}>ขายสินค้า (POS)</h2>
+              <p className="muted" style={{ fontSize: "12px" }}>{activeBranch?.name}</p>
             </div>
           </div>
           
@@ -307,26 +307,36 @@ export default function POSPage() {
           )}
         </div>
 
-        <div style={{ padding: "16px 24px 0", borderBottom: "1px solid var(--border)" }}>
-          <div className="tab-row" style={{ marginBottom: "16px" }}>
+        <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--pos-bg)" }}>
+          <div className="tab-row" style={{ marginBottom: "0", background: "transparent", padding: 0, border: "none" }}>
             {categories.map((item) => (
-              <button key={item} className={`tab ${category === item ? "tab--active" : ""}`} onClick={() => setCategory(item)}>
+              <button key={item} className={`tab ${category === item ? "tab--active" : ""}`} 
+                style={{ 
+                  borderRadius: "4px", 
+                  background: category === item ? "var(--pos-topbar)" : "#fff",
+                  color: category === item ? "#fff" : "#333",
+                  border: "1px solid #ddd",
+                  padding: "8px 16px"
+                }} 
+                onClick={() => setCategory(item)}>
                 {item}
               </button>
             ))}
           </div>
         </div>
 
-        <ProductGrid 
-          menu={menu} 
-          category={category} 
-          search={search} 
-          branchType={activeBranch?.branchType} 
-          onItemClick={(item) => {
-            addCartItem(item);
-            setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} แล้ว` });
-          }} 
-        />
+        <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#fff" }}>
+          <ProductGrid 
+            menu={menu} 
+            category={category} 
+            search={search} 
+            branchType={activeBranch?.branchType} 
+            onItemClick={(item) => {
+              addCartItem(item);
+              setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} แล้ว` });
+            }} 
+          />
+        </div>
       </section>
 
       {/* Right Panel: Cart & Payment */}

@@ -182,7 +182,7 @@ export default function CartPanel(props: CartPanelProps) {
             padding: "20px", 
             fontSize: "18px", 
             fontWeight: 700,
-            background: (!activeShift || cart.length === 0) ? "var(--muted)" : "var(--success)",
+            background: (!activeShift || cart.length === 0) ? "var(--muted)" : "var(--pos-topbar)",
             color: "#fff",
             border: "none",
             borderRadius: "var(--radius-md)",

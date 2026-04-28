@@ -16,11 +16,13 @@ export default function AppLayout() {
 
   return (
     <div className="app-layout">
-      <Sidebar />
-      <div className="app-layout__main" style={{ background: isPOSPage ? "var(--canvas-alt)" : "var(--canvas)" }}>
-        {!isPOSPage && <TopBar />}
-        <div className="app-layout__content" style={{ padding: isPOSPage ? "20px" : "0 24px 24px 24px" }}>
-          <Outlet />
+      <TopBar />
+      <div className="app-layout__body">
+        <Sidebar />
+        <div className="app-layout__main">
+          <div className="app-layout__content" style={{ padding: isPOSPage ? "0" : "16px" }}>
+            <Outlet />
+          </div>
         </div>
       </div>
     </div>

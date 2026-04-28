@@ -119,6 +119,8 @@ ${receiptHtml}
   }
 }
 
+import Numpad from "./ui/Numpad";
+
 type CashDrawerProps = {
   total: number;
   onConfirm: (cashReceived: number, change: number) => void;
@@ -135,23 +137,11 @@ export function CashDrawerModal({ total, onConfirm, onCancel }: CashDrawerProps)
 
   return (
     <div className="modal-backdrop" onClick={onCancel} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
-      <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "420px", padding: "32px", borderRadius: "16px" }}>
+      <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "420px", padding: "32px", borderRadius: "16px", background: "var(--surface)" }}>
         <h2 style={{ marginBottom: "8px" }}>💰 รับเงินสด</h2>
-        <p className="muted" style={{ marginBottom: "24px" }}>ยอดที่ต้องชำระ: <strong style={{ color: "var(--accent)", fontSize: "20px" }}>฿{formatMoney(total)}</strong></p>
+        <p className="muted" style={{ marginBottom: "16px" }}>ยอดที่ต้องชำระ: <strong style={{ color: "var(--accent-dark)", fontSize: "20px" }}>฿{formatMoney(total)}</strong></p>
 
-        <input
-          className="input"
-          type="number"
-          inputMode="decimal"
-          value={received}
-          onChange={e => setReceived(e.target.value)}
-          placeholder="จำนวนเงินที่รับ"
-          autoFocus
-          style={{ width: "100%", fontSize: "24px", padding: "16px", textAlign: "center", marginBottom: "16px" }}
-          onKeyDown={e => { if (e.key === "Enter" && isValid) onConfirm(receivedNum, change); }}
-        />
-
-        <div style={{ display: "flex", gap: "8px", marginBottom: "24px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
           {QUICK_AMOUNTS.map(amt => (
             <button key={amt} className="btn btn--ghost" style={{ flex: 1, minWidth: "60px" }}
               onClick={() => setReceived(String(amt))}
@@ -166,18 +156,31 @@ export function CashDrawerModal({ total, onConfirm, onCancel }: CashDrawerProps)
           </button>
         </div>
 
-        <div style={{ background: "var(--bg-alt)", padding: "20px", borderRadius: "12px", textAlign: "center", marginBottom: "24px" }}>
+        <input
+          className="input"
+          type="text"
+          readOnly
+          value={received}
+          placeholder="จำนวนเงินที่รับ"
+          style={{ width: "100%", fontSize: "32px", padding: "16px", textAlign: "right", marginBottom: "8px", fontWeight: "bold" }}
+        />
+
+        <Numpad
+          value={received}
+          onChange={setReceived}
+          onEnter={() => isValid && onConfirm(receivedNum, change)}
+          enterLabel="ยืนยันรับเงิน"
+        />
+
+        <div style={{ background: "var(--pos-bg)", padding: "20px", borderRadius: "12px", textAlign: "center", marginTop: "16px" }}>
           <p className="muted" style={{ margin: 0 }}>เงินทอน</p>
-          <strong style={{ fontSize: "36px", color: isValid ? "var(--accent)" : "#b5482b" }}>
+          <strong style={{ fontSize: "36px", color: isValid ? "var(--success)" : "#b5482b" }}>
             ฿{formatMoney(change)}
           </strong>
         </div>
 
-        <div style={{ display: "flex", gap: "12px" }}>
-          <button className="btn btn--ghost" onClick={onCancel} style={{ flex: 1, padding: "14px" }}>ยกเลิก</button>
-          <button className="btn btn--primary" onClick={() => onConfirm(receivedNum, change)} disabled={!isValid} style={{ flex: 2, padding: "14px", fontSize: "16px" }}>
-            ✅ ยืนยันรับเงิน (Enter)
-          </button>
+        <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+          <button className="btn btn--ghost btn--full" onClick={onCancel}>ยกเลิก</button>
         </div>
       </div>
     </div>

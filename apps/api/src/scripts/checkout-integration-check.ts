@@ -14,6 +14,8 @@ async function main() {
   let userId: number | null = null;
   let menuItemId: number | null = null;
   let ingredientId: number | null = null;
+  let cupIngredientId: number | null = null;
+  let createdCupIngredientId: number | null = null;
   let customerId: number | null = null;
   let shiftId: number | null = null;
 
@@ -49,6 +51,19 @@ async function main() {
 
     await prisma.recipe.create({ data: { menuItemId, ingredientId, qty: 2 } });
     await prisma.ingredientStock.create({ data: { branchId, ingredientId, stockQty: 10, reorderLevel: 2 } });
+    const existingCup = await prisma.ingredient.findFirst({ where: { name: "แก้วพลาสติก 16oz" }, select: { id: true } });
+    if (existingCup) {
+      cupIngredientId = existingCup.id;
+    } else {
+      const cup = await prisma.ingredient.create({ data: { name: "แก้วพลาสติก 16oz", unit: "ใบ", costPerUnit: 1 } });
+      cupIngredientId = cup.id;
+      createdCupIngredientId = cup.id;
+    }
+    await prisma.ingredientStock.upsert({
+      where: { branchId_ingredientId: { branchId, ingredientId: cupIngredientId } },
+      update: { stockQty: 5, reorderLevel: 1 },
+      create: { branchId, ingredientId: cupIngredientId, stockQty: 5, reorderLevel: 1 }
+    });
 
     const shift = await prisma.shift.create({
       data: { branchId, userId, status: "OPEN", openingCash: 0 }
@@ -80,7 +95,7 @@ async function main() {
       customerId,
       userId,
       shiftId,
-      items: [{ menuItemId, qty: 1, modifiers: [] }],
+      items: [{ menuItemId, qty: 1, modifiers: [{ name: "Cup", value: "แก้วเย็น", price: 0 }] }],
       paymentMethod: "CASH",
       discountType: null,
       discountValue: 0,
@@ -110,6 +125,10 @@ async function main() {
       where: { branchId_ingredientId: { branchId, ingredientId } }
     });
     assert(stockAfterSale?.stockQty === 8, `Stock decrement mismatch: ${stockAfterSale?.stockQty}`);
+    const cupStockAfterSale = await prisma.ingredientStock.findUnique({
+      where: { branchId_ingredientId: { branchId, ingredientId: cupIngredientId! } }
+    });
+    assert(cupStockAfterSale?.stockQty === 4, `Cup stock decrement mismatch: ${cupStockAfterSale?.stockQty}`);
 
     const payment = await prisma.payment.findFirst({ where: { orderId: order.id } });
     assert(payment?.amountReceived === 60 && payment.referenceNo === tag, "Payment evidence was not persisted");
@@ -119,6 +138,10 @@ async function main() {
       where: { branchId_ingredientId: { branchId, ingredientId } }
     });
     assert(stockAfterRefund?.stockQty === 10, `Refund did not restore stock: ${stockAfterRefund?.stockQty}`);
+    const cupStockAfterRefund = await prisma.ingredientStock.findUnique({
+      where: { branchId_ingredientId: { branchId, ingredientId: cupIngredientId! } }
+    });
+    assert(cupStockAfterRefund?.stockQty === 5, `Refund did not restore cup stock: ${cupStockAfterRefund?.stockQty}`);
 
     const refundEvent = await prisma.orderEvent.findFirst({ where: { orderId: order.id, eventType: "ORDER_REFUNDED" } });
     assert(refundEvent?.reason === "integration check", "Refund event history missing");
@@ -179,8 +202,9 @@ async function main() {
     }
     if (shiftId) await prisma.shift.deleteMany({ where: { id: shiftId } });
     if (menuItemId && ingredientId) await prisma.recipe.deleteMany({ where: { menuItemId, ingredientId } });
-    if (branchId && ingredientId) await prisma.ingredientStock.deleteMany({ where: { branchId, ingredientId } });
+    if (branchId) await prisma.ingredientStock.deleteMany({ where: { branchId, ingredientId: { in: [ingredientId, cupIngredientId].filter((id): id is number => Boolean(id)) } } });
     if (menuItemId) await prisma.menuItem.deleteMany({ where: { id: menuItemId } });
+    if (createdCupIngredientId) await prisma.ingredient.deleteMany({ where: { id: createdCupIngredientId } });
     if (ingredientId) await prisma.ingredient.deleteMany({ where: { id: ingredientId } });
     if (customerId) await prisma.customer.deleteMany({ where: { id: customerId } });
     if (userId) await prisma.user.deleteMany({ where: { id: userId } });

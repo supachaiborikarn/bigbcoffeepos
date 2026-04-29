@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { X, Check } from "lucide-react";
 import type { MenuItem, Modifier } from "../../types";
 import { shouldUseModifierModal } from "../../utils/menuRules";
@@ -26,21 +26,38 @@ const ADD_ONS = [
   { value: "Whip Cream", label: "วิปครีม", price: 15 },
 ];
 
+const COLD_CUP_OPTIONS = [
+  { value: "แก้วเย็น", label: "แก้วเย็น", stockNote: "ตัดสต็อกแก้วเย็น" },
+  { value: "แก้วทานร้าน", label: "แก้วทานร้าน", stockNote: "ไม่ตัดแก้วใช้แล้วทิ้ง" },
+  { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ไม่ตัดสต็อกแก้ว" },
+];
+
+const HOT_CUP_OPTIONS = [
+  { value: "แก้วทานร้าน", label: "แก้วทานร้าน", stockNote: "ไม่ตัดแก้วใช้แล้วทิ้ง" },
+  { value: "แก้วเดินทาง", label: "แก้วเดินทาง", stockNote: "ตัดสต็อกแก้วร้อน" },
+  { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ไม่ตัดสต็อกแก้ว" },
+];
+
 export default function ModifierModal({ item, onClose, onAdd }: Props) {
   const usesModifiers = shouldUseModifierModal(item);
 
   const [type, setType] = useState(item.name.includes("ร้อน") ? "Hot" : item.name.includes("ปั่น") ? "Frappe" : "Iced");
-  const [size, setSize] = useState("M");
+  const [cup, setCup] = useState(type === "Hot" ? "แก้วทานร้าน" : "แก้วเย็น");
   const [sweetness, setSweetness] = useState("100%");
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
   const [qty, setQty] = useState(1);
+  const cupOptions = useMemo(() => type === "Hot" ? HOT_CUP_OPTIONS : COLD_CUP_OPTIONS, [type]);
+
+  useEffect(() => {
+    if (!cupOptions.some((option) => option.value === cup)) setCup(cupOptions[0]?.value ?? "แก้วเย็น");
+  }, [cup, cupOptions]);
 
   const handleAdd = () => {
     const modifiers: Modifier[] = [];
     
     if (usesModifiers) {
       modifiers.push({ name: "Type", value: type, price: 0 });
-      modifiers.push({ name: "Size", value: size, price: size === "L" ? 10 : 0 });
+      modifiers.push({ name: "Cup", value: cup, price: 0 });
       modifiers.push({ name: "Sweetness", value: sweetness, price: 0 });
       
       selectedAddOns.forEach((addOnVal) => {
@@ -59,8 +76,7 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
   };
 
   const addonTotal = selectedAddOns.reduce((sum, val) => sum + (ADD_ONS.find(a => a.value === val)?.price || 0), 0);
-  const sizeTotal = size === "L" ? 10 : 0;
-  const totalPrice = (item.basePrice + addonTotal + sizeTotal) * qty;
+  const totalPrice = (item.basePrice + addonTotal) * qty;
 
   return (
     <div style={{
@@ -102,26 +118,20 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
                 </div>
               </section>
 
-              {/* Size */}
+              {/* Cup */}
               <section>
-                <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "var(--text-secondary)" }}>ขนาด</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
-                  <button onClick={() => setSize("M")} style={{
-                      padding: "12px", borderRadius: 12, border: `2px solid ${size === "M" ? "var(--brand)" : "var(--border)"}`,
-                      background: size === "M" ? "var(--brand-subtle)" : "transparent", color: size === "M" ? "var(--brand)" : "var(--text-secondary)",
-                      fontWeight: size === "M" ? 600 : 500, cursor: "pointer", transition: "all 0.15s", display: "flex", justifyContent: "space-between"
-                  }}>
-                    <span>M (ปกติ)</span>
-                    <span style={{ color: "inherit", opacity: 0.8 }}>+฿0</span>
-                  </button>
-                  <button onClick={() => setSize("L")} style={{
-                      padding: "12px", borderRadius: 12, border: `2px solid ${size === "L" ? "var(--brand)" : "var(--border)"}`,
-                      background: size === "L" ? "var(--brand-subtle)" : "transparent", color: size === "L" ? "var(--brand)" : "var(--text-secondary)",
-                      fontWeight: size === "L" ? 600 : 500, cursor: "pointer", transition: "all 0.15s", display: "flex", justifyContent: "space-between"
-                  }}>
-                    <span>L (แก้วใหญ่)</span>
-                    <span style={{ color: "inherit", opacity: 0.8 }}>+฿10</span>
-                  </button>
+                <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "var(--text-secondary)" }}>แก้ว</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                  {cupOptions.map((option) => (
+                    <button key={option.value} onClick={() => setCup(option.value)} style={{
+                      minHeight: 72, padding: "12px", borderRadius: 12, border: `2px solid ${cup === option.value ? "var(--brand)" : "var(--border)"}`,
+                      background: cup === option.value ? "var(--brand-subtle)" : "transparent", color: cup === option.value ? "var(--brand)" : "var(--text-secondary)",
+                      fontWeight: cup === option.value ? 600 : 500, cursor: "pointer", transition: "all 0.15s", display: "flex", flexDirection: "column", justifyContent: "center", gap: 4
+                    }}>
+                      <span>{option.label}</span>
+                      <small style={{ color: "var(--text-muted)", fontWeight: 500, lineHeight: 1.25 }}>{option.stockNote}</small>
+                    </button>
+                  ))}
                 </div>
               </section>
 

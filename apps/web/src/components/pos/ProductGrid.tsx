@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { MenuItem } from "../../types";
 import ProductCard from "./ProductCard";
+import { isCupVariantMenuItem } from "../../utils/menuRules";
 
 const PRODUCT_RENDER_LIMIT = 120;
 
@@ -17,6 +18,7 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
   const visibleMenu = useMemo(() => {
     return menu.filter((item) => {
       if (!item.active) return false;
+      if (isCupVariantMenuItem(item)) return false;
       if (branchType && (item as Record<string, any>).branchType && (item as Record<string, any>).branchType !== branchType) return false;
       if (category !== "ทั้งหมด" && item.category !== category) return false;
       if (search && !`${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.barcode ?? ""}`.toLowerCase().includes(search.toLowerCase())) return false;

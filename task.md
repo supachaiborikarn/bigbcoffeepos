@@ -73,6 +73,13 @@ Updated: 2026-04-29
 
 Close the UI/workflow gaps found in the latest audit so the POS can be used end-to-end by staff, and separate unfinished feature shells from production-ready flows.
 
+## POS Cup Modifier Cleanup
+
+- [x] Move shop-cup, dine-in cup, bring-your-own cup, and hot takeaway cup choices into the modifier modal instead of separate product cards.
+- [x] Hide prepared drink cup-variant cards from the POS product grid while keeping historical menu rows intact.
+- [x] Cut stock for `แก้วเย็น` and hot `แก้วเดินทาง` from backend checkout/refund logic.
+- [x] Update integration, browser E2E, and production-hardening checks to cover cup modifiers and hidden cup variants.
+
 ## Critical
 
 - [x] Restore an accessible open/close shift control in the main app shell.

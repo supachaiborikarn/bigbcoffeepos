@@ -54,18 +54,30 @@ const RETAIL_NAME_PATTERNS = [
   "m 150"
 ];
 
-export function shouldUseModifierModal(item: MenuItem) {
-  if (item.basePrice <= 0) return false;
+const CUP_VARIANT_PATTERNS = ["แก้วมาเอง", "แก้วร้าน", "แก้วเดินทาง"];
 
+function preparedMenuInfo(item: MenuItem) {
   const nameText = `${item.name} ${item.optionGroup ?? ""}`.toLowerCase();
   const category = item.category.trim();
   const optionLabel = item.optionLabel?.trim() ?? "";
-
-  if (RETAIL_NAME_PATTERNS.some((pattern) => nameText.includes(pattern))) return false;
-
   const isPreparedCategory = PREPARED_MENU_CATEGORIES.has(category);
   const isPreparedVariant = PREPARED_OPTION_LABELS.has(optionLabel);
   const looksLikePreparedDrink = PREPARED_NAME_PATTERNS.some((pattern) => nameText.includes(pattern.toLowerCase()));
+  return { nameText, isPreparedCategory, isPreparedVariant, looksLikePreparedDrink };
+}
+
+export function shouldUseModifierModal(item: MenuItem) {
+  if (item.basePrice <= 0) return false;
+
+  const { nameText, isPreparedCategory, isPreparedVariant, looksLikePreparedDrink } = preparedMenuInfo(item);
+
+  if (RETAIL_NAME_PATTERNS.some((pattern) => nameText.includes(pattern))) return false;
 
   return (isPreparedCategory && looksLikePreparedDrink) || (isPreparedVariant && looksLikePreparedDrink);
+}
+
+export function isCupVariantMenuItem(item: MenuItem) {
+  const { nameText, isPreparedCategory, isPreparedVariant, looksLikePreparedDrink } = preparedMenuInfo(item);
+  const isPreparedDrink = (isPreparedCategory && looksLikePreparedDrink) || (isPreparedVariant && looksLikePreparedDrink);
+  return isPreparedDrink && CUP_VARIANT_PATTERNS.some((pattern) => nameText.includes(pattern));
 }

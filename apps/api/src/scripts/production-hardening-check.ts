@@ -69,6 +69,16 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     pattern: /MODIFIER_CATALOG[\s\S]*catalogItem\.price/
   },
   {
+    name: "cup modifiers decrement stock",
+    file: "apps/api/src/store/orders.ts",
+    pattern: /CUP_STOCK_INGREDIENTS[\s\S]*แก้วพลาสติก 16oz[\s\S]*addModifierStockRequirements[\s\S]*modifier\.name !== "Cup"/
+  },
+  {
+    name: "cup variant menu cards are hidden from POS grid",
+    file: "apps/web/src/components/pos/ProductGrid.tsx",
+    pattern: /isCupVariantMenuItem[\s\S]*return false/
+  },
+  {
     name: "order center no longer uses mock orders",
     file: "apps/web/src/pages/OrdersPage.tsx",
     pattern: /getOrders\(activeBranch\.id\)/
@@ -236,7 +246,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "database-backed checkout integration check exists",
     file: "apps/api/src/scripts/checkout-integration-check.ts",
-    pattern: /createOrder[\s\S]*ORDER_REFUNDED[\s\S]*Promise\.allSettled/
+    pattern: /createOrder[\s\S]*Cup stock decrement mismatch[\s\S]*ORDER_REFUNDED[\s\S]*Promise\.allSettled/
   },
   {
     name: "checkout integration check is runnable",
@@ -266,7 +276,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "browser E2E check exists",
     file: "apps/api/src/scripts/browser-e2e-check.ts",
-    pattern: /chromium\.launch[\s\S]*addModifiedLatte[\s\S]*Underpayment should keep cash confirmation disabled[\s\S]*สแกนจ่าย \(QR\)[\s\S]*บัตรเครดิต[\s\S]*ORDER_CANCELLED/
+    pattern: /(?=[\s\S]*chromium\.launch)(?=[\s\S]*addModifiedLatte)(?=[\s\S]*แก้วเย็น)(?=[\s\S]*Underpayment should keep cash confirmation disabled)(?=[\s\S]*สแกนจ่าย \(QR\))(?=[\s\S]*บัตรเครดิต)(?=[\s\S]*ORDER_CANCELLED)/
   },
   {
     name: "CI installs browser runtime",

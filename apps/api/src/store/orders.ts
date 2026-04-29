@@ -31,17 +31,25 @@ type OrderItemDraft = {
 const PAYMENT_METHODS = new Set<PaymentMethod>(["CASH", "QR", "CARD", "EWALLET"]);
 const ALLOWED_STATUSES = new Set(["PAID", "READY", "CANCELLED", "REFUNDED"]);
 const REVERSAL_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
-const DRINK_CATEGORIES = ["กาแฟ", "ชา", "เครื่องดื่ม"];
+const DRINK_CATEGORIES = ["กาแฟ", "ชา", "นม/โกโก้", "เครื่องดื่ม", "เครื่องดื่มชง", "COLD", "FRAPPE", "Hot"];
 const checkoutTransactionRetries = Math.max(0, Math.floor(Number(process.env.CHECKOUT_TX_RETRIES || 5)));
+const CUP_STOCK_INGREDIENTS: Record<string, string[]> = {
+  "แก้วเย็น": ["แก้วพลาสติก 16oz", "แก้วกาแฟป่าว"],
+  "แก้วเดินทาง": ["แก้วร้อนแยก"],
+  "แก้วทานร้าน": [],
+  "แก้วมาเอง": []
+};
 const MODIFIER_CATALOG = {
   Type: new Map([
     ["Hot", { label: "Hot", price: 0 }],
     ["Iced", { label: "Iced", price: 0 }],
     ["Frappe", { label: "Frappe", price: 0 }]
   ]),
-  Size: new Map([
-    ["M", { label: "M", price: 0 }],
-    ["L", { label: "L", price: 10 }]
+  Cup: new Map([
+    ["แก้วเย็น", { label: "แก้วเย็น", price: 0 }],
+    ["แก้วทานร้าน", { label: "แก้วทานร้าน", price: 0 }],
+    ["แก้วเดินทาง", { label: "แก้วเดินทาง", price: 0 }],
+    ["แก้วมาเอง", { label: "แก้วมาเอง", price: 0 }]
   ]),
   Sweetness: new Map([
     ["0%", { label: "0%", price: 0 }],
@@ -216,6 +224,52 @@ function waitForCheckoutRetry(attempt: number) {
   return new Promise((resolve) => setTimeout(resolve, Math.min(250, 25 * (attempt + 1))));
 }
 
+function parseStoredModifiers(value: unknown): Modifier[] {
+  if (Array.isArray(value)) return value as Modifier[];
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as Modifier[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function addRequiredStock(requiredStock: Map<number, number>, ingredientId: number, qty: number) {
+  requiredStock.set(ingredientId, roundMoney((requiredStock.get(ingredientId) ?? 0) + qty));
+}
+
+async function resolveIngredientByNames(tx: any, names: string[], branchId: number) {
+  let firstMatch: { id: number; name: string } | null = null;
+  for (const name of names) {
+    const ingredient = await tx.ingredient.findFirst({ where: { name }, select: { id: true, name: true } });
+    if (!ingredient) continue;
+    firstMatch ??= ingredient;
+    const branchStock = await tx.ingredientStock.findUnique({
+      where: {
+        branchId_ingredientId: {
+          branchId,
+          ingredientId: ingredient.id
+        }
+      },
+      select: { ingredientId: true }
+    });
+    if (branchStock) return ingredient;
+  }
+  return firstMatch;
+}
+
+async function addModifierStockRequirements(tx: any, requiredStock: Map<number, number>, modifiers: Modifier[], qty: number, branchId: number) {
+  for (const modifier of modifiers) {
+    if (modifier.name !== "Cup") continue;
+    const ingredientNames = CUP_STOCK_INGREDIENTS[modifier.value] ?? [];
+    if (ingredientNames.length === 0) continue;
+    const ingredient = await resolveIngredientByNames(tx, ingredientNames, branchId);
+    if (!ingredient) throw new Error(`ไม่พบวัตถุดิบสำหรับตัวเลือกแก้ว: ${modifier.value}`);
+    addRequiredStock(requiredStock, ingredient.id, qty);
+  }
+}
+
 export async function getOrders(branchId?: number) {
   const orders = await prisma.order.findMany({
     where: branchId ? { branchId } : undefined,
@@ -267,21 +321,26 @@ export async function updateOrderStatusWithContext(id: number, input: {
       };
 
       for (const item of current.items) {
+        const stockToRestore = new Map<number, number>();
         const recipes = await tx.recipe.findMany({ where: { menuItemId: item.menuItemId } });
         for (const recipe of recipes) {
           const restoreQty = recipe.qty * item.qty;
-          reversalPayload.stockRestored.push({ ingredientId: recipe.ingredientId, qty: restoreQty });
+          addRequiredStock(stockToRestore, recipe.ingredientId, restoreQty);
+        }
+        await addModifierStockRequirements(tx, stockToRestore, parseStoredModifiers(item.modifiers), item.qty, current.branchId);
+        for (const [ingredientId, restoreQty] of stockToRestore) {
+          reversalPayload.stockRestored.push({ ingredientId, qty: restoreQty });
           await tx.ingredientStock.upsert({
             where: {
               branchId_ingredientId: {
                 branchId: current.branchId,
-                ingredientId: recipe.ingredientId
+                ingredientId
               }
             },
             update: { stockQty: { increment: restoreQty } },
             create: {
               branchId: current.branchId,
-              ingredientId: recipe.ingredientId,
+              ingredientId,
               stockQty: restoreQty,
               reorderLevel: 0
             }
@@ -289,7 +348,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
           await tx.stockMovement.create({
             data: {
               branchId: current.branchId,
-              ingredientId: recipe.ingredientId,
+              ingredientId,
               qty: restoreQty,
               reason: `${status}-${current.id}`
             }
@@ -487,8 +546,9 @@ export async function createOrder(input: {
     for (const i of orderItems) {
       const recipes = await tx.recipe.findMany({ where: { menuItemId: i.menuItemId } });
       for (const recipe of recipes) {
-        requiredStock.set(recipe.ingredientId, roundMoney((requiredStock.get(recipe.ingredientId) ?? 0) + recipe.qty * i.qty));
+        addRequiredStock(requiredStock, recipe.ingredientId, recipe.qty * i.qty);
       }
+      await addModifierStockRequirements(tx, requiredStock, i.modifiers, i.qty, input.branchId);
     }
 
     for (const [ingredientId, requiredQty] of requiredStock) {

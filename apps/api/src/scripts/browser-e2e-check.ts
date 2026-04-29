@@ -19,6 +19,8 @@ type TestData = {
   cookie: TestMenuItem;
   latte: TestMenuItem;
   menuItemIds: number[];
+  cupIngredientIds: number[];
+  createdCupIngredientIds: number[];
 };
 
 function assert(condition: unknown, message: string) {
@@ -83,6 +85,21 @@ async function seedTestData(): Promise<TestData> {
       data: { sku: `${tag}-latte`, name: `${tag}_ลาเต้`, category: "กาแฟ", basePrice: 50, branchType: "coffee", active: true }
     })
   ]);
+  const cupIngredients: Array<{ id: number; created: boolean }> = [];
+  for (const name of ["แก้วพลาสติก 16oz", "แก้วร้อนแยก"]) {
+    let ingredient = await prisma.ingredient.findFirst({ where: { name }, select: { id: true } });
+    let created = false;
+    if (!ingredient) {
+      ingredient = await prisma.ingredient.create({ data: { name, unit: "ใบ", costPerUnit: 1 }, select: { id: true } });
+      created = true;
+    }
+    cupIngredients.push({ id: ingredient.id, created });
+    await prisma.ingredientStock.upsert({
+      where: { branchId_ingredientId: { branchId: branch.id, ingredientId: ingredient.id } },
+      update: { stockQty: 100, reorderLevel: 10 },
+      create: { branchId: branch.id, ingredientId: ingredient.id, stockQty: 100, reorderLevel: 10 }
+    });
+  }
   return {
     tag,
     pin,
@@ -91,7 +108,9 @@ async function seedTestData(): Promise<TestData> {
     userId: user.id,
     cookie: { id: cookie.id, name: cookie.name },
     latte: { id: latte.id, name: latte.name },
-    menuItemIds: [cookie.id, latte.id]
+    menuItemIds: [cookie.id, latte.id],
+    cupIngredientIds: cupIngredients.map((ingredient) => ingredient.id),
+    createdCupIngredientIds: cupIngredients.filter((ingredient) => ingredient.created).map((ingredient) => ingredient.id)
   };
 }
 
@@ -113,6 +132,8 @@ async function cleanupTestData(data: TestData | null) {
     });
   }
   await prisma.shift.deleteMany({ where: { branchId: data.branchId } });
+  await prisma.ingredientStock.deleteMany({ where: { branchId: data.branchId, ingredientId: { in: data.cupIngredientIds } } });
+  if (data.createdCupIngredientIds.length) await prisma.ingredient.deleteMany({ where: { id: { in: data.createdCupIngredientIds } } });
   await prisma.menuItem.deleteMany({ where: { id: { in: data.menuItemIds } } });
   await prisma.user.deleteMany({ where: { id: data.userId } });
   await prisma.branch.deleteMany({ where: { id: data.branchId } });
@@ -127,7 +148,7 @@ async function addModifiedLatte(page: Page, itemName: string) {
   await page.getByPlaceholder("ค้นหาสินค้า (F1)").fill(itemName);
   await page.getByRole("button", { name: `เพิ่ม ${itemName}` }).click();
   await page.getByRole("heading", { name: itemName }).waitFor({ timeout: 10_000 });
-  await page.getByRole("button", { name: /L \(แก้วใหญ่\)/ }).click();
+  await page.getByRole("button", { name: /แก้วเย็น/ }).click();
   await page.getByRole("button", { name: "หวานน้อย (50%)" }).click();
   await page.getByRole("button", { name: /เพิ่มช็อตกาแฟ/ }).click();
   await page.getByRole("button", { name: /เพิ่มลงตะกร้า/ }).click();
@@ -217,15 +238,15 @@ async function main() {
     if (!cashOrder) throw new Error("Browser cash checkout did not create an order");
     const latteId = data.latte.id;
     const latteLine = cashOrder.items.find((item) => item.menuItemId === latteId);
-    const latteModifiers = latteLine ? JSON.parse(latteLine.modifiers) as Array<{ value: string; price: number }> : [];
-    assert(cashOrder.total === 115, `Browser cash checkout total mismatch: ${cashOrder.total}`);
+    const latteModifiers = latteLine ? JSON.parse(latteLine.modifiers) as Array<{ name: string; value: string; price: number }> : [];
+    assert(cashOrder.total === 105, `Browser cash checkout total mismatch: ${cashOrder.total}`);
     assert(cashOrder.items.length === 2, `Browser cash checkout item count mismatch: ${cashOrder.items.length}`);
-    assert(latteLine?.lineTotal === 75, `Modified latte line total mismatch: ${latteLine?.lineTotal}`);
-    assert(latteModifiers.some((modifier) => modifier.value === "L" && modifier.price === 10), "Size modifier was not persisted");
+    assert(latteLine?.lineTotal === 65, `Modified latte line total mismatch: ${latteLine?.lineTotal}`);
+    assert(latteModifiers.some((modifier) => modifier.name === "Cup" && modifier.value === "แก้วเย็น"), "Cup modifier was not persisted");
     assert(latteModifiers.some((modifier) => modifier.value === "หวานน้อย (50%)" || modifier.value === "50%"), "Sweetness modifier was not persisted");
     assert(latteModifiers.some((modifier) => modifier.value === "เพิ่มช็อตกาแฟ" && modifier.price === 15), "Add-on modifier was not persisted");
     assert(cashOrder.payments[0]?.amountReceived === 120, "Cash payment evidence missing");
-    assert(cashOrder.payments[0]?.changeAmount === 5, "Cash change amount mismatch");
+    assert(cashOrder.payments[0]?.changeAmount === 15, "Cash change amount mismatch");
 
     await addSimpleItem(page, data.cookie.name);
     await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });

@@ -304,6 +304,14 @@ export type IntegrationEvent = {
   updatedAt: string;
 };
 
+export type IntegrationOutboxSummary = {
+  maxAttempts: number;
+  byStatus: Array<{ status: IntegrationEvent["status"]; count: number }>;
+  byProviderStatus: Array<{ provider: IntegrationProvider; status: IntegrationEvent["status"]; count: number }>;
+  oldestPending: IntegrationEvent | null;
+  newestFailed: IntegrationEvent | null;
+};
+
 export type CartItem = {
   id: string;
   menuItemId: number;

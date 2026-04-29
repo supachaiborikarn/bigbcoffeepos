@@ -89,6 +89,38 @@ for (const branch of branchesPayload.items) {
   branchResults.push(`${branch.name}: opened and closed shift #${openedPayload.shift.id}`);
 }
 
+const backupStatusPayload = await readJson<{ status: { enabled: boolean; message?: string } }>("/backups/status", {
+  headers: authHeaders
+});
+assert(backupStatusPayload.status.enabled === false, "PostgreSQL runtime should not expose SQLite backups");
+
+let backupUnavailable = false;
+try {
+  await readJson<{ backup: { filename: string; sizeBytes: number } }>("/backups", {
+    method: "POST",
+    headers: authHeaders,
+    body: JSON.stringify({ reason: "phase13-check" })
+  });
+} catch (error) {
+  backupUnavailable = String((error as Error).message).includes("503") || String((error as Error).message).includes("unavailable");
+}
+assert(backupUnavailable, "Manual SQLite backup should be unavailable in PostgreSQL runtime");
+
+const auditPayload = await readJson<{ items: unknown[] }>("/audit?limit=5", {
+  headers: authHeaders
+});
+assert(Array.isArray(auditPayload.items), "Audit search did not return an items array");
+
+await readJson<unknown>("/audit.csv?limit=5", {
+  headers: authHeaders
+});
+
+const integrationSummary = await readJson<{ summary: { maxAttempts: number; byStatus: unknown[] } }>("/integrations/summary", {
+  headers: authHeaders
+});
+assert(integrationSummary.summary.maxAttempts >= 1, "Integration summary missing retry max attempts");
+
+/*
 const backupPayload = await readJson<{ backup: { filename: string; sizeBytes: number } }>("/backups", {
   method: "POST",
   headers: authHeaders,
@@ -100,9 +132,11 @@ const statusPayload = await readJson<{ status: { backups: unknown[]; enabled: bo
   headers: authHeaders
 });
 assert(statusPayload.status.backups.length > 0, "Backup status did not include backups");
+*/
 
 console.log("Phase 1.3 infrastructure check passed");
 console.log(`User: ${login.user.name} (${login.user.role})`);
 console.log(`Branches checked: ${branchesPayload.items.length}`);
 branchResults.forEach((line) => console.log(`- ${line}`));
-console.log(`Backup created: ${backupPayload.backup.filename}`);
+console.log("PostgreSQL backup policy: provider snapshot required; SQLite runtime backup disabled");
+console.log(`Audit sample rows: ${auditPayload.items.length}`);

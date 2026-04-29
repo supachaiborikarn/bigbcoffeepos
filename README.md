@@ -5,8 +5,7 @@
 ## Stack
 - Frontend: React + TypeScript + Vite
 - Backend: Node.js + Express + TypeScript
-- Production database: PostgreSQL ผ่าน Prisma (`DATABASE_URL`)
-- Local fallback: SQLite file mode สำหรับงานบนเครื่อง (`apps/api/data/pos.db`) เมื่อไม่ได้ตั้ง `DATABASE_URL` หรือใช้ placeholder
+- Runtime database: PostgreSQL ผ่าน Prisma (`DATABASE_URL`) สำหรับทั้ง development และ production
 
 ## Quick Start
 1. ติดตั้ง dependencies ที่รากโปรเจกต์
@@ -25,7 +24,7 @@ DATABASE_URL="postgresql://..."
 JWT_SECRET="replace-with-long-random-secret"
 ```
 
-ถ้าไม่ตั้ง `DATABASE_URL` ระบบจะเข้า local mode และใช้ SQLite พร้อม auto-backup.
+ถ้าไม่ตั้ง `DATABASE_URL` หรือใช้ค่า placeholder API จะไม่ start เพื่อป้องกันการรันแบบฐานข้อมูลไม่ตรงกับ store layer.
 
 3. เปิด dev servers
 ```bash
@@ -49,6 +48,13 @@ npm run production-hardening:check --workspace apps/api
 
 Hardening check ตรวจ guard สำคัญ เช่น atomic checkout, stock guard, refund reversal, role/branch access, PIN hashing, payment confirmation, backend-owned modifier pricing, real order center, และ report exclusion สำหรับออเดอร์ที่ถูกยกเลิก/คืนเงิน
 
+เมื่อมี `DATABASE_URL` ชี้ไปที่ test/staging PostgreSQL ให้รัน integration check ที่สร้างและลบข้อมูล `QA_CHECK_*` เอง:
+```bash
+npm run checkout:integration --workspace apps/api
+```
+
+Production deploy/runbook: [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md)
+
 ## Maintenance Scripts
 API scripts ที่ตั้งใจให้ใช้ได้:
 - `npm run orders:check --workspace apps/api`: สรุปจำนวนออเดอร์และ 5 รายการล่าสุดแบบ read-only
@@ -64,6 +70,8 @@ API:
 - `JWT_SECRET`: secret สำหรับ sign JWT ห้ามใช้ค่า fallback ใน production
 - `PORT`: API port ค่าเริ่มต้น `5175`
 - `AUDIT_LOG_FILE`: path สำหรับ audit JSONL ค่าเริ่มต้น `apps/api/data/audit.log` เมื่อรันจาก workspace
+- `SLOW_REQUEST_MS`: threshold สำหรับ log `http_request_slow` ค่าเริ่มต้น `1000`
+- `INTEGRATION_OUTBOX_INTERVAL_MS`: interval worker สำหรับส่ง integration outbox ต้องตั้งแต่ `30000` ms ขึ้นไป
 
 Frontend:
 - `VITE_API_URL`: API base URL ค่าเริ่มต้น `http://localhost:5175/api`
@@ -74,24 +82,13 @@ Integration:
 - Line OA: `LINE_OA_CHANNEL_ACCESS_TOKEN`
 - Lineman: `LINEMAN_API_ENDPOINT`, `LINEMAN_API_KEY`
 
-## Database Modes
-Production ใช้ Prisma schema ที่ [apps/api/prisma/schema.prisma](apps/api/prisma/schema.prisma) และ PostgreSQL ผ่าน `DATABASE_URL`.
+## Database
+API runtime ใช้ Prisma schema ที่ [apps/api/prisma/schema.prisma](apps/api/prisma/schema.prisma) และ PostgreSQL ผ่าน `DATABASE_URL`.
 
-Local mode ถูกเปิดเมื่อ:
-- ไม่มี `DATABASE_URL`
-- `DATABASE_URL` ขึ้นต้นด้วย `file:`
-- `DATABASE_URL` มีคำว่า `placeholder`
-
-Local mode จะใช้ SQLite ผ่าน `better-sqlite3`, สร้างไฟล์ที่ `apps/api/data/pos.db`, เปิด WAL mode, run local migrations จาก `apps/api/src/migrations`, และเริ่ม auto-backup ถ้าไม่ปิดไว้.
+SQLite files/tools ที่ยังอยู่ใน `apps/api/src/db.ts` และ `apps/api/src/backup.ts` เป็น legacy/local utility code เท่านั้น ไม่ใช่ runtime database ของ API routes. Endpoint backup จะตอบ unavailable ใน PostgreSQL runtime.
 
 ## Backup
-ใช้ได้เฉพาะ local mode:
-- สร้าง backup ตอน API start และทุก 60 นาทีตามค่าเริ่มต้น
-- สร้าง backup เอง:
-```bash
-npm run backup --workspace apps/api
-```
-- ตั้งค่าได้ด้วย `DB_BACKUP_ENABLED`, `DB_BACKUP_INTERVAL_MINUTES`, `DB_BACKUP_RETENTION_COUNT`, `DB_BACKUP_ON_STARTUP`, `DB_BACKUP_DIR`
+Production backup ให้ใช้ managed PostgreSQL backup/snapshot ของ provider เช่น Neon/Vercel Postgres/hosted Postgres. SQLite auto-backup ไม่ถูกเปิดใช้ใน API runtime แล้ว.
 
 ## Logging And Audit
 API เขียน structured JSON logs ลง stdout/stderr เพื่อให้ Vercel, Docker, หรือ process manager เก็บต่อได้ง่าย.
@@ -121,6 +118,7 @@ Audit events เช่น login, user changes, stock adjustment, order create/ca
 - Reports: `GET /api/reports/summary`, `GET /api/reports/profit`, `GET /api/reports/staff`
 - Purchases: `GET /api/purchases`, `POST /api/purchases`
 - Integrations: `GET /api/integrations/status`, `GET /api/integrations/events`, `POST /api/integrations/events/:id/retry`
+- Audit: `GET /api/audit`, `GET /api/audit.csv`
 
 ## Notes
 - Seeded legacy PINs may still be plain text for compatibility; newly created or updated PINs are hashed.

@@ -153,6 +153,7 @@ model Order {
   tax               Float    @default(0)
   total             Float    @default(0)
   paymentMethod     String   @default("CASH") @map("payment_method")
+  idempotencyKey    String?  @unique @map("idempotency_key")
   createdAt         DateTime @default(now()) @map("created_at")
 
   branch   Branch    @relation(fields: [branchId], references: [id])
@@ -160,6 +161,8 @@ model Order {
   user     User?     @relation(fields: [userId], references: [id])
   shift    Shift?    @relation(fields: [shiftId], references: [id])
   items    OrderItem[]
+  payments Payment[]
+  events   OrderEvent[]
 
   @@index([branchId])
   @@index([shiftId])
@@ -183,6 +186,44 @@ model OrderItem {
 
   @@index([orderId])
   @@map("order_items")
+}
+
+model Payment {
+  id                Int      @id @default(autoincrement())
+  orderId           Int      @map("order_id")
+  method            String
+  status            String   @default("CONFIRMED")
+  amountDue         Float    @default(0) @map("amount_due")
+  amountReceived    Float?   @map("amount_received")
+  changeAmount      Float?   @map("change_amount")
+  referenceNo       String?  @map("reference_no")
+  confirmedByUserId Int?     @map("confirmed_by_user_id")
+  confirmedAt       DateTime @default(now()) @map("confirmed_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([method])
+  @@index([status])
+  @@map("payments")
+}
+
+model OrderEvent {
+  id        Int      @id @default(autoincrement())
+  orderId   Int      @map("order_id")
+  eventType String   @map("event_type")
+  actorId   Int?     @map("actor_id")
+  reason    String?
+  payload   String   @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("order_events")
 }
 
 model Shift {

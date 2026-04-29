@@ -8,6 +8,7 @@ type LogMeta = Record<string, unknown>;
 
 const auditLogFile = process.env.AUDIT_LOG_FILE || path.resolve(process.cwd(), "data", "audit.log");
 const redactKeys = new Set(["pin", "token", "authorization", "password", "clientSecret"]);
+const slowRequestMs = Number(process.env.SLOW_REQUEST_MS || 1000);
 
 function redact(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
@@ -35,13 +36,19 @@ export function log(level: LogLevel, event: string, meta: LogMeta = {}) {
 
 export function requestLogger(req: express.Request, res: express.Response, next: express.NextFunction) {
   const start = Date.now();
+  const requestId = String(req.headers["x-request-id"] || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+  res.setHeader("X-Request-ID", requestId);
+  (req as express.Request & { requestId?: string }).requestId = requestId;
   res.on("finish", () => {
     if (req.path === "/api/health") return;
-    log(res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "warn" : "info", "http_request", {
+    const durationMs = Date.now() - start;
+    const isSlow = Number.isFinite(slowRequestMs) && durationMs >= slowRequestMs;
+    log(res.statusCode >= 500 ? "error" : res.statusCode >= 400 || isSlow ? "warn" : "info", isSlow ? "http_request_slow" : "http_request", {
+      requestId,
       method: req.method,
       path: req.originalUrl,
       status: res.statusCode,
-      durationMs: Date.now() - start,
+      durationMs,
       ip: req.ip,
       userId: (req as AuthRequest).user?.id,
       role: (req as AuthRequest).user?.role
@@ -62,6 +69,7 @@ export function audit(action: string, req: AuthRequest | express.Request, detail
       branchId: authReq.user.branchId ?? null
     } : null,
     ip: req.ip,
+    requestId: (req as express.Request & { requestId?: string }).requestId,
     ...redact(details) as LogMeta
   };
 

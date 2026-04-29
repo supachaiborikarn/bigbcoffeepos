@@ -1,9 +1,14 @@
 import cors from "cors";
 import express from "express";
+import fs from "fs";
+import path from "path";
 import { audit, log, requestLogger } from "./logger.js";
 
-// Detect local vs cloud mode
-const isLocalMode = !process.env.DATABASE_URL || process.env.DATABASE_URL.startsWith("file:") || process.env.DATABASE_URL.includes("placeholder");
+const isProduction = process.env.NODE_ENV === "production";
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl || databaseUrl.startsWith("file:") || databaseUrl.includes("placeholder")) {
+  throw new Error("DATABASE_URL must be a PostgreSQL connection string for the API runtime. Set DATABASE_URL in apps/api/.env.");
+}
 
 import {
   getBranches, getCustomers, getCustomerInsights, addCustomer, updateCustomer,
@@ -11,12 +16,12 @@ import {
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
-  getOrders, getOrder, createOrder, updateOrderStatus,
+  getOrders, getOrder, createOrder, updateOrderStatusWithContext,
   openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
   authenticatePin, getUsers, addUser, updateUser, deleteUser,
   getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows, getDailyCloseReport,
   createPurchase, getPurchases,
-  getIntegrationStatus, getIntegrationEvents, retryIntegrationEvent, processOutboxQueue,
+  getIntegrationStatus, getIntegrationOutboxSummary, getIntegrationEvents, retryIntegrationEvent, processOutboxQueue,
   importProducts, importCustomers, importHistoricalOrders
 } from "./store/index.js";
 
@@ -43,16 +48,33 @@ function sendCsv(res: express.Response, filename: string, rows: Record<string, u
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   return res.send(`\uFEFF${header}\n${body}`);
 }
-
-/* ─── Local Mode Init ─── */
-if (isLocalMode) {
-  import("./db.js").then(() => import("./db-migrate.js")).then(({ runMigrations }) => {
-    runMigrations();
-    import("./backup.js").then(({ startAutoBackup }) => startAutoBackup());
-  }).catch(err => log("error", "local_init_failed", { message: err instanceof Error ? err.message : String(err) }));
-} else {
-  log("info", "db_mode", { mode: "cloud", provider: "neon_postgresql" });
+async function readAuditRows(input: { limit?: number; action?: string } = {}) {
+  const auditLogFile = process.env.AUDIT_LOG_FILE || path.resolve(process.cwd(), "data", "audit.log");
+  const limit = Math.min(Math.max(Math.floor(input.limit ?? 100), 1), 1000);
+  try {
+    const text = await fs.promises.readFile(auditLogFile, "utf8");
+    const actionFilter = input.action?.trim().toLowerCase();
+    const rows: Record<string, unknown>[] = [];
+    for (const line of text.trim().split("\n").reverse()) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line) as Record<string, unknown>;
+        const action = String(row.action ?? "").toLowerCase();
+        if (actionFilter && !action.includes(actionFilter)) continue;
+        rows.push(row);
+        if (rows.length >= limit) break;
+      } catch {
+        // Ignore malformed audit lines so one bad append does not break operations.
+      }
+    }
+    return rows;
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
 }
+
+log("info", "db_mode", { mode: isProduction ? "production" : "development", provider: "postgresql_prisma" });
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
@@ -93,6 +115,27 @@ app.post("/api/auth/pin", enforcePinRateLimit, async (req, res) => {
 
 /* ─── Protect All Routes Below ─── */
 app.use("/api", requireAuth);
+
+/* ─── Audit ─── */
+app.get("/api/audit", requireAdmin, async (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+  const action = isStr(req.query.action) ? String(req.query.action) : undefined;
+  return res.json({ items: await readAuditRows({ limit, action }) });
+});
+
+app.get("/api/audit.csv", requireAdmin, async (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : 1000;
+  const action = isStr(req.query.action) ? String(req.query.action) : undefined;
+  const rows = await readAuditRows({ limit, action });
+  return sendCsv(res, "audit-log.csv", rows, [
+    { key: "ts", label: "Time" },
+    { key: "action", label: "Action" },
+    { key: "ip", label: "IP" },
+    { key: "requestId", label: "Request ID" },
+    { key: "orderId", label: "Order ID" },
+    { key: "branchId", label: "Branch ID" }
+  ]);
+});
 
 /* ─── Users ─── */
 app.get("/api/users", requireAdmin, async (_req, res) => res.json({ items: await getUsers() }));
@@ -321,11 +364,14 @@ app.get("/api/orders", requireBranchAccess((req) => parseId(req.query.branchId a
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   res.json({ items: await getOrders(branchId) });
 });
-app.get("/api/orders/:id", async (req, res) => {
+app.get("/api/orders/:id", async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const order = await getOrder(id);
   if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
+  if (req.user?.role === "cashier" && req.user.branchId !== order.branchId) {
+    return res.status(403).json({ error: "ไม่มีสิทธิ์ดูออเดอร์ของสาขาอื่น" });
+  }
   return res.json({ order });
 });
 app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
@@ -337,7 +383,11 @@ app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (
     if (req.user?.role === "cashier" && req.user.branchId !== current.branchId) {
       return res.status(403).json({ error: "ไม่มีสิทธิ์แก้ไขออเดอร์ของสาขาอื่น" });
     }
-    const order = await updateOrderStatus(id, req.body?.status ?? "PAID");
+    const order = await updateOrderStatusWithContext(id, {
+      status: req.body?.status ?? "PAID",
+      actorId: req.user?.id ?? null,
+      reason: typeof req.body?.reason === "string" ? req.body.reason : null
+    });
     if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
     audit("order.status_updated", req, { orderId: id, status: req.body?.status ?? "PAID" });
     return res.json({ order });
@@ -364,8 +414,14 @@ app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)
       shiftId: req.body.shiftId ?? undefined,
       paymentDetails: {
         cashReceived: req.body?.paymentDetails?.cashReceived,
-        paymentConfirmed: req.body?.paymentDetails?.paymentConfirmed === true
-      }
+        paymentConfirmed: req.body?.paymentDetails?.paymentConfirmed === true,
+        referenceNo: req.body?.paymentDetails?.referenceNo
+      },
+      idempotencyKey: typeof req.body?.idempotencyKey === "string"
+        ? req.body.idempotencyKey
+        : typeof req.header("Idempotency-Key") === "string"
+          ? req.header("Idempotency-Key")
+          : null
     });
     audit("order.created", req, { orderId: order.id, branchId, total: order.total, paymentMethod: order.paymentMethod });
     return res.status(201).json({ order });
@@ -498,28 +554,16 @@ app.post("/api/import/orders", requireRole("admin", "manager"), requireBranchAcc
 
 /* ─── Backups (local mode only) ─── */
 app.get("/api/backups/status", requireAdmin, async (_req, res) => {
-  if (!isLocalMode) return res.json({ status: { enabled: false, message: "Backups not available in cloud mode" } });
-  const { getBackupStatus } = await import("./backup.js");
-  return res.json({ status: getBackupStatus() });
+  return res.json({ status: { enabled: false, message: "SQLite backups are not available in the PostgreSQL API runtime" } });
 });
 
 app.get("/api/backups", requireAdmin, async (_req, res) => {
-  if (!isLocalMode) return res.json({ items: [] });
-  const { listDatabaseBackups } = await import("./backup.js");
-  return res.json({ items: listDatabaseBackups() });
+  return res.json({ items: [] });
 });
 
 app.post("/api/backups", requireAdmin, async (req, res) => {
-  if (!isLocalMode) return res.status(503).json({ error: "Backups not available in cloud mode" });
-  try {
-    const { createDatabaseBackup } = await import("./backup.js");
-    const reason = isStr(req.body?.reason) ? req.body.reason.trim() : "manual";
-    const backup = await createDatabaseBackup(reason);
-    audit("backup.created", req, { reason, filename: backup?.filename });
-    return res.status(201).json({ backup });
-  } catch (e) {
-    return res.status(409).json({ error: (e as Error).message });
-  }
+  audit("backup.unavailable", req, { reason: req.body?.reason });
+  return res.status(503).json({ error: "SQLite backups are not available in the PostgreSQL API runtime" });
 });
 
 /* ─── Purchases ─── */
@@ -555,6 +599,10 @@ app.get("/api/integrations/status", requireAdmin, async (_req, res) => {
   return res.json({ items: await getIntegrationStatus() });
 });
 
+app.get("/api/integrations/summary", requireAdmin, async (_req, res) => {
+  return res.json({ summary: await getIntegrationOutboxSummary() });
+});
+
 app.get("/api/integrations/events", requireAdmin, async (req, res) => {
   const provider = isStr(req.query.provider) ? String(req.query.provider) as any : undefined;
   const status = isStr(req.query.status) ? String(req.query.status) : undefined;
@@ -582,6 +630,9 @@ if (Number.isFinite(outboxIntervalMs) && outboxIntervalMs >= 30_000) {
   setInterval(() => {
     processOutboxQueue().then((result) => {
       if (result.total > 0) log("info", "integration_outbox_tick", result);
+      if (result.failed > 0 || result.remainingFailed > 0) {
+        log("warn", "integration_outbox_attention_required", result);
+      }
     }).catch((error) => {
       log("error", "integration_outbox_tick_failed", { message: error instanceof Error ? error.message : String(error) });
     });
@@ -593,10 +644,6 @@ if (Number.isFinite(outboxIntervalMs) && outboxIntervalMs >= 30_000) {
 app.post("/api/migration/sync", async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   if (!branchId) return res.status(400).json({ error: "กรุณาเลือกสาขาที่จะนำเข้าข้อมูล" });
-  
-  if (!isLocalMode) {
-    return res.status(503).json({ error: "ฟีเจอร์ดึงข้อมูล POSPOS ใช้ได้เฉพาะบนเครื่อง Local เท่านั้น" });
-  }
   
   try {
     const { syncPosposData } = await import("./scripts/pospos-sync.js");

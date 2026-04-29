@@ -8,6 +8,7 @@ import type {
   Ingredient,
   HistoricalOrderImportInput,
   IntegrationEvent,
+  IntegrationOutboxSummary,
   IntegrationStatus,
   ImportResult,
   InventoryItem,
@@ -278,7 +279,9 @@ export async function createOrder(input: {
   paymentDetails?: {
     cashReceived?: number;
     paymentConfirmed?: boolean;
+    referenceNo?: string;
   };
+  idempotencyKey?: string;
   discountType: DiscountType;
   discountValue: number;
   discounts?: DiscountRule[];
@@ -299,6 +302,7 @@ export async function createOrder(input: {
       })),
       paymentMethod: input.paymentMethod,
       paymentDetails: input.paymentDetails,
+      idempotencyKey: input.idempotencyKey,
       discountType: input.discountType,
       discountValue: input.discountValue,
       discounts: input.discounts,
@@ -448,6 +452,11 @@ export async function getIntegrationStatus() {
   return payload.items;
 }
 
+export async function getIntegrationOutboxSummary() {
+  const payload = await fetchJson<{ summary: IntegrationOutboxSummary }>(`${API_URL}/integrations/summary`);
+  return payload.summary;
+}
+
 export async function getIntegrationEvents(limit = 30) {
   const payload = await fetchJson<{ items: IntegrationEvent[] }>(`${API_URL}/integrations/events?limit=${limit}`);
   return payload.items;
@@ -462,7 +471,7 @@ export async function retryIntegrationEvent(id: number) {
 }
 
 export async function processIntegrationOutbox() {
-  const payload = await fetchJson<{ result: { processed: number; total: number } }>(`${API_URL}/integrations/process`, {
+  const payload = await fetchJson<{ result: { processed: number; sent: number; retried: number; skipped: number; failed: number; total: number; remainingPending: number; remainingFailed: number } }>(`${API_URL}/integrations/process`, {
     method: "POST",
     body: JSON.stringify({})
   });

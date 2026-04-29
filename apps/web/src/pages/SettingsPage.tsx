@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getIntegrationEvents, getIntegrationStatus, processIntegrationOutbox, retryIntegrationEvent } from "../api";
+import { getIntegrationEvents, getIntegrationOutboxSummary, getIntegrationStatus, processIntegrationOutbox, retryIntegrationEvent } from "../api";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
-import type { IntegrationEvent, IntegrationProvider, IntegrationStatus } from "../types";
+import type { IntegrationEvent, IntegrationOutboxSummary, IntegrationProvider, IntegrationStatus } from "../types";
 
 const providerLabel: Record<IntegrationProvider, string> = {
   rd_tax: "RD / e-Tax",
@@ -27,6 +27,7 @@ export default function SettingsPage() {
   const { user } = useAuth();
   const toast = useToast();
   const [statuses, setStatuses] = useState<IntegrationStatus[]>([]);
+  const [summary, setSummary] = useState<IntegrationOutboxSummary | null>(null);
   const [events, setEvents] = useState<IntegrationEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [retryingId, setRetryingId] = useState<number | null>(null);
@@ -35,11 +36,13 @@ export default function SettingsPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [statusItems, eventItems] = await Promise.all([
+      const [statusItems, summaryItem, eventItems] = await Promise.all([
         getIntegrationStatus(),
+        getIntegrationOutboxSummary(),
         getIntegrationEvents(40)
       ]);
       setStatuses(statusItems);
+      setSummary(summaryItem);
       setEvents(eventItems);
     } catch (e) {
       toast.error((e as Error).message);
@@ -81,7 +84,7 @@ export default function SettingsPage() {
     setProcessing(true);
     try {
       const result = await processIntegrationOutbox();
-      toast.success(`ประมวลผลคิว ${result.total} งาน ส่งสำเร็จ ${result.processed} งาน`);
+      toast.success(`ประมวลผล ${result.total} งาน ส่งสำเร็จ ${result.sent} retry ${result.retried} fail ${result.failed}`);
       await refresh();
     } catch (e) {
       toast.error((e as Error).message);
@@ -139,7 +142,43 @@ export default function SettingsPage() {
           <p className="muted" style={{ margin: 0 }}>ผิดพลาด</p>
           <strong style={{ fontSize: 28 }}>{totals.failed}</strong>
         </div>
+        <div className="panel" style={{ padding: 18 }}>
+          <p className="muted" style={{ margin: 0 }}>Retry limit</p>
+          <strong style={{ fontSize: 28 }}>{summary?.maxAttempts ?? 3}</strong>
+        </div>
       </section>
+
+      {summary && (
+        <section className="panel" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+            <div>
+              <h3 style={{ marginTop: 0 }}>Queue Health</h3>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {summary.byStatus.map((item) => (
+                  <span key={item.status} className={`badge ${getStatusClass(item.status)}`}>
+                    {item.status} {item.count}
+                  </span>
+                ))}
+                {summary.byStatus.length === 0 && <span className="muted">ไม่มีงานค้างในคิว</span>}
+              </div>
+            </div>
+            <div>
+              <p className="muted" style={{ marginTop: 0 }}>งาน PENDING เก่าสุด</p>
+              <strong>{summary.oldestPending ? `${providerLabel[summary.oldestPending.provider]} #${summary.oldestPending.id}` : "-"}</strong>
+              {summary.oldestPending && (
+                <div className="muted" style={{ fontSize: 12 }}>{formatDateTime(summary.oldestPending.createdAt)}</div>
+              )}
+            </div>
+            <div>
+              <p className="muted" style={{ marginTop: 0 }}>FAILED ล่าสุด</p>
+              <strong>{summary.newestFailed ? `${providerLabel[summary.newestFailed.provider]} #${summary.newestFailed.id}` : "-"}</strong>
+              {summary.newestFailed && (
+                <div className="muted" style={{ fontSize: 12 }}>{summary.newestFailed.lastError || formatDateTime(summary.newestFailed.updatedAt)}</div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section
         style={{

@@ -10,6 +10,7 @@
     "backup": "tsx src/scripts/backup-now.ts",
     "phase13:check": "tsx src/scripts/phase13-infra-check.ts",
     "production-hardening:check": "tsx src/scripts/production-hardening-check.ts",
+    "checkout:integration": "tsx src/scripts/checkout-integration-check.ts",
     "pos:smoke": "node --import tsx src/scripts/pos-workflow-smoke-check.ts",
     "orders:check": "tsx src/scripts/check-orders.ts",
     "menu:clean": "tsx src/scripts/clean-menu-data.ts",

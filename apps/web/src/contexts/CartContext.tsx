@@ -26,7 +26,7 @@ type CartContextType = {
   clearDiscountRules: () => void;
   setPointsToUse: (val: string) => void;
   setScanFeedback: (feedback: ScanFeedback) => void;
-  checkout: (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean }) => Promise<Order>;
+  checkout: (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean; referenceNo?: string }) => Promise<Order>;
   subtotal: number;
   discountAmount: number;
   total: number;
@@ -36,6 +36,10 @@ const CartContext = createContext<CartContextType | null>(null);
 
 function makeId() {
   return Math.random().toString(36).substring(2, 9);
+}
+
+function makeCheckoutKey() {
+  return `checkout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
@@ -157,7 +161,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return Math.round(Math.max(0, subtotal - discountAmount - pointsDiscount) * 100) / 100;
   }, [subtotal, discountAmount, pointsToUse]);
 
-  const checkout = useCallback(async (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean }) => {
+  const checkout = useCallback(async (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean; referenceNo?: string }) => {
     if (cart.length === 0 || !activeBranch) throw new Error("ไม่สามารถชำระเงินได้");
     if (!activeShift) throw new Error("กรุณาเปิดกะก่อนขาย");
     try {
@@ -173,6 +177,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         loyaltyPointsToUse: usablePoints,
         userId: user?.id,
         shiftId: activeShift.id,
+        idempotencyKey: makeCheckoutKey(),
       });
       clearCart();
       await refreshShift();

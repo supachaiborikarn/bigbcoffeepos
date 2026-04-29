@@ -2,6 +2,40 @@
 
 Updated: 2026-04-29
 
+## Production 100/100 Roadmap
+
+### Phase 1: P1 Blockers
+
+- [x] Make database/local story truthful and executable.
+  - Decision: production and development API use PostgreSQL/Prisma as the supported runtime database.
+  - Remove misleading SQLite local fallback from runtime startup/docs, or convert it to backup-only legacy tooling.
+  - Acceptance: fresh clone with `DATABASE_URL` works; missing `DATABASE_URL` fails with a clear setup error instead of half-starting.
+- [x] Enforce branch scope on `GET /api/orders/:id`.
+  - Acceptance: cashier from branch A gets `403` for branch B order details; admin/manager can access as designed.
+
+### Phase 2: P2 Production Safety
+
+- [x] Fail fast when `JWT_SECRET` is missing in production.
+  - Acceptance: `NODE_ENV=production` without `JWT_SECRET` exits before serving requests.
+- [x] Persist payment evidence in the database.
+  - Add `Payment` table or order payment fields for amount due, received, change, status, confirmation time, reference number, and confirming user.
+  - Acceptance: receipt reprint/reconciliation/refund can read payment evidence from DB.
+
+### Phase 3: Reliability And Accounting
+
+- [x] Add order/refund event history.
+  - Acceptance: every cancel/refund has actor, reason, timestamp, and monetary/stock effect.
+- [x] Add checkout idempotency key.
+  - Acceptance: retrying the same checkout request cannot create duplicate orders.
+- [x] Harden integration outbox worker/retry observability.
+  - Acceptance: failed provider events are visible, retryable, and do not disappear.
+
+### Phase 4: QA And Ops
+
+- [x] Add automated database-backed integration tests for checkout, stock, branch isolation, refund, payment validation, and reports.
+- [x] Add deploy/runbook documentation for migrations, env vars, health checks, backup, rollback, and incident response.
+- [x] Add operational monitoring targets: request id, slow query/error logs, audit search/export, outbox failure alerting.
+
 ## Goal
 
 Close the UI/workflow gaps found in the latest audit so the POS can be used end-to-end by staff, and separate unfinished feature shells from production-ready flows.

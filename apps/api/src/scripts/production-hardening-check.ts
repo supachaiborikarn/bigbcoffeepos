@@ -91,7 +91,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "README documents PostgreSQL production mode",
     file: "README.md",
-    pattern: /Production database: PostgreSQL/
+    pattern: /Runtime database: PostgreSQL/
   },
   {
     name: "API env example exists with JWT secret",
@@ -117,6 +117,111 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     name: "POSPOS sync credentials come from env",
     file: "apps/api/src/scripts/pospos-sync.ts",
     pattern: /POSPOS_EMAIL[\s\S]*POSPOS_PASSWORD/
+  },
+  {
+    name: "API runtime fails fast without PostgreSQL DATABASE_URL",
+    file: "apps/api/src/index.ts",
+    pattern: /DATABASE_URL must be a PostgreSQL connection string/
+  },
+  {
+    name: "order detail endpoint enforces cashier branch scope",
+    file: "apps/api/src/index.ts",
+    pattern: /ไม่มีสิทธิ์ดูออเดอร์ของสาขาอื่น/
+  },
+  {
+    name: "production requires JWT_SECRET",
+    file: "apps/api/src/middleware/auth.ts",
+    pattern: /JWT_SECRET is required when NODE_ENV=production/
+  },
+  {
+    name: "payment evidence is persisted",
+    file: "apps/api/prisma/schema.prisma",
+    pattern: /model Payment[\s\S]*amountReceived[\s\S]*confirmedByUserId/
+  },
+  {
+    name: "payment and event schema changes have a migration",
+    file: "apps/api/prisma/migrations/202604290001_production_reliability/migration.sql",
+    pattern: /idempotency_key[\s\S]*CREATE TABLE "payments"[\s\S]*CREATE TABLE "order_events"/
+  },
+  {
+    name: "checkout writes payment row",
+    file: "apps/api/src/store/orders.ts",
+    pattern: /tx\.payment\.create/
+  },
+  {
+    name: "order event history is persisted",
+    file: "apps/api/prisma/schema.prisma",
+    pattern: /model OrderEvent[\s\S]*eventType[\s\S]*payload/
+  },
+  {
+    name: "refund and cancel write order events",
+    file: "apps/api/src/store/orders.ts",
+    pattern: /ORDER_REFUNDED[\s\S]*ORDER_CANCELLED/
+  },
+  {
+    name: "checkout idempotency key is unique",
+    file: "apps/api/prisma/schema.prisma",
+    pattern: /idempotencyKey\s+String\?\s+@unique/
+  },
+  {
+    name: "integration provider HTTP failures are retried",
+    file: "apps/api/src/store/integrations.ts",
+    pattern: /assertProviderResponseOk[\s\S]*response\.ok[\s\S]*throw new Error/
+  },
+  {
+    name: "integration retry resets exhausted attempts",
+    file: "apps/api/src/store/integrations.ts",
+    pattern: /retryIntegrationEvent[\s\S]*attempts:\s*0/
+  },
+  {
+    name: "integration outbox summary endpoint exists",
+    file: "apps/api/src/index.ts",
+    pattern: /\/api\/integrations\/summary[\s\S]*getIntegrationOutboxSummary/
+  },
+  {
+    name: "integration outbox processing reports observable counters",
+    file: "apps/api/src/store/integrations.ts",
+    pattern: /remainingPending[\s\S]*remainingFailed/
+  },
+  {
+    name: "request logs include request ids",
+    file: "apps/api/src/logger.ts",
+    pattern: /X-Request-ID[\s\S]*requestId/
+  },
+  {
+    name: "slow requests are observable",
+    file: "apps/api/src/logger.ts",
+    pattern: /SLOW_REQUEST_MS[\s\S]*http_request_slow/
+  },
+  {
+    name: "audit search endpoint exists",
+    file: "apps/api/src/index.ts",
+    pattern: /\/api\/audit[\s\S]*readAuditRows/
+  },
+  {
+    name: "audit CSV export endpoint exists",
+    file: "apps/api/src/index.ts",
+    pattern: /\/api\/audit\.csv[\s\S]*sendCsv/
+  },
+  {
+    name: "integration outbox failure alert log exists",
+    file: "apps/api/src/index.ts",
+    pattern: /integration_outbox_attention_required/
+  },
+  {
+    name: "production runbook exists",
+    file: "docs/PRODUCTION_RUNBOOK.md",
+    pattern: /Deploy Checklist[\s\S]*Rollback[\s\S]*Monitoring Targets/
+  },
+  {
+    name: "database-backed checkout integration check exists",
+    file: "apps/api/src/scripts/checkout-integration-check.ts",
+    pattern: /createOrder[\s\S]*ORDER_REFUNDED[\s\S]*Promise\.allSettled/
+  },
+  {
+    name: "checkout integration check is runnable",
+    file: "apps/api/package.json",
+    pattern: /checkout:integration/
   }
 ];
 

@@ -2,7 +2,7 @@ import prisma from "../prisma.js";
 import { getCustomer } from "./customers.js";
 
 type Modifier = { name: string; value: string; price: number };
-type PaymentDetails = { cashReceived?: number; changeAmount?: number; paymentConfirmed?: boolean };
+type PaymentDetails = { cashReceived?: number; changeAmount?: number; paymentConfirmed?: boolean; referenceNo?: string };
 type DiscountType = "PERCENT" | "FIXED" | null;
 type PaymentMethod = "CASH" | "QR" | "CARD" | "EWALLET";
 type DiscountRuleType = "ORDER_PERCENT" | "ORDER_FIXED" | "CATEGORY_PERCENT" | "BUY_X_GET_Y";
@@ -58,6 +58,7 @@ const MODIFIER_CATALOG = {
     ["วิปครีม", { label: "วิปครีม", price: 15 }]
   ])
 } as const;
+const IDEMPOTENCY_EVENT_PREFIX = "CHECKOUT_IDEMPOTENCY:";
 
 function roundMoney(v: number) {
   return Math.round(v * 100) / 100;
@@ -180,13 +181,17 @@ function normalizePaymentMethod(value: string): PaymentMethod {
 }
 
 function normalizePaymentDetails(paymentMethod: PaymentMethod, total: number, details: PaymentDetails = {}) {
+  const referenceNo = typeof details.referenceNo === "string" && details.referenceNo.trim()
+    ? details.referenceNo.trim().slice(0, 120)
+    : null;
   if (paymentMethod === "CASH") {
     const cashReceived = Number(details.cashReceived);
     if (!Number.isFinite(cashReceived) || cashReceived < total) throw new Error("ยอดรับเงินสดไม่พอ");
     return {
       status: "CONFIRMED",
       cashReceived: roundMoney(cashReceived),
-      changeAmount: roundMoney(cashReceived - total)
+      changeAmount: roundMoney(cashReceived - total),
+      referenceNo
     };
   }
 
@@ -194,7 +199,8 @@ function normalizePaymentDetails(paymentMethod: PaymentMethod, total: number, de
   return {
     status: "CONFIRMED",
     cashReceived: null,
-    changeAmount: null
+    changeAmount: null,
+    referenceNo
   };
 }
 
@@ -216,6 +222,15 @@ export async function getOrder(id: number) {
 }
 
 export async function updateOrderStatus(id: number, status: string) {
+  return updateOrderStatusWithContext(id, { status });
+}
+
+export async function updateOrderStatusWithContext(id: number, input: {
+  status: string;
+  actorId?: number | null;
+  reason?: string | null;
+}) {
+  const status = input.status;
   if (!ALLOWED_STATUSES.has(status)) throw new Error("สถานะออเดอร์ไม่ถูกต้อง");
 
   if (REVERSAL_STATUSES.has(status)) {
@@ -226,11 +241,24 @@ export async function updateOrderStatus(id: number, status: string) {
       });
       if (!current) return null;
       if (REVERSAL_STATUSES.has(current.status)) return current;
+      const reversalPayload = {
+        previousStatus: current.status,
+        newStatus: status,
+        total: current.total,
+        paymentMethod: current.paymentMethod,
+        stockRestored: [] as Array<{ ingredientId: number; qty: number }>,
+        loyaltyPointsDelta: current.loyaltyPointsUsed - current.loyaltyPointsEarned,
+        shiftDelta: current.shiftId ? {
+          totalSales: -current.total,
+          totalOrders: -1
+        } : null
+      };
 
       for (const item of current.items) {
         const recipes = await tx.recipe.findMany({ where: { menuItemId: item.menuItemId } });
         for (const recipe of recipes) {
           const restoreQty = recipe.qty * item.qty;
+          reversalPayload.stockRestored.push({ ingredientId: recipe.ingredientId, qty: restoreQty });
           await tx.ingredientStock.upsert({
             where: {
               branchId_ingredientId: {
@@ -288,20 +316,43 @@ export async function updateOrderStatus(id: number, status: string) {
         });
       }
 
-      return tx.order.update({
+      const updated = await tx.order.update({
         where: { id },
         data: { status },
         include: { items: true }
       });
+      await tx.orderEvent.create({
+        data: {
+          orderId: current.id,
+          eventType: status === "REFUNDED" ? "ORDER_REFUNDED" : "ORDER_CANCELLED",
+          actorId: input.actorId ?? null,
+          reason: input.reason?.trim() || null,
+          payload: JSON.stringify(reversalPayload)
+        }
+      });
+      return updated;
     });
     return hydrateOrder(order);
   }
 
   try {
-    const updated = await prisma.order.update({
-      where: { id },
-      data: { status },
-      include: { items: true }
+    const updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.order.findUnique({ where: { id }, select: { status: true } });
+      const order = await tx.order.update({
+        where: { id },
+        data: { status },
+        include: { items: true }
+      });
+      await tx.orderEvent.create({
+        data: {
+          orderId: id,
+          eventType: "ORDER_STATUS_CHANGED",
+          actorId: input.actorId ?? null,
+          reason: input.reason?.trim() || null,
+          payload: JSON.stringify({ previousStatus: current?.status ?? null, newStatus: status })
+        }
+      });
+      return order;
     });
     return hydrateOrder(updated);
   } catch {
@@ -321,8 +372,20 @@ export async function createOrder(input: {
   shiftId?: number;
   discounts?: DiscountRule[];
   paymentDetails?: PaymentDetails;
+  idempotencyKey?: string | null;
 }) {
   const paymentMethod = normalizePaymentMethod(input.paymentMethod);
+  const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
+    ? input.idempotencyKey.trim().slice(0, 120)
+    : null;
+  if (idempotencyKey) {
+    const existingOrder = await prisma.order.findUnique({
+      where: { idempotencyKey },
+      include: { items: true }
+    });
+    if (existingOrder) return hydrateOrder(existingOrder);
+  }
+
   const branch = await prisma.branch.findFirst({ where: { id: input.branchId, active: true } });
   if (!branch) throw new Error("ไม่พบสาขาที่ระบุ");
 
@@ -396,7 +459,17 @@ export async function createOrder(input: {
     }))
   };
 
-  const order = await prisma.$transaction(async (tx) => {
+  let order;
+  try {
+    order = await prisma.$transaction(async (tx) => {
+    if (idempotencyKey) {
+      const existingOrder = await tx.order.findUnique({
+        where: { idempotencyKey },
+        include: { items: true }
+      });
+      if (existingOrder) return existingOrder;
+    }
+
     const requiredStock = new Map<number, number>();
     for (const i of orderItems) {
       const recipes = await tx.recipe.findMany({ where: { menuItemId: i.menuItemId } });
@@ -451,6 +524,7 @@ export async function createOrder(input: {
         tax: 0,
         total,
         paymentMethod,
+        idempotencyKey,
         items: {
           create: orderItems.map(i => ({
             menuItemId: i.menuItemId,
@@ -465,6 +539,44 @@ export async function createOrder(input: {
       },
       include: { items: true }
     });
+
+    await tx.payment.create({
+      data: {
+        orderId: newOrder.id,
+        method: paymentMethod,
+        status: paymentDetails.status,
+        amountDue: total,
+        amountReceived: paymentDetails.cashReceived,
+        changeAmount: paymentDetails.changeAmount,
+        referenceNo: paymentDetails.referenceNo,
+        confirmedByUserId: input.userId ?? null
+      }
+    });
+    await tx.orderEvent.create({
+      data: {
+        orderId: newOrder.id,
+        eventType: "ORDER_CREATED",
+        actorId: input.userId ?? null,
+        payload: JSON.stringify({
+          subtotal,
+          discountAmount,
+          total,
+          paymentMethod,
+          paymentStatus: paymentDetails.status,
+          idempotencyKey
+        })
+      }
+    });
+    if (idempotencyKey) {
+      await tx.orderEvent.create({
+        data: {
+          orderId: newOrder.id,
+          eventType: `${IDEMPOTENCY_EVENT_PREFIX}${idempotencyKey}`,
+          actorId: input.userId ?? null,
+          payload: JSON.stringify({ idempotencyKey })
+        }
+      });
+    }
 
     for (const [ingredientId, requiredQty] of requiredStock) {
       const decrementResult = await tx.ingredientStock.updateMany({
@@ -512,7 +624,17 @@ export async function createOrder(input: {
     });
 
     return newOrder;
-  });
+    });
+  } catch (error: any) {
+    if (idempotencyKey && error?.code === "P2002") {
+      const existingOrder = await prisma.order.findUnique({
+        where: { idempotencyKey },
+        include: { items: true }
+      });
+      if (existingOrder) return hydrateOrder(existingOrder);
+    }
+    throw error;
+  }
 
   return hydrateOrder(order);
 }

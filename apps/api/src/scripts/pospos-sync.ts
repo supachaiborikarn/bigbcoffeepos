@@ -299,8 +299,40 @@ export async function syncPosposData(branchId: number) {
       });
 
       if (!existingOrder) {
+        const salesOnlyItem = await prisma.menuItem.findFirst({
+          where: { name: "POSPOS sales-only record", branchType },
+        }) ?? await prisma.menuItem.create({
+          data: {
+            name: "POSPOS sales-only record",
+            category: "Imported POSPOS",
+            basePrice: 0,
+            cost: 0,
+            branchType,
+            active: false,
+          },
+        });
+
         await prisma.order.create({
-          data: { branchId, status: "PAID", subtotal: total + discountAmount, discountAmount, total, paymentMethod, createdAt },
+          data: {
+            branchId,
+            status: "PAID",
+            subtotal: total + discountAmount,
+            discountAmount,
+            total,
+            paymentMethod,
+            createdAt,
+            items: {
+              create: [{
+                menuItemId: salesOnlyItem.id,
+                name: "POSPOS sales-only record",
+                qty: 1,
+                basePrice: total,
+                modifiers: "[]",
+                lineTotal: total,
+                note: row.receiptNo ? `POSPOS receipt ${row.receiptNo}: sales total only, no item detail` : "POSPOS sales total only, no item detail",
+              }],
+            },
+          },
         });
         results.sales++;
       }

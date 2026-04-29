@@ -236,6 +236,7 @@ export default function POSPage() {
         cashReceived,
         paymentConfirmed: paymentMethod !== "CASH"
       });
+      clearCart();
       setLastOrder(order);
       setShowCashDrawer(false);
       // Print receipt
@@ -262,7 +263,7 @@ export default function POSPage() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [cart, isSubmitting, subtotal, discountAmount, total, pointsToUse, discountRules, checkout, paymentMethod, selectedMember, activeBranch, refreshCustomers, toast]);
+  }, [cart, isSubmitting, subtotal, discountAmount, total, pointsToUse, discountRules, checkout, clearCart, paymentMethod, selectedMember, activeBranch, refreshCustomers, toast]);
 
   const handleCheckoutClick = () => {
     if (cart.length === 0 || isSubmitting || !activeShift) return;

@@ -172,7 +172,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const idempotencyKey = checkoutKeyRef.current ?? makeCheckoutKey();
     checkoutKeyRef.current = idempotencyKey;
     try {
-      const order = await createOrder({
+      const orderInput: Parameters<typeof createOrder>[0] = {
         items: cart,
         paymentMethod,
         paymentDetails,
@@ -185,7 +185,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
         userId: user?.id,
         shiftId: activeShift.id,
         idempotencyKey,
-      });
+      };
+      let order: Order;
+      try {
+        order = await createOrder(orderInput);
+      } catch (error) {
+        if (!String((error as Error).message).includes("บันทึกออเดอร์นานเกินไป")) throw error;
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
+        order = await createOrder(orderInput);
+      }
       clearCart();
       void refreshShift().catch((error) => {
         console.warn("[POS] refresh shift after checkout failed", error);

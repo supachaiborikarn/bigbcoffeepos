@@ -321,8 +321,8 @@ export default function POSPage() {
           )}
         </div>
 
-        <div className="hide-scrollbar" style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--pos-bg)", overflowX: "auto", whiteSpace: "nowrap" }}>
-          <div className="tab-row" style={{ marginBottom: "0", background: "transparent", padding: 0, border: "none", display: "inline-flex", gap: "8px" }}>
+        <div className="pos-category-scroll" style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--pos-bg)", overflowX: "auto", whiteSpace: "nowrap", position: "relative" }}>
+          <div style={{ display: "inline-flex", gap: "8px" }}>
             {categories.map((item) => (
               <button key={item} className={`tab ${category === item ? "tab--active" : ""}`} 
                 style={{ 
@@ -333,7 +333,8 @@ export default function POSPage() {
                   padding: "8px 16px",
                   fontWeight: 500,
                   boxShadow: category === item ? "0 2px 4px rgba(139, 94, 60, 0.2)" : "none",
-                  whiteSpace: "nowrap"
+                  whiteSpace: "nowrap",
+                  flexShrink: 0
                 }} 
                 onClick={() => setCategory(item)}>
                 {item}

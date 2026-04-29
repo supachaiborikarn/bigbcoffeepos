@@ -180,8 +180,23 @@ app.post("/api/menu", requireRole("admin", "manager"), async (req, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const category = isStr(req.body?.category) ? req.body.category.trim() : "";
   const basePrice = parseMoney(req.body?.basePrice);
+  const taxRate = req.body?.taxRate === undefined || req.body?.taxRate === null || req.body?.taxRate === "" ? undefined : parseNonNegativeNumber(req.body.taxRate);
+  if (req.body?.taxRate !== undefined && req.body?.taxRate !== null && req.body?.taxRate !== "" && taxRate === null) return res.status(400).json({ error: "ภาษีไม่ถูกต้อง" });
   if (!name || !category || basePrice === null) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
-  const item = await addMenuItem({ name, category, basePrice, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(), cost: parseMoney(req.body?.cost) ?? undefined, branchType: parseBranchType(req.body?.branchType) });
+  const item = await addMenuItem({
+    name,
+    category,
+    basePrice,
+    sku: req.body?.sku?.trim(),
+    barcode: req.body?.barcode?.trim(),
+    cost: parseMoney(req.body?.cost) ?? undefined,
+    imageUrl: req.body?.imageUrl?.trim(),
+    unit: req.body?.unit?.trim(),
+    taxRate: taxRate ?? undefined,
+    optionGroup: req.body?.optionGroup?.trim(),
+    optionLabel: req.body?.optionLabel?.trim(),
+    branchType: parseBranchType(req.body?.branchType)
+  });
   audit("menu.created", req, { menuItemId: item.id, branchType: item.branchType });
   return res.status(201).json({ item });
 });
@@ -189,11 +204,17 @@ app.put("/api/menu/:id", requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const cost = req.body?.cost === null || req.body?.cost === "" ? null : req.body?.cost !== undefined ? parseMoney(req.body.cost) ?? undefined : undefined;
+  const taxRate = req.body?.taxRate === null || req.body?.taxRate === "" ? null : req.body?.taxRate !== undefined ? parseNonNegativeNumber(req.body.taxRate) ?? undefined : undefined;
   const item = await updateMenuItem(id, {
     name: req.body?.name?.trim(), category: req.body?.category?.trim(),
     basePrice: req.body?.basePrice !== undefined ? parseMoney(req.body.basePrice) ?? undefined : undefined,
     active: req.body?.active, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(),
     cost,
+    imageUrl: req.body?.imageUrl === null ? null : req.body?.imageUrl?.trim(),
+    unit: req.body?.unit === null ? null : req.body?.unit?.trim(),
+    taxRate,
+    optionGroup: req.body?.optionGroup === null ? null : req.body?.optionGroup?.trim(),
+    optionLabel: req.body?.optionLabel === null ? null : req.body?.optionLabel?.trim(),
     branchType: parseBranchType(req.body?.branchType)
   });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });

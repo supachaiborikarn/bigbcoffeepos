@@ -299,6 +299,15 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .pos-cat-btn--active::after { content: ""; position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 20px; background: var(--brand); border-radius: 3px 0 0 3px; }
 .pos-cat-label { font-size: 9px; color: var(--text-muted); margin-top: 2px; text-align: center; max-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Category horizontal scroll strip */
+.pos-category-scroll { -webkit-overflow-scrolling: touch; scrollbar-width: thin; scrollbar-color: var(--brand-muted) transparent; }
+.pos-category-scroll::-webkit-scrollbar { height: 4px; }
+.pos-category-scroll::-webkit-scrollbar-track { background: transparent; }
+.pos-category-scroll::-webkit-scrollbar-thumb { background: var(--brand-muted); border-radius: 4px; }
+.pos-category-scroll::-webkit-scrollbar-thumb:hover { background: var(--brand); }
+.pos-category-scroll { mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%); -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%); }
+.pos-category-scroll:hover { mask-image: none; -webkit-mask-image: none; }
+
 .pos-center { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 .pos-search-bar { padding: 16px 20px; background: var(--bg-surface); border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: center; }
 .pos-search-bar .input { flex: 1; }

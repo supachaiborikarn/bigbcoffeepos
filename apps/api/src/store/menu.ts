@@ -15,6 +15,14 @@ export async function addMenuItem(input: {
   sku?: string;
   barcode?: string;
   cost?: number;
+  imageUrl?: string | null;
+  unit?: string | null;
+  taxRate?: number | null;
+  source?: string | null;
+  sourceId?: string | null;
+  optionGroup?: string | null;
+  optionLabel?: string | null;
+  metadata?: string;
   branchType?: string;
 }) {
   return prisma.menuItem.create({
@@ -25,6 +33,14 @@ export async function addMenuItem(input: {
       sku: input.sku || null,
       barcode: input.barcode || null,
       cost: input.cost ?? null,
+      imageUrl: input.imageUrl || null,
+      unit: input.unit || null,
+      taxRate: input.taxRate ?? null,
+      source: input.source || null,
+      sourceId: input.sourceId || null,
+      optionGroup: input.optionGroup || null,
+      optionLabel: input.optionLabel || null,
+      metadata: input.metadata || "{}",
       branchType: input.branchType || "coffee"
     }
   });
@@ -40,6 +56,14 @@ export async function updateMenuItem(
     sku: string;
     barcode: string;
     cost: number | null;
+    imageUrl: string | null;
+    unit: string | null;
+    taxRate: number | null;
+    source: string | null;
+    sourceId: string | null;
+    optionGroup: string | null;
+    optionLabel: string | null;
+    metadata: string;
     branchType: string;
   }>
 ) {
@@ -56,6 +80,14 @@ export async function updateMenuItem(
       ...(input.sku !== undefined ? { sku: input.sku || null } : {}),
       ...(input.barcode !== undefined ? { barcode: input.barcode || null } : {}),
       ...(input.cost !== undefined ? { cost: input.cost } : {}),
+      ...(input.imageUrl !== undefined ? { imageUrl: input.imageUrl || null } : {}),
+      ...(input.unit !== undefined ? { unit: input.unit || null } : {}),
+      ...(input.taxRate !== undefined ? { taxRate: input.taxRate } : {}),
+      ...(input.source !== undefined ? { source: input.source || null } : {}),
+      ...(input.sourceId !== undefined ? { sourceId: input.sourceId || null } : {}),
+      ...(input.optionGroup !== undefined ? { optionGroup: input.optionGroup || null } : {}),
+      ...(input.optionLabel !== undefined ? { optionLabel: input.optionLabel || null } : {}),
+      ...(input.metadata !== undefined ? { metadata: input.metadata || "{}" } : {}),
       ...(input.branchType !== undefined ? { branchType: input.branchType } : {})
     }
   });

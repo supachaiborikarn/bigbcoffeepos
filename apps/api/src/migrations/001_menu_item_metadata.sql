@@ -1,0 +1,10 @@
+ALTER TABLE menu_items ADD COLUMN image_url TEXT;
+ALTER TABLE menu_items ADD COLUMN unit TEXT;
+ALTER TABLE menu_items ADD COLUMN tax_rate REAL;
+ALTER TABLE menu_items ADD COLUMN source TEXT;
+ALTER TABLE menu_items ADD COLUMN source_id TEXT;
+ALTER TABLE menu_items ADD COLUMN option_group TEXT;
+ALTER TABLE menu_items ADD COLUMN option_label TEXT;
+ALTER TABLE menu_items ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_menu_items_source ON menu_items(source, source_id);
+CREATE INDEX IF NOT EXISTS idx_menu_items_option_group ON menu_items(option_group);

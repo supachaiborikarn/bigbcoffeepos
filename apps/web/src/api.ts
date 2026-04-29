@@ -118,6 +118,11 @@ export async function createMenuItem(input: {
   sku?: string;
   barcode?: string;
   cost?: number;
+  imageUrl?: string;
+  unit?: string;
+  taxRate?: number;
+  optionGroup?: string;
+  optionLabel?: string;
   branchType?: MenuItem["branchType"];
 }) {
   const payload = await fetchJson<{ item: MenuItem }>(`${API_URL}/menu`, {
@@ -137,6 +142,11 @@ export async function updateMenuItem(
     sku: string;
     barcode: string;
     cost: number | null;
+    imageUrl: string | null;
+    unit: string | null;
+    taxRate: number | null;
+    optionGroup: string | null;
+    optionLabel: string | null;
     branchType: MenuItem["branchType"];
   }>
 ) {

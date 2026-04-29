@@ -50,6 +50,14 @@ model MenuItem {
   category   String   @default("")
   basePrice  Float    @default(0) @map("base_price")
   cost       Float?
+  imageUrl   String?  @map("image_url")
+  unit       String?
+  taxRate    Float?   @map("tax_rate")
+  source     String?
+  sourceId   String?  @map("source_id")
+  optionGroup String? @map("option_group")
+  optionLabel String? @map("option_label")
+  metadata   String   @default("{}")
   branchType String   @default("coffee") @map("branch_type")
   active     Boolean  @default(true)
   createdAt  DateTime @default(now()) @map("created_at")
@@ -57,6 +65,8 @@ model MenuItem {
   orderItems OrderItem[]
   recipes    Recipe[]
 
+  @@index([source, sourceId])
+  @@index([optionGroup])
   @@map("menu_items")
 }
 

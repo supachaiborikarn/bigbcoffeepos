@@ -145,6 +145,14 @@ export type MenuItem = {
   category: string;
   basePrice: number;
   cost?: number | null;
+  imageUrl?: string | null;
+  unit?: string | null;
+  taxRate?: number | null;
+  source?: string | null;
+  sourceId?: string | null;
+  optionGroup?: string | null;
+  optionLabel?: string | null;
+  metadata?: string;
   branchType: "coffee" | "oil_service";
   active: boolean;
   createdAt: string;
@@ -382,6 +390,13 @@ export type ProductImportInput = {
   stockQty?: number;
   reorderLevel?: number;
   unit?: string;
+  imageUrl?: string;
+  taxRate?: number;
+  source?: string;
+  sourceId?: string;
+  optionGroup?: string;
+  optionLabel?: string;
+  metadata?: Record<string, unknown> | string;
 };
 
 export type CustomerImportInput = {

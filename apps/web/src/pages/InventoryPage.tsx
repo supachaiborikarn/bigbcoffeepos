@@ -91,6 +91,11 @@ type ProductFormState = {
   cost: string;
   sku: string;
   barcode: string;
+  imageUrl: string;
+  unit: string;
+  taxRate: string;
+  optionGroup: string;
+  optionLabel: string;
   branchType: MenuItem["branchType"];
   active: boolean;
 };
@@ -125,6 +130,11 @@ function createBlankProductForm(branchType: MenuItem["branchType"]): ProductForm
     cost: "",
     sku: "",
     barcode: "",
+    imageUrl: "",
+    unit: "",
+    taxRate: "",
+    optionGroup: "",
+    optionLabel: "",
     branchType,
     active: true
   };
@@ -138,6 +148,11 @@ function productToForm(item: MenuItem): ProductFormState {
     cost: item.cost === null || item.cost === undefined ? "" : String(item.cost),
     sku: item.sku ?? "",
     barcode: item.barcode ?? "",
+    imageUrl: item.imageUrl ?? "",
+    unit: item.unit ?? "",
+    taxRate: item.taxRate === null || item.taxRate === undefined ? "" : String(item.taxRate),
+    optionGroup: item.optionGroup ?? "",
+    optionLabel: item.optionLabel ?? "",
     branchType: item.branchType ?? "coffee",
     active: item.active
   };
@@ -344,11 +359,12 @@ export default function InventoryPage() {
     event.preventDefault();
     const basePrice = toNumber(menuForm.basePrice);
     const cost = menuForm.cost.trim() ? toNumber(menuForm.cost) : undefined;
+    const taxRate = menuForm.taxRate.trim() ? toNumber(menuForm.taxRate) : undefined;
     if (!menuForm.name.trim() || !menuForm.category.trim() || basePrice === null || basePrice < 0) {
       toast.error("กรุณากรอกข้อมูลสินค้าให้ครบ");
       return;
     }
-    if (cost === null || (typeof cost === "number" && cost < 0)) {
+    if (cost === null || (typeof cost === "number" && cost < 0) || taxRate === null || (typeof taxRate === "number" && taxRate < 0)) {
       toast.error("ต้นทุนสินค้าไม่ถูกต้อง");
       return;
     }
@@ -362,6 +378,11 @@ export default function InventoryPage() {
         cost,
         sku: menuForm.sku.trim() || undefined,
         barcode: menuForm.barcode.trim() || undefined,
+        imageUrl: menuForm.imageUrl.trim() || undefined,
+        unit: menuForm.unit.trim() || undefined,
+        taxRate,
+        optionGroup: menuForm.optionGroup.trim() || undefined,
+        optionLabel: menuForm.optionLabel.trim() || undefined,
         branchType: menuForm.branchType
       });
       setMenuForm(createBlankProductForm(defaultBranchType));
@@ -495,11 +516,12 @@ export default function InventoryPage() {
 
     const basePrice = toNumber(productEditForm.basePrice);
     const cost = productEditForm.cost.trim() ? toNumber(productEditForm.cost) : null;
+    const taxRate = productEditForm.taxRate.trim() ? toNumber(productEditForm.taxRate) : null;
     if (!productEditForm.name.trim() || !productEditForm.category.trim() || basePrice === null || basePrice < 0) {
       toast.error("กรุณากรอกข้อมูลสินค้าให้ครบ");
       return;
     }
-    if (cost !== null && cost < 0) {
+    if ((cost !== null && cost < 0) || (taxRate !== null && taxRate < 0)) {
       toast.error("ต้นทุนสินค้าไม่ถูกต้อง");
       return;
     }
@@ -513,6 +535,11 @@ export default function InventoryPage() {
         cost,
         sku: productEditForm.sku.trim(),
         barcode: productEditForm.barcode.trim(),
+        imageUrl: productEditForm.imageUrl.trim() || null,
+        unit: productEditForm.unit.trim() || null,
+        taxRate,
+        optionGroup: productEditForm.optionGroup.trim() || null,
+        optionLabel: productEditForm.optionLabel.trim() || null,
         branchType: productEditForm.branchType,
         active: productEditForm.active
       });
@@ -831,6 +858,11 @@ export default function InventoryPage() {
               <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
               <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
               <input className="input" value={productEditForm.barcode} onChange={(e) => setProductEditForm({ ...productEditForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
+              <input className="input" value={productEditForm.imageUrl} onChange={(e) => setProductEditForm({ ...productEditForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
+              <input className="input" value={productEditForm.unit} onChange={(e) => setProductEditForm({ ...productEditForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
+              <input className="input" type="number" value={productEditForm.taxRate} onChange={(e) => setProductEditForm({ ...productEditForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
+              <input className="input" value={productEditForm.optionGroup} onChange={(e) => setProductEditForm({ ...productEditForm, optionGroup: e.target.value })} placeholder="กลุ่มตัวเลือก เช่น ลาเต้" />
+              <input className="input" value={productEditForm.optionLabel} onChange={(e) => setProductEditForm({ ...productEditForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
               <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
                 <option value="coffee">ร้านกาแฟ</option>
               </select>
@@ -865,6 +897,11 @@ export default function InventoryPage() {
             <input className="input" type="number" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
             <input className="input" value={menuForm.sku} onChange={(e) => setMenuForm({ ...menuForm, sku: e.target.value })} placeholder="SKU" />
             <input className="input" value={menuForm.barcode} onChange={(e) => setMenuForm({ ...menuForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
+            <input className="input" value={menuForm.imageUrl} onChange={(e) => setMenuForm({ ...menuForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
+            <input className="input" value={menuForm.unit} onChange={(e) => setMenuForm({ ...menuForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
+            <input className="input" type="number" value={menuForm.taxRate} onChange={(e) => setMenuForm({ ...menuForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
+            <input className="input" value={menuForm.optionGroup} onChange={(e) => setMenuForm({ ...menuForm, optionGroup: e.target.value })} placeholder="กลุ่มตัวเลือก" />
+            <input className="input" value={menuForm.optionLabel} onChange={(e) => setMenuForm({ ...menuForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก" />
             <select className="input" value={menuForm.branchType} onChange={(e) => setMenuForm({ ...menuForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
               <option value="coffee">ร้านกาแฟ</option>
             </select>

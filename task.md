@@ -62,9 +62,11 @@ Close the UI/workflow gaps found in the latest audit so the POS can be used end-
 - [ ] Link imported POSPOS receipts to customers when POSPOS exposes member data in receipt details.
 - [x] Add customer insight widgets: recent spend, inactive customers, and high-value customers.
 
+Current POSPOS customer scrape exposes only name and phone, and transaction list exposes sales totals without member detail. Keep the two open customer metadata tasks until receipt detail/member APIs are captured.
+
 ### Phase 4: Product Metadata Expansion
 
-- [ ] Import or support product images where POSPOS exposes them.
-- [ ] Support modifier/option catalogs instead of treating every variant as a separate product.
-- [ ] Normalize noisy categories from POSPOS into shop-friendly groups.
-- [ ] Add product tax/unit metadata when the source provides it.
+- [x] Import or support product images where POSPOS exposes them.
+- [x] Support modifier/option catalogs instead of treating every variant as a separate product.
+- [x] Normalize noisy categories from POSPOS into shop-friendly groups.
+- [x] Add product tax/unit metadata when the source provides it.

@@ -3,6 +3,7 @@ import type { MenuItem } from "../../types";
 type Props = {
   item: MenuItem;
   onClick: (item: MenuItem) => void;
+  variantCount?: number;
 };
 
 const formatter = new Intl.NumberFormat("th-TH", {
@@ -11,7 +12,7 @@ const formatter = new Intl.NumberFormat("th-TH", {
   maximumFractionDigits: 0,
 });
 
-export default function ProductCard({ item, onClick }: Props) {
+export default function ProductCard({ item, onClick, variantCount = 0 }: Props) {
   const isPopular = item.category === "กาแฟ" && item.basePrice >= 60; // Mock popular logic
 
   return (
@@ -28,8 +29,11 @@ export default function ProductCard({ item, onClick }: Props) {
         borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center",
         color: "var(--text-muted)", fontSize: "12px", overflow: "hidden"
       }}>
-        {/* Mock image could go here */}
-        <span style={{ opacity: 0.5 }}>☕</span>
+        {item.imageUrl ? (
+          <img src={item.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
+        ) : (
+          <span style={{ opacity: 0.5 }}>☕</span>
+        )}
       </div>
 
       {/* Popular Badge */}
@@ -46,7 +50,9 @@ export default function ProductCard({ item, onClick }: Props) {
 
         <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", marginTop: "8px" }}>
           {/* Category Tag */}
-          <span className="menu-card__category" style={{ background: "var(--brand-subtle)", color: "var(--brand)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px" }}>{item.category}</span>
+          <span className="menu-card__category" style={{ background: "var(--brand-subtle)", color: "var(--brand)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px" }}>
+            {variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || item.category}
+          </span>
 
           {/* Price */}
           <span className="menu-card__price" style={{ fontWeight: 700, color: "var(--brand-hover)", fontSize: "14px" }}>{formatter.format(item.basePrice)}</span>

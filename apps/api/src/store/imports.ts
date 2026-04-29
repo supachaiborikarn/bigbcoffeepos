@@ -17,6 +17,13 @@ type ProductImportInput = {
   stockQty?: number;
   reorderLevel?: number;
   unit?: string;
+  imageUrl?: string;
+  taxRate?: number;
+  source?: string;
+  sourceId?: string;
+  optionGroup?: string;
+  optionLabel?: string;
+  metadata?: Record<string, unknown> | string;
 };
 
 type CustomerImportInput = {
@@ -55,6 +62,30 @@ function positiveNumber(value: unknown, fallback = 0) {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
+function normalizeCategory(raw: string, branchType: string) {
+  const value = raw.trim();
+  const normalized = value.toLowerCase().replace(/\s+/g, "");
+  if (!value || normalized === "uncategory" || normalized === "ไม่ระบุ") return branchType === "oil_service" ? "บริการน้ำมัน" : "อื่นๆ";
+  const rules = [
+    { category: "กาแฟ", keywords: ["กาแฟ", "coffee", "espresso", "americano", "latte", "mocha"] },
+    { category: "ชา", keywords: ["ชา", "tea", "matcha"] },
+    { category: "นม/โกโก้", keywords: ["นม", "โกโก้", "cocoa", "milk"] },
+    { category: "เครื่องดื่มพร้อมขาย", keywords: ["ตู้แช่", "น้ำดื่ม", "เครื่องดื่ม", "c-vitt", "drink"] },
+    { category: "เบเกอรี่/ขนม", keywords: ["ขนม", "เค้ก", "คุกกี้", "bakery", "cookie"] },
+    { category: "ไอติม", keywords: ["ไอติม", "icecream", "ice cream"] },
+    { category: "น้ำมันเครื่อง", keywords: ["น้ำมัน", "oil"] },
+    { category: "อะไหล่/ไส้กรอง", keywords: ["ไส้กรอง", "filter"] },
+    { category: "บริการ", keywords: ["บริการ", "service", "ค่าแรง"] }
+  ];
+  return rules.find((rule) => rule.keywords.some((keyword) => normalized.includes(keyword.toLowerCase().replace(/\s+/g, ""))))?.category ?? value;
+}
+
+function stringifyMetadata(value: ProductImportInput["metadata"]) {
+  if (!value) return "{}";
+  if (typeof value === "string") return value.trim() || "{}";
+  return JSON.stringify(value);
+}
+
 export async function importProducts(input: { branchId: number; items: ProductImportInput[] }) {
   const result = makeResult();
   const branch = await prisma.branch.findUnique({ where: { id: input.branchId } });
@@ -65,9 +96,10 @@ export async function importProducts(input: { branchId: number; items: ProductIm
     const name = cleanString(raw.name);
     const sku = cleanString(raw.sku) || null;
     const barcode = cleanString(raw.barcode) || null;
-    const category = cleanString(raw.category) || "Uncategory";
+    const category = normalizeCategory(cleanString(raw.category) || "Uncategory", branch.branchType);
     const basePrice = positiveNumber(raw.basePrice, -1);
     const cost = raw.cost === undefined || raw.cost === null ? null : positiveNumber(raw.cost, 0);
+    const taxRate = raw.taxRate === undefined || raw.taxRate === null ? null : positiveNumber(raw.taxRate, 0);
 
     if (!name || basePrice < 0) {
       result.skipped++;
@@ -89,6 +121,14 @@ export async function importProducts(input: { branchId: number; items: ProductIm
       category,
       basePrice: roundMoney(basePrice),
       cost,
+      imageUrl: cleanString(raw.imageUrl) || null,
+      unit: cleanString(raw.unit) || null,
+      taxRate,
+      source: cleanString(raw.source) || null,
+      sourceId: cleanString(raw.sourceId) || null,
+      optionGroup: cleanString(raw.optionGroup) || null,
+      optionLabel: cleanString(raw.optionLabel) || null,
+      metadata: stringifyMetadata(raw.metadata),
       branchType: branch.branchType,
       active: true
     };

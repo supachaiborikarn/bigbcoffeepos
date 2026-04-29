@@ -252,9 +252,11 @@ export default function POSPage() {
         changeAmount: changeAmt
       }, activeBranch?.name || "Big B Coffee", receiptWindow);
       if (!printed) toast.error("เปิดหน้าพิมพ์ใบเสร็จไม่สำเร็จ กรุณาอนุญาต popup");
-      await refreshCustomers();
       setSelectedMember(null);
       setMemberQuery("");
+      void refreshCustomers().catch((error) => {
+        console.warn("[POS] refresh customers after checkout failed", error);
+      });
     } catch {
       receiptWindow?.close();
     } finally {

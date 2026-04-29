@@ -34,21 +34,36 @@ import type {
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:5175/api";
 
-async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+type FetchJsonInit = RequestInit & { timeoutMs?: number };
+
+async function fetchJson<T>(input: RequestInfo, init?: FetchJsonInit): Promise<T> {
   const token = localStorage.getItem("bb_pos_token");
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  const { timeoutMs, ...fetchInit } = init ?? {};
+  const controller = timeoutMs ? new AbortController() : null;
+  const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
 
-  const response = await fetch(input, {
-    ...init,
-    headers: { ...headers, ...init?.headers }
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = typeof payload?.error === "string" ? payload.error : "Request failed";
-    throw new Error(message);
+  try {
+    const response = await fetch(input, {
+      ...fetchInit,
+      headers: { ...headers, ...fetchInit.headers },
+      signal: controller?.signal ?? fetchInit.signal
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = typeof payload?.error === "string" ? payload.error : "Request failed";
+      throw new Error(message);
+    }
+    return payload as T;
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error("บันทึกออเดอร์นานเกินไป กรุณาตรวจสอบอินเทอร์เน็ตแล้วกดรับเงินอีกครั้ง ระบบจะกันออเดอร์ซ้ำให้");
+    }
+    throw error;
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
   }
-  return payload as T;
 }
 
 export async function getBranches() {
@@ -293,6 +308,7 @@ export async function createOrder(input: {
 }) {
   const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders`, {
     method: "POST",
+    timeoutMs: 15_000,
     body: JSON.stringify({
       items: input.items.map((item) => ({
         menuItemId: item.menuItemId,

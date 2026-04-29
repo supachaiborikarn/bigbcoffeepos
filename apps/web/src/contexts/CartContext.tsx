@@ -55,22 +55,27 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const { activeShift, refreshShift } = useShift();
   const toast = useToast();
   const previousBranchId = useRef<number | null>(null);
+  const checkoutKeyRef = useRef<string | null>(null);
 
   const addItem = useCallback((item: CartItem) => {
+    checkoutKeyRef.current = null;
     setCart((prev) => [...prev, item]);
   }, []);
 
   const updateQty = useCallback((id: string, delta: number) => {
+    checkoutKeyRef.current = null;
     setCart((prev) =>
       prev.map((item) => (item.id === id ? { ...item, qty: Math.max(1, item.qty + delta) } : item)).filter(i => i.qty > 0)
     );
   }, []);
 
   const removeItem = useCallback((id: string) => {
+    checkoutKeyRef.current = null;
     setCart((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
   const clearCart = useCallback(() => {
+    checkoutKeyRef.current = null;
     setCart([]);
     setDiscountType(null);
     setDiscountValue("");
@@ -164,6 +169,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const checkout = useCallback(async (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean; referenceNo?: string }) => {
     if (cart.length === 0 || !activeBranch) throw new Error("ไม่สามารถชำระเงินได้");
     if (!activeShift) throw new Error("กรุณาเปิดกะก่อนขาย");
+    const idempotencyKey = checkoutKeyRef.current ?? makeCheckoutKey();
+    checkoutKeyRef.current = idempotencyKey;
     try {
       const order = await createOrder({
         items: cart,
@@ -177,10 +184,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
         loyaltyPointsToUse: usablePoints,
         userId: user?.id,
         shiftId: activeShift.id,
-        idempotencyKey: makeCheckoutKey(),
+        idempotencyKey,
       });
       clearCart();
-      await refreshShift();
+      void refreshShift().catch((error) => {
+        console.warn("[POS] refresh shift after checkout failed", error);
+      });
       toast.success("ชำระเงินสำเร็จ");
       return order;
     } catch (e) {

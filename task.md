@@ -36,6 +36,35 @@ Updated: 2026-04-29
 - [x] Add deploy/runbook documentation for migrations, env vars, health checks, backup, rollback, and incident response.
 - [x] Add operational monitoring targets: request id, slow query/error logs, audit search/export, outbox failure alerting.
 
+### Phase 5: Final 92-95% To 100%
+
+- [ ] Add CI gate for every push/PR.
+  - Run `npm run build`, `npm run production-hardening:check --workspace apps/api`, and a DB-backed `npm run checkout:integration --workspace apps/api` against a disposable/staging PostgreSQL database.
+  - Acceptance: merge is blocked when build, hardening, migration, or checkout integration checks fail.
+- [ ] Add real deployment pipeline and migration safety.
+  - Use `prisma migrate deploy` as a required deploy step, document baseline handling, and add a predeploy check that fails if migrations are pending or drift is detected.
+  - Acceptance: deploy cannot start app code against an old schema.
+- [ ] Add provider-level backup and restore verification.
+  - Configure PostgreSQL snapshot/PITR with the hosting provider and run a scheduled restore drill to a staging database.
+  - Acceptance: restore drill has timestamp, restored DB URL, row-count sanity checks, and rollback steps recorded.
+- [ ] Add production monitoring and alert channels.
+  - Wire JSON logs to the hosting/log platform and alert on `http_request_slow`, 5xx bursts, `integration_outbox_attention_required`, stale pending outbox, and audit file write failures.
+  - Acceptance: alerts route to the owner channel and include request id / failing endpoint / branch impact.
+- [ ] Add browser E2E for full POS operator flow.
+  - Cover login, branch select, open shift, add multi-item order with modifiers, cash underpayment rejection, QR/card confirmation, receipt, cancel/refund, order center, queue, and daily close report.
+  - Acceptance: E2E runs headless in CI and captures screenshots/traces on failure.
+- [ ] Add sustained concurrency/load test.
+  - Simulate multiple cashiers and branches creating orders/refunds while stock is low.
+  - Acceptance: no duplicate idempotency keys, no negative stock, shift totals match paid minus refunded orders, and p95 API latency target is documented.
+- [ ] Add production data readiness checklist.
+  - Verify menu categories, recipes for stock-controlled products, reorder levels, branch users/roles, payment method settings, tax/receipt text, and POSPOS import source separation.
+  - Acceptance: pilot branch can pass a real day-close rehearsal with no manual database edits.
+
+### Current Readiness Estimate
+
+- Current: 92-95% production-ready for a controlled pilot.
+- Target: 100% after CI, deploy safety, restore drill, real monitoring, browser E2E, load test, and production data readiness are complete.
+
 ## Goal
 
 Close the UI/workflow gaps found in the latest audit so the POS can be used end-to-end by staff, and separate unfinished feature shells from production-ready flows.

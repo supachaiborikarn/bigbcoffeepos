@@ -12,8 +12,37 @@ const formatter = new Intl.NumberFormat("th-TH", {
   maximumFractionDigits: 0,
 });
 
+const TOP_SELLER_FLAGS = ["popular", "topSeller", "top_seller", "bestSeller", "best_seller", "featured", "recommended"];
+const TOP_SELLER_LABELS = ["ขายดี", "popular", "top seller", "bestseller", "best seller", "featured", "recommended"];
+
+function parseMetadata(metadata: MenuItem["metadata"]) {
+  if (!metadata) return null;
+  try {
+    return JSON.parse(metadata) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function isTopSeller(item: MenuItem) {
+  const metadata = parseMetadata(item.metadata);
+  if (metadata) {
+    if (TOP_SELLER_FLAGS.some((flag) => metadata[flag] === true || metadata[flag] === "true")) return true;
+    const labels = [metadata.label, metadata.badge, metadata.tag, metadata.tags]
+      .flat()
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .toLowerCase();
+    if (TOP_SELLER_LABELS.some((label) => labels.includes(label))) return true;
+  }
+
+  return TOP_SELLER_LABELS.some((label) => `${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""}`.toLowerCase().includes(label));
+}
+
 export default function ProductCard({ item, onClick, variantCount = 0 }: Props) {
-  const isPopular = item.category === "กาแฟ" && item.basePrice >= 60; // Mock popular logic
+  const topSeller = isTopSeller(item);
+  const hasFeaturedPhoto = topSeller && Boolean(item.imageUrl?.trim());
+  const metaLabel = variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || item.category;
 
   return (
     <button
@@ -21,42 +50,81 @@ export default function ProductCard({ item, onClick, variantCount = 0 }: Props) 
       className="menu-card"
       onClick={() => onClick(item)}
       aria-label={`เพิ่ม ${item.name}`}
-      style={{ display: "flex", flexDirection: "column", padding: "12px", gap: "8px", position: "relative" }}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        padding: "12px",
+        gap: "10px",
+        position: "relative",
+        minHeight: hasFeaturedPhoto ? 220 : 160
+      }}
     >
-      {/* Image Placeholder */}
-      <div style={{
-        width: "100%", aspectRatio: "4/3", backgroundColor: "var(--bg-muted)",
-        borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center",
-        color: "var(--text-muted)", fontSize: "12px", overflow: "hidden"
-      }}>
-        {item.imageUrl ? (
-          <img src={item.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
-        ) : (
-          <span style={{ opacity: 0.5 }}>☕</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", minWidth: 0 }}>
+        <span className="menu-card__category" style={{
+          background: "var(--brand-subtle)",
+          color: "var(--brand)",
+          padding: "3px 7px",
+          borderRadius: "4px",
+          fontSize: "11px",
+          lineHeight: 1.2,
+          whiteSpace: "nowrap",
+          maxWidth: "100%",
+          overflow: "hidden",
+          textOverflow: "ellipsis"
+        }}>
+          {metaLabel}
+        </span>
+        {topSeller && (
+          <span style={{
+            background: "var(--warning)",
+            color: "white",
+            fontSize: "10px",
+            fontWeight: 700,
+            padding: "3px 7px",
+            borderRadius: "4px",
+            lineHeight: 1.2,
+            flexShrink: 0
+          }}>
+            ขายดี
+          </span>
         )}
       </div>
 
-      {/* Popular Badge */}
-      {isPopular && (
-        <span style={{
-          position: "absolute", top: "16px", right: "16px", background: "var(--warning)",
-          color: "white", fontSize: "10px", fontWeight: "bold", padding: "2px 6px", borderRadius: "10px"
-        }}>POPULAR</span>
+      {hasFeaturedPhoto && (
+        <div style={{
+          width: "100%",
+          aspectRatio: "4/3",
+          backgroundColor: "var(--bg-muted)",
+          borderRadius: "8px",
+          overflow: "hidden"
+        }}>
+          <img src={item.imageUrl ?? ""} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} loading="lazy" />
+        </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", width: "100%", alignItems: "flex-start", marginTop: "4px" }}>
-        {/* Name */}
-        <span className="menu-card__name" style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", textAlign: "left", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.name}</span>
+      <div style={{ display: "flex", flexDirection: "column", width: "100%", alignItems: "flex-start", gap: "10px", flex: 1 }}>
+        <span className="menu-card__name" style={{
+          fontSize: hasFeaturedPhoto ? "15px" : "19px",
+          fontWeight: 700,
+          color: "var(--text-primary)",
+          textAlign: "left",
+          lineHeight: 1.22,
+          letterSpacing: 0,
+          display: "-webkit-box",
+          WebkitLineClamp: hasFeaturedPhoto ? 2 : 4,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          overflowWrap: "anywhere"
+        }}>
+          {item.name}
+        </span>
+      </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", marginTop: "8px" }}>
-          {/* Category Tag */}
-          <span className="menu-card__category" style={{ background: "var(--brand-subtle)", color: "var(--brand)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px" }}>
-            {variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || item.category}
-          </span>
-
-          {/* Price */}
-          <span className="menu-card__price" style={{ fontWeight: 700, color: "var(--brand-hover)", fontSize: "14px" }}>{formatter.format(item.basePrice)}</span>
-        </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", width: "100%", alignItems: "center" }}>
+        <span className="menu-card__price" style={{ fontWeight: 800, color: "var(--brand-hover)", fontSize: "16px", letterSpacing: 0 }}>
+          {formatter.format(item.basePrice)}
+        </span>
       </div>
     </button>
   );

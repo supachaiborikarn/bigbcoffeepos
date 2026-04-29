@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getOrders, updateOrderStatus } from "../api";
 import { useBranch } from "../contexts/BranchContext";
+import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import type { Order, OrderStatus, PaymentMethod } from "../types";
 import { Ban, CheckCircle2, Clock, Filter, Search, ShoppingBag } from "lucide-react";
@@ -23,8 +24,16 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 }).format(value);
 }
 
+function isSameLocalDay(value: string, base = new Date()) {
+  const date = new Date(value);
+  return date.getFullYear() === base.getFullYear() &&
+    date.getMonth() === base.getMonth() &&
+    date.getDate() === base.getDate();
+}
+
 export default function OrdersPage() {
   const { activeBranch } = useBranch();
+  const { activeShift } = useShift();
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [activeTab, setActiveTab] = useState<"ALL" | OrderStatus>("ALL");
@@ -47,9 +56,14 @@ export default function OrdersPage() {
     refresh();
   }, [activeBranch?.id]);
 
+  const operationalOrders = useMemo(() => {
+    if (activeShift) return orders.filter((order) => order.shiftId === activeShift.id);
+    return orders.filter((order) => isSameLocalDay(order.createdAt));
+  }, [orders, activeShift]);
+
   const filteredOrders = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return orders.filter((order) => {
+    return operationalOrders.filter((order) => {
       if (activeTab !== "ALL" && order.status !== activeTab) return false;
       if (!query) return true;
       return (
@@ -58,15 +72,15 @@ export default function OrdersPage() {
         order.items.some((item) => item.name.toLowerCase().includes(query))
       );
     });
-  }, [orders, activeTab, search]);
+  }, [operationalOrders, activeTab, search]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<OrderStatus, number> = { PAID: 0, READY: 0, CANCELLED: 0, REFUNDED: 0 };
-    orders.forEach((order) => {
+    operationalOrders.forEach((order) => {
       counts[order.status] = (counts[order.status] ?? 0) + 1;
     });
     return counts;
-  }, [orders]);
+  }, [operationalOrders]);
 
   const setReady = async (order: Order) => {
     try {
@@ -96,7 +110,9 @@ export default function OrdersPage() {
           <h1 style={{ fontSize: 24, fontWeight: 700, display: "flex", alignItems: "center", gap: 12 }}>
             <ShoppingBag size={28} style={{ color: "var(--brand)" }} /> ศูนย์รวมออเดอร์
           </h1>
-          <p className="muted" style={{ marginTop: 8 }}>{activeBranch?.name} · ติดตามบิลที่รอจัดเตรียม เสร็จสิ้น ยกเลิก และคืนเงิน</p>
+          <p className="muted" style={{ marginTop: 8 }}>
+            {activeBranch?.name} · {activeShift ? `กะปัจจุบัน #${activeShift.id}` : "รายการของวันนี้"} · ติดตามบิลที่รอจัดเตรียม เสร็จสิ้น ยกเลิก และคืนเงิน
+          </p>
         </div>
         <div style={{ display: "flex", gap: 12 }}>
           <div style={{ position: "relative" }}>
@@ -123,7 +139,7 @@ export default function OrdersPage() {
             onClick={() => setActiveTab(status)}
             style={{ borderRadius: 20 }}
           >
-            {status === "ALL" ? `ทั้งหมด (${orders.length})` : `${STATUS_COLORS[status].label} (${statusCounts[status] ?? 0})`}
+            {status === "ALL" ? `ทั้งหมด (${operationalOrders.length})` : `${STATUS_COLORS[status].label} (${statusCounts[status] ?? 0})`}
           </button>
         ))}
       </div>

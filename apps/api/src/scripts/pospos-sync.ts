@@ -414,7 +414,7 @@ export async function syncPosposData(branchId: number) {
           data: {
             branchId,
             userId: staffUser?.id ?? null,
-            status: "PAID",
+            status: "READY",
             subtotal: total + discountAmount,
             discountAmount,
             total,

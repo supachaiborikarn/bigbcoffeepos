@@ -245,7 +245,7 @@ export default function POSPage() {
       await refreshCustomers();
       setSelectedMember(null);
       setMemberQuery("");
-    } catch (error) {
+    } catch {
       receiptWindow?.close();
     } finally {
       setIsSubmitting(false);

@@ -237,6 +237,8 @@ export type Order = {
   id: number;
   branchId: number;
   customerId: number | null;
+  userId?: number | null;
+  shiftId?: number | null;
   createdAt: string;
   status: OrderStatus;
   subtotal: number;

@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../api";
 import { useBranch } from "../contexts/BranchContext";
+import { useShift } from "../contexts/ShiftContext";
+import { useToast } from "../contexts/ToastContext";
 import type { Order } from "../types";
+import { Ban, CheckCircle2 } from "lucide-react";
 
 const fetchJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const token = localStorage.getItem("bb_pos_token");
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(url, { ...init, headers });
-  return res.json();
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = typeof payload?.error === "string" ? payload.error : "Request failed";
+    throw new Error(message);
+  }
+  return payload as T;
 };
 
 function formatTime(dateStr: string) {
@@ -17,19 +25,27 @@ function formatTime(dateStr: string) {
 
 export default function OrderQueuePage() {
   const { activeBranch } = useBranch();
+  const { activeShift } = useShift();
+  const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    if (!activeBranch) return;
+    if (!activeBranch || !activeShift) {
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
     try {
       const data = await fetchJson<{ items: Order[] }>(`${API_URL}/orders?branchId=${activeBranch.id}`);
-      // Show only PAID (pending) orders, newest first
-      const pending = (data.items || []).filter(o => o.status === "PAID").reverse();
+      const pending = (data.items || []).filter(o => o.status === "PAID" && o.shiftId === activeShift.id).reverse();
       setOrders(pending);
-    } catch {}
-    setLoading(false);
-  }, [activeBranch]);
+    } catch {
+      // Keep the current queue visible if an auto-refresh request fails.
+    } finally {
+      setLoading(false);
+    }
+  }, [activeBranch, activeShift]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -39,24 +55,43 @@ export default function OrderQueuePage() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const markReady = async (orderId: number) => {
-    await fetchJson(`${API_URL}/orders/${orderId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "READY" })
-    });
-    refresh();
+  const markReady = async (order: Order) => {
+    try {
+      await fetchJson(`${API_URL}/orders/${order.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "READY" })
+      });
+      toast.success(`บันทึกออเดอร์ #${order.id} เป็นเสร็จสิ้นแล้ว`);
+      refresh();
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  };
+
+  const cancelOrder = async (order: Order) => {
+    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้`)) return;
+    try {
+      await fetchJson(`${API_URL}/orders/${order.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "CANCELLED" })
+      });
+      toast.success(`ยกเลิกบิล #${order.id} แล้ว`);
+      refresh();
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
   };
 
   return (
     <div style={{ padding: "24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
         <div>
-          <h1 style={{ fontSize: "24px", margin: 0 }}>🍳 คิวออเดอร์</h1>
-          <p className="muted">{activeBranch?.name} · อัปเดตอัตโนมัติทุก 5 วินาที</p>
+          <h1 style={{ fontSize: "24px", margin: 0 }}>คิวออเดอร์</h1>
+          <p className="muted">{activeBranch?.name} · กะปัจจุบัน{activeShift ? ` #${activeShift.id}` : ""} · อัปเดตอัตโนมัติทุก 5 วินาที</p>
         </div>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
           <span className="badge badge--active" style={{ fontSize: "16px", padding: "8px 16px" }}>
-            รอทำ {orders.length} รายการ
+            รอจัดเตรียม {orders.length} รายการ
           </span>
           <button className="btn btn--ghost" onClick={refresh}>รีเฟรช</button>
         </div>
@@ -68,7 +103,7 @@ export default function OrderQueuePage() {
         <div style={{ textAlign: "center", padding: "80px 20px" }}>
           <div style={{ fontSize: "64px", marginBottom: "16px" }}>✅</div>
           <h2 style={{ color: "var(--text-secondary)" }}>ไม่มีออเดอร์ค้าง</h2>
-          <p className="muted">ออเดอร์ใหม่จะแสดงที่นี่อัตโนมัติ</p>
+          <p className="muted">บิลใหม่ที่รอจัดเตรียมจะแสดงที่นี่อัตโนมัติ</p>
         </div>
       )}
 
@@ -91,13 +126,22 @@ export default function OrderQueuePage() {
               ))}
             </div>
 
-            <button
-              className="btn btn--primary btn--full"
-              style={{ padding: "14px", fontSize: "16px" }}
-              onClick={() => markReady(order.id)}
-            >
-              ✅ เสร็จแล้ว
-            </button>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <button
+                className="btn btn--primary btn--full"
+                style={{ padding: "14px", fontSize: "16px" }}
+                onClick={() => markReady(order)}
+              >
+                <CheckCircle2 size={18} /> เสร็จสิ้น
+              </button>
+              <button
+                className="btn btn--danger btn--full"
+                style={{ padding: "14px", fontSize: "16px" }}
+                onClick={() => cancelOrder(order)}
+              >
+                <Ban size={18} /> ยกเลิกบิล
+              </button>
+            </div>
           </div>
         ))}
       </div>

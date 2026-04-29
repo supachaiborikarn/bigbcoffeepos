@@ -243,7 +243,7 @@ export async function importHistoricalOrders(input: { branchId: number; items: H
         customerId: null,
         userId: null,
         shiftId: null,
-        status: "PAID",
+        status: "READY",
         subtotal,
         discountType: discountAmount > 0 ? "FIXED" : null,
         discountValue: discountAmount,

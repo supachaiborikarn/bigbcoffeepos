@@ -38,6 +38,17 @@ Close the UI/workflow gaps found in the latest audit so the POS can be used end-
 - [x] Build and smoke test the main POS flow.
 - [x] Add printable daily send-total summary for end-of-day reporting.
 
+## Real-use POS Fix Pass
+
+- [x] Fix discount rule input guards so cart totals recalculate reliably after adding a promotion.
+- [x] Make the cash drawer modal explicit with a "receive money and print receipt" action.
+- [x] Pre-open receipt print windows from the user click so auto-print is not blocked after checkout.
+- [x] Allow branch cashiers to cancel bills safely, while keeping cross-branch protection.
+- [x] Add cancel actions and clearer status labels in order center and kitchen queue.
+- [x] Limit operational order center and queue views to the active shift so historical/POSPOS data does not appear as pending work.
+- [x] Import future POSPOS historical sales as completed orders instead of pending work.
+- [x] Convert the daily send-total printout to 80mm receipt-paper layout.
+
 ## POSPOS Data Utilization Roadmap
 
 ### Phase 1: Report Source Separation

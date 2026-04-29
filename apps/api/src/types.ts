@@ -1,5 +1,5 @@
 export type PaymentMethod = "CASH" | "QR" | "CARD" | "EWALLET";
-export type OrderStatus = "PAID" | "READY";
+export type OrderStatus = "PAID" | "READY" | "CANCELLED" | "REFUNDED";
 export type DiscountType = "PERCENT" | "FIXED" | null;
 
 export type Modifier = {
@@ -94,6 +94,8 @@ export type Order = {
   id: number;
   branchId: number;
   customerId: number | null;
+  userId?: number | null;
+  shiftId?: number | null;
   createdAt: string;
   status: OrderStatus;
   subtotal: number;

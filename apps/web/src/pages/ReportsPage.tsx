@@ -134,41 +134,44 @@ export default function ReportsPage() {
 
   const printDailySummary = async () => {
     setIsPrintingDaily(true);
+    let printWindow: Window | null = null;
     try {
-      const report = await getDailyCloseReport({ date: reportRange.to, branchId: reportBranchId ?? activeBranch?.id, source: reportSource });
-      const printWindow = window.open("", "_blank", "width=900,height=1000");
+      printWindow = window.open("", "_blank", "width=360,height=700");
       if (!printWindow) throw new Error("ไม่สามารถเปิดหน้าพิมพ์ได้");
+      const report = await getDailyCloseReport({ date: reportRange.to, branchId: reportBranchId ?? activeBranch?.id, source: reportSource });
       const sourceLabel = reportSourceLabels[report.source] ?? reportSourceLabels.system;
-      const sourceRows = `
-        <tr><td>ยอดขายในระบบ</td><td class="num">${report.sourceBreakdown.system.orders.toLocaleString("th-TH")}</td><td class="num">${formatMoney(report.sourceBreakdown.system.revenue)}</td></tr>
-        <tr><td>POSPOS sales-only</td><td class="num">${report.sourceBreakdown.pospos.orders.toLocaleString("th-TH")}</td><td class="num">${formatMoney(report.sourceBreakdown.pospos.revenue)}</td></tr>
-        <tr><td>ทั้งหมด</td><td class="num">${report.sourceBreakdown.all.orders.toLocaleString("th-TH")}</td><td class="num">${formatMoney(report.sourceBreakdown.all.revenue)}</td></tr>
-      `;
-      const paymentRows = report.payments.map((payment) => `
-        <tr>
-          <td>${escapeHtml(paymentLabels[payment.method])}</td>
-          <td class="num">${payment.count.toLocaleString("th-TH")}</td>
-          <td class="num">${formatMoney(payment.total)}</td>
-        </tr>
-      `).join("");
+      const row = (label: string, value: string, className = "") => `
+        <div class="row ${className}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>`;
+      const sourceRows = [
+        ["ยอดขายในระบบ", report.sourceBreakdown.system],
+        ["POSPOS sales-only", report.sourceBreakdown.pospos],
+        ["ทั้งหมด", report.sourceBreakdown.all]
+      ].map(([label, source]) => {
+        const item = source as DailyCloseReport["sourceBreakdown"]["system"];
+        return row(String(label), `${item.orders.toLocaleString("th-TH")} บิล / ${formatMoney(item.revenue)}`);
+      }).join("");
+      const paymentRows = report.payments.map((payment) => (
+        row(paymentLabels[payment.method] ?? payment.method, `${payment.count.toLocaleString("th-TH")} บิล / ${formatMoney(payment.total)}`)
+      )).join("");
       const shiftRows = report.shifts.map((shift) => `
-        <tr>
-          <td>#${shift.id}<br><small>${escapeHtml(shift.userName)}</small></td>
-          <td>${formatThaiDateTime(shift.openedAt)}<br><small>ปิด ${formatThaiDateTime(shift.closedAt)}</small></td>
-          <td class="num">${formatMoney(shift.totalSales)}</td>
-          <td class="num">${shift.totalOrders.toLocaleString("th-TH")}</td>
-          <td class="num">${shift.closingCash == null ? "-" : formatMoney(shift.closingCash)}</td>
-          <td class="num ${Number(shift.difference ?? 0) < 0 ? "neg" : "pos"}">${shift.difference == null ? "-" : formatMoney(shift.difference)}</td>
-          <td>${escapeHtml(shift.note ?? "")}</td>
-        </tr>
+        <div class="mini-block">
+          <p class="mini-title">กะ #${shift.id} · ${escapeHtml(shift.userName)}</p>
+          ${row("เปิด", formatThaiDateTime(shift.openedAt))}
+          ${row("ปิด", formatThaiDateTime(shift.closedAt))}
+          ${row("ยอดขาย", formatMoney(shift.totalSales))}
+          ${row("จำนวนบิล", shift.totalOrders.toLocaleString("th-TH"))}
+          ${row("เงินนับ", shift.closingCash == null ? "-" : formatMoney(shift.closingCash))}
+          ${row("ส่วนต่าง", shift.difference == null ? "-" : formatMoney(shift.difference), Number(shift.difference ?? 0) < 0 ? "neg" : "pos")}
+          ${shift.note ? `<p class="note">หมายเหตุ: ${escapeHtml(shift.note)}</p>` : ""}
+        </div>
       `).join("");
-      const itemRows = report.topItems.map((item, index) => `
-        <tr>
-          <td>${index + 1}. ${escapeHtml(item.name)}</td>
-          <td class="num">${item.qty.toLocaleString("th-TH")}</td>
-          <td class="num">${formatMoney(item.revenue)}</td>
-        </tr>
-      `).join("");
+      const itemRows = report.topItems.slice(0, 10).map((item, index) => (
+        row(`${index + 1}. ${item.name}`, `${item.qty.toLocaleString("th-TH")} / ${formatMoney(item.revenue)}`)
+      )).join("");
+      const hiddenItemCount = Math.max(0, report.topItems.length - 10);
       printWindow.document.write(`
 <!doctype html>
 <html>
@@ -177,96 +180,93 @@ export default function ReportsPage() {
   <title>ใบสรุปส่งยอด ${escapeHtml(report.date)}</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: "IBM Plex Sans Thai", "Tahoma", sans-serif; color: #1f2933; margin: 0; padding: 24px; background: #fff; }
-    .sheet { max-width: 820px; margin: 0 auto; }
-    header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #111827; padding-bottom: 14px; margin-bottom: 18px; }
-    h1 { font-size: 24px; margin: 0 0 4px; }
-    h2 { font-size: 15px; margin: 24px 0 8px; }
+    @page { margin: 0; size: 80mm auto; }
+    body {
+      width: 80mm;
+      margin: 0;
+      padding: 8px;
+      color: #111827;
+      background: #fff;
+      font-family: "IBM Plex Sans Thai", "Tahoma", sans-serif;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .sheet { width: 100%; }
+    header { text-align: center; border-bottom: 1px dashed #111827; padding-bottom: 8px; margin-bottom: 8px; }
+    h1 { font-size: 16px; margin: 0 0 4px; }
+    h2 { font-size: 12px; margin: 10px 0 4px; padding-top: 6px; border-top: 1px dashed #111827; }
     p { margin: 0; }
-    small, .muted { color: #667085; }
-    .stamp { text-align: right; font-size: 12px; }
-    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
-    .box { border: 1px solid #d0d5dd; padding: 10px; min-height: 72px; }
-    .box span { display: block; color: #667085; font-size: 12px; }
-    .box strong { display: block; font-size: 20px; margin-top: 6px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
-    th, td { border: 1px solid #d0d5dd; padding: 7px 8px; text-align: left; vertical-align: top; }
-    th { background: #f2f4f7; font-weight: 700; }
-    .num { text-align: right; white-space: nowrap; }
+    .muted { color: #667085; }
+    .row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; align-items: baseline; }
+    .row span { min-width: 0; overflow-wrap: anywhere; }
+    .row strong { text-align: right; white-space: nowrap; }
+    .total { border-top: 1px dashed #111827; margin-top: 4px; padding-top: 6px; font-size: 13px; }
+    .mini-block { padding: 5px 0; border-bottom: 1px dotted #d0d5dd; }
+    .mini-title { font-weight: 700; margin-bottom: 2px; }
+    .note { color: #475467; margin-top: 3px; overflow-wrap: anywhere; }
     .pos { color: #047857; }
     .neg { color: #b42318; }
-    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; margin-top: 44px; }
-    .sign { text-align: center; padding-top: 34px; border-top: 1px solid #111827; }
-    @page { margin: 12mm; }
-    @media print { body { padding: 0; } button { display: none; } }
+    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 24px; }
+    .sign { text-align: center; padding-top: 20px; border-top: 1px solid #111827; }
+    .footer { text-align: center; margin-top: 10px; border-top: 1px dashed #111827; padding-top: 6px; }
+    @media screen {
+      body { background: #f2f4f7; padding: 12px; }
+      .sheet { background: #fff; max-width: 320px; margin: 0 auto; padding: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); }
+    }
+    @media print { body { padding: 8px; background: #fff; } .sheet { box-shadow: none; padding: 0; } }
   </style>
 </head>
 <body>
   <div class="sheet">
     <header>
-      <div>
-        <h1>ใบสรุปส่งยอดประจำวัน</h1>
-        <p><strong>${escapeHtml(report.branch?.name ?? "ทุกสาขา")}</strong></p>
-        <p class="muted">วันที่ ${formatThaiDate(report.date)}</p>
-        <p class="muted">ชุดข้อมูล: ${escapeHtml(sourceLabel)}</p>
-      </div>
-      <div class="stamp">
-        <p>พิมพ์เมื่อ</p>
-        <strong>${formatThaiDateTime(report.generatedAt)}</strong>
-      </div>
+      <h1>ใบสรุปส่งยอดประจำวัน</h1>
+      <p><strong>${escapeHtml(report.branch?.name ?? "ทุกสาขา")}</strong></p>
+      <p class="muted">วันที่ ${formatThaiDate(report.date)}</p>
+      <p class="muted">ชุดข้อมูล: ${escapeHtml(sourceLabel)}</p>
+      <p class="muted">พิมพ์ ${formatThaiDateTime(report.generatedAt)}</p>
     </header>
 
-    <section class="grid">
-      <div class="box"><span>ยอดขายสุทธิ</span><strong>${formatMoney(report.totals.totalRevenue)}</strong></div>
-      <div class="box"><span>จำนวนบิล</span><strong>${report.totals.totalOrders.toLocaleString("th-TH")}</strong></div>
-      <div class="box"><span>เฉลี่ย/บิล</span><strong>${formatMoney(report.totals.averageTicket)}</strong></div>
-      <div class="box"><span>ส่วนลดรวม</span><strong>${formatMoney(report.totals.discountAmount)}</strong></div>
-    </section>
+    ${row("ยอดขายสุทธิ", formatMoney(report.totals.totalRevenue), "total")}
+    ${row("จำนวนบิล", report.totals.totalOrders.toLocaleString("th-TH"))}
+    ${row("เฉลี่ย/บิล", formatMoney(report.totals.averageTicket))}
+    ${row("ส่วนลดรวม", formatMoney(report.totals.discountAmount))}
 
     <h2>แยกตามแหล่งข้อมูล</h2>
-    <table>
-      <thead><tr><th>แหล่งข้อมูล</th><th class="num">บิล</th><th class="num">ยอดรวม</th></tr></thead>
-      <tbody>${sourceRows}</tbody>
-    </table>
+    ${sourceRows}
 
     <h2>สรุปช่องทางชำระเงิน</h2>
-    <table>
-      <thead><tr><th>ช่องทาง</th><th class="num">บิล</th><th class="num">ยอดรวม</th></tr></thead>
-      <tbody>${paymentRows}</tbody>
-    </table>
+    ${paymentRows || `<p class="muted">ไม่มีข้อมูลชำระเงิน</p>`}
 
     <h2>สรุปเงินสด</h2>
-    <section class="grid">
-      <div class="box"><span>ขายเงินสด</span><strong>${formatMoney(report.cash.cashSales)}</strong></div>
-      <div class="box"><span>เงินสดที่ควรมี</span><strong>${formatMoney(report.cash.expectedCash)}</strong></div>
-      <div class="box"><span>นับเงินจริง</span><strong>${formatMoney(report.cash.countedCash)}</strong></div>
-      <div class="box"><span>ส่วนต่าง</span><strong class="${report.cash.difference < 0 ? "neg" : "pos"}">${formatMoney(report.cash.difference)}</strong></div>
-    </section>
+    ${row("ขายเงินสด", formatMoney(report.cash.cashSales))}
+    ${row("เงินสดที่ควรมี", formatMoney(report.cash.expectedCash))}
+    ${row("นับเงินจริง", formatMoney(report.cash.countedCash))}
+    ${row("ส่วนต่าง", formatMoney(report.cash.difference), report.cash.difference < 0 ? "neg total" : "pos total")}
 
     <h2>รายละเอียดกะ</h2>
-    <table>
-      <thead><tr><th>กะ / ผู้ขาย</th><th>เวลา</th><th class="num">ยอดขาย</th><th class="num">บิล</th><th class="num">เงินนับ</th><th class="num">ต่าง</th><th>หมายเหตุ</th></tr></thead>
-      <tbody>${shiftRows || `<tr><td colspan="7" class="muted">ไม่มีข้อมูลกะ</td></tr>`}</tbody>
-    </table>
+    ${shiftRows || `<p class="muted">ไม่มีข้อมูลกะ</p>`}
 
     <h2>เมนูขายดี</h2>
-    <table>
-      <thead><tr><th>สินค้า</th><th class="num">จำนวน</th><th class="num">ยอดขาย</th></tr></thead>
-      <tbody>${itemRows || `<tr><td colspan="3" class="muted">ไม่มีข้อมูลสินค้า</td></tr>`}</tbody>
-    </table>
+    ${itemRows || `<p class="muted">ไม่มีข้อมูลสินค้า</p>`}
+    ${hiddenItemCount > 0 ? `<p class="muted">มีสินค้าเพิ่มเติมอีก ${hiddenItemCount.toLocaleString("th-TH")} รายการ</p>` : ""}
 
-    <p class="muted" style="margin-top: 14px;">ยกเลิก ${report.totals.cancelledOrders.toLocaleString("th-TH")} บิล · คืนเงิน ${report.totals.refundedOrders.toLocaleString("th-TH")} บิล · ใช้แต้ม ${report.totals.loyaltyPointsUsed.toLocaleString("th-TH")} แต้ม</p>
+    <h2>หมายเหตุยอด</h2>
+    ${row("ยกเลิก", `${report.totals.cancelledOrders.toLocaleString("th-TH")} บิล`)}
+    ${row("คืนเงิน", `${report.totals.refundedOrders.toLocaleString("th-TH")} บิล`)}
+    ${row("ใช้แต้ม", `${report.totals.loyaltyPointsUsed.toLocaleString("th-TH")} แต้ม`)}
 
     <section class="signatures">
       <div class="sign">ผู้ส่งยอด</div>
       <div class="sign">ผู้รับยอด</div>
     </section>
+    <p class="footer">Big B Coffee POS</p>
   </div>
-  <script>window.onload = () => { window.print(); };</script>
+  <script>window.onload = () => { window.print(); window.onafterprint = () => window.close(); };</script>
 </body>
 </html>`);
       printWindow.document.close();
     } catch (error) {
+      printWindow?.close();
       toast.error((error as Error).message);
     } finally {
       setIsPrintingDaily(false);

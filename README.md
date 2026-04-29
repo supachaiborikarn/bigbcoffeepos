@@ -48,6 +48,11 @@ npm run production-hardening:check --workspace apps/api
 
 Hardening check ตรวจ guard สำคัญ เช่น atomic checkout, stock guard, refund reversal, role/branch access, PIN hashing, payment confirmation, backend-owned modifier pricing, real order center, และ report exclusion สำหรับออเดอร์ที่ถูกยกเลิก/คืนเงิน
 
+CI ใช้ PostgreSQL ชั่วคราวและรันชุดตรวจรวม:
+```bash
+npm run ci:verify
+```
+
 เมื่อมี `DATABASE_URL` ชี้ไปที่ test/staging PostgreSQL ให้รัน integration check ที่สร้างและลบข้อมูล `QA_CHECK_*` เอง:
 ```bash
 npm run checkout:integration --workspace apps/api
@@ -84,6 +89,14 @@ Integration:
 
 ## Database
 API runtime ใช้ Prisma schema ที่ [apps/api/prisma/schema.prisma](apps/api/prisma/schema.prisma) และ PostgreSQL ผ่าน `DATABASE_URL`.
+
+Migration:
+```bash
+npm run db:migrate --workspace apps/api
+npm run db:migrate:status --workspace apps/api
+```
+
+โฟลเดอร์ `apps/api/prisma/migrations` มี baseline migration สำหรับ fresh PostgreSQL database และ delta migration สำหรับ production hardening.
 
 SQLite files/tools ที่ยังอยู่ใน `apps/api/src/db.ts` และ `apps/api/src/backup.ts` เป็น legacy/local utility code เท่านั้น ไม่ใช่ runtime database ของ API routes. Endpoint backup จะตอบ unavailable ใน PostgreSQL runtime.
 

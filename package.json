@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "echo \"Run dev servers:\\n1) npm run dev --workspace apps/api\\n2) npm run dev --workspace apps/web\"",
     "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
+    "ci:verify": "npm run production-hardening:check --workspace apps/api && npm run db:migrate --workspace apps/api && npm run db:migrate:status --workspace apps/api && npm run build && npm run checkout:integration --workspace apps/api",
     "pos:smoke": "npm run pos:smoke --workspace apps/api",
     "checkout:integration": "npm run checkout:integration --workspace apps/api",
     "menu:clean": "npm run menu:clean --workspace apps/api",

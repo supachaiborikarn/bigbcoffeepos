@@ -38,10 +38,10 @@ Updated: 2026-04-29
 
 ### Phase 5: Final 92-95% To 100%
 
-- [ ] Add CI gate for every push/PR.
+- [x] Add CI gate for every push/PR.
   - Run `npm run build`, `npm run production-hardening:check --workspace apps/api`, and a DB-backed `npm run checkout:integration --workspace apps/api` against a disposable/staging PostgreSQL database.
   - Acceptance: merge is blocked when build, hardening, migration, or checkout integration checks fail.
-- [ ] Add real deployment pipeline and migration safety.
+- [x] Add real deployment pipeline and migration safety.
   - Use `prisma migrate deploy` as a required deploy step, document baseline handling, and add a predeploy check that fails if migrations are pending or drift is detected.
   - Acceptance: deploy cannot start app code against an old schema.
 - [ ] Add provider-level backup and restore verification.

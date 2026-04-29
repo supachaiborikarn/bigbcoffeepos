@@ -144,6 +144,11 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     pattern: /idempotency_key[\s\S]*CREATE TABLE "payments"[\s\S]*CREATE TABLE "order_events"/
   },
   {
+    name: "fresh PostgreSQL databases have a baseline migration",
+    file: "apps/api/prisma/migrations/202604290000_initial_baseline/migration.sql",
+    pattern: /CREATE TABLE IF NOT EXISTS "branches"[\s\S]*CREATE TABLE IF NOT EXISTS "orders"[\s\S]*CREATE TABLE IF NOT EXISTS "integration_outbox"/
+  },
+  {
     name: "checkout writes payment row",
     file: "apps/api/src/store/orders.ts",
     pattern: /tx\.payment\.create/
@@ -222,6 +227,26 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     name: "checkout integration check is runnable",
     file: "apps/api/package.json",
     pattern: /checkout:integration/
+  },
+  {
+    name: "migration deploy script is available",
+    file: "apps/api/package.json",
+    pattern: /db:migrate[\s\S]*prisma migrate deploy/
+  },
+  {
+    name: "API start checks migration status",
+    file: "apps/api/package.json",
+    pattern: /prestart[\s\S]*db:migrate:status/
+  },
+  {
+    name: "CI verifies build, migrations, hardening, and DB integration",
+    file: ".github/workflows/ci.yml",
+    pattern: /postgres:16[\s\S]*npm run ci:verify/
+  },
+  {
+    name: "root CI script gates migration and checkout integration",
+    file: "package.json",
+    pattern: /ci:verify[\s\S]*db:migrate[\s\S]*checkout:integration/
   }
 ];
 

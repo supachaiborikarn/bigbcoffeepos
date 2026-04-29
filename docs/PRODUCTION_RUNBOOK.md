@@ -25,7 +25,14 @@ Integrations:
 
 1. Confirm branch and build:
 ```bash
+npm run ci:verify
+```
+
+For manual step-by-step verification:
+```bash
 npm run production-hardening:check --workspace apps/api
+npm run db:migrate --workspace apps/api
+npm run db:migrate:status --workspace apps/api
 npm run checkout:integration --workspace apps/api
 npm run build
 ```
@@ -33,8 +40,11 @@ npm run build
 2. Apply database migrations before sending traffic:
 ```bash
 cd apps/api
-npx prisma migrate deploy
+npm run db:migrate
+npm run db:migrate:status
 ```
+
+The migration folder includes an idempotent baseline for existing legacy databases and fresh CI/staging databases. Existing databases that were created before Prisma Migrate should run the baseline once; it uses `IF NOT EXISTS` so it should not recreate existing tables.
 
 3. Start API and web with production env. Confirm:
 ```bash

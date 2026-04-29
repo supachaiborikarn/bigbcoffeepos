@@ -328,10 +328,15 @@ app.get("/api/orders/:id", async (req, res) => {
   if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
   return res.json({ order });
 });
-app.patch("/api/orders/:id", requireRole("admin", "manager"), async (req, res) => {
+app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
+    const current = await getOrder(id);
+    if (!current) return res.status(404).json({ error: "ไม่พบออเดอร์" });
+    if (req.user?.role === "cashier" && req.user.branchId !== current.branchId) {
+      return res.status(403).json({ error: "ไม่มีสิทธิ์แก้ไขออเดอร์ของสาขาอื่น" });
+    }
     const order = await updateOrderStatus(id, req.body?.status ?? "PAID");
     if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
     audit("order.status_updated", req, { orderId: id, status: req.body?.status ?? "PAID" });

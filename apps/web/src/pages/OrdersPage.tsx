@@ -3,7 +3,7 @@ import { getOrders, updateOrderStatus } from "../api";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 import type { Order, OrderStatus, PaymentMethod } from "../types";
-import { ShoppingBag, Search, Clock, Filter } from "lucide-react";
+import { Ban, CheckCircle2, Clock, Filter, Search, ShoppingBag } from "lucide-react";
 
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   CASH: "เงินสด",
@@ -13,10 +13,10 @@ const PAYMENT_LABELS: Record<PaymentMethod, string> = {
 };
 
 const STATUS_COLORS: Record<OrderStatus, { bg: string; color: string; label: string }> = {
-  PAID: { bg: "#FFFBEB", color: "#B45309", label: "ชำระแล้ว" },
-  READY: { bg: "#ECFDF5", color: "#047857", label: "พร้อมรับ" },
-  CANCELLED: { bg: "#FEF2F2", color: "#B91C1C", label: "ยกเลิก" },
-  REFUNDED: { bg: "#EFF6FF", color: "#1D4ED8", label: "คืนเงิน" }
+  PAID: { bg: "#FFFBEB", color: "#B45309", label: "รอจัดเตรียม" },
+  READY: { bg: "#ECFDF5", color: "#047857", label: "เสร็จสิ้น" },
+  CANCELLED: { bg: "#FEF2F2", color: "#B91C1C", label: "ยกเลิกแล้ว" },
+  REFUNDED: { bg: "#EFF6FF", color: "#1D4ED8", label: "คืนเงินแล้ว" }
 };
 
 function formatMoney(value: number) {
@@ -60,10 +60,29 @@ export default function OrdersPage() {
     });
   }, [orders, activeTab, search]);
 
+  const statusCounts = useMemo(() => {
+    const counts: Record<OrderStatus, number> = { PAID: 0, READY: 0, CANCELLED: 0, REFUNDED: 0 };
+    orders.forEach((order) => {
+      counts[order.status] = (counts[order.status] ?? 0) + 1;
+    });
+    return counts;
+  }, [orders]);
+
   const setReady = async (order: Order) => {
     try {
       await updateOrderStatus(order.id, "READY");
-      toast.success(`ออเดอร์ #${order.id} พร้อมรับแล้ว`);
+      toast.success(`บันทึกออเดอร์ #${order.id} เป็นเสร็จสิ้นแล้ว`);
+      await refresh();
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  };
+
+  const cancelOrder = async (order: Order) => {
+    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้`)) return;
+    try {
+      await updateOrderStatus(order.id, "CANCELLED");
+      toast.success(`ยกเลิกบิล #${order.id} แล้ว`);
       await refresh();
     } catch (error) {
       toast.error((error as Error).message);
@@ -77,7 +96,7 @@ export default function OrdersPage() {
           <h1 style={{ fontSize: 24, fontWeight: 700, display: "flex", alignItems: "center", gap: 12 }}>
             <ShoppingBag size={28} style={{ color: "var(--brand)" }} /> ศูนย์รวมออเดอร์
           </h1>
-          <p className="muted" style={{ marginTop: 8 }}>{activeBranch?.name} · ออเดอร์จริงจากระบบขาย</p>
+          <p className="muted" style={{ marginTop: 8 }}>{activeBranch?.name} · ติดตามบิลที่รอจัดเตรียม เสร็จสิ้น ยกเลิก และคืนเงิน</p>
         </div>
         <div style={{ display: "flex", gap: 12 }}>
           <div style={{ position: "relative" }}>
@@ -104,7 +123,7 @@ export default function OrdersPage() {
             onClick={() => setActiveTab(status)}
             style={{ borderRadius: 20 }}
           >
-            {status === "ALL" ? `ทั้งหมด (${orders.length})` : STATUS_COLORS[status].label}
+            {status === "ALL" ? `ทั้งหมด (${orders.length})` : `${STATUS_COLORS[status].label} (${statusCounts[status] ?? 0})`}
           </button>
         ))}
       </div>
@@ -146,11 +165,18 @@ export default function OrdersPage() {
 
                 <div style={{ borderTop: "1px dashed var(--border)", paddingTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontWeight: 700, fontSize: 16 }}>{formatMoney(order.total)}</span>
-                  {order.status === "PAID" && (
-                    <button className="btn btn--primary" style={{ padding: "8px 16px", borderRadius: 8 }} onClick={() => setReady(order)}>
-                      พร้อมรับ
-                    </button>
-                  )}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {order.status === "PAID" && (
+                      <button className="btn btn--primary" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => setReady(order)}>
+                        <CheckCircle2 size={16} /> เสร็จสิ้น
+                      </button>
+                    )}
+                    {order.status !== "CANCELLED" && order.status !== "REFUNDED" && (
+                      <button className="btn btn--danger" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => cancelOrder(order)}>
+                        <Ban size={16} /> ยกเลิกบิล
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );

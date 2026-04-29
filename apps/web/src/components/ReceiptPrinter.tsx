@@ -1,5 +1,6 @@
-import { useBranch } from "../contexts/BranchContext";
+import { useState } from "react";
 import type { CartItem, DiscountRule, Order } from "../types";
+import Numpad from "./ui/Numpad";
 
 type ReceiptData = {
   order: Order;
@@ -18,6 +19,15 @@ function formatMoney(v: number) {
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: 0 }).format(v);
 }
 
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function padRight(s: string, len: number) {
   return s.length >= len ? s.slice(0, len) : s + " ".repeat(len - s.length);
 }
@@ -26,7 +36,7 @@ function padLeft(s: string, len: number) {
   return s.length >= len ? s : " ".repeat(len - s.length) + s;
 }
 
-export function printReceipt(data: ReceiptData, branchName: string) {
+export function printReceipt(data: ReceiptData, branchName: string, targetWindow?: Window | null) {
   const W = 32; // 80mm thermal ≈ 32 chars
   const LINE = "─".repeat(W);
   const DLINE = "═".repeat(W);
@@ -85,7 +95,7 @@ export function printReceipt(data: ReceiptData, branchName: string) {
   add("");
 
   // Build print HTML
-  const receiptHtml = lines.map(l => `<div>${l || "&nbsp;"}</div>`).join("\n");
+  const receiptHtml = lines.map(l => `<div>${l ? escapeHtml(l) : "&nbsp;"}</div>`).join("\n");
 
   const html = `<!DOCTYPE html>
 <html lang="th">
@@ -112,44 +122,49 @@ ${receiptHtml}
 </body>
 </html>`;
 
-  const win = window.open("", "_blank", "width=360,height=600");
-  if (win) {
-    win.document.write(html);
-    win.document.close();
-  }
+  const win = targetWindow ?? window.open("", "_blank", "width=360,height=600");
+  if (!win) return false;
+  win.document.write(html);
+  win.document.close();
+  return true;
 }
-
-import Numpad from "./ui/Numpad";
 
 type CashDrawerProps = {
   total: number;
-  onConfirm: (cashReceived: number, change: number) => void;
+  isSubmitting?: boolean;
+  onConfirm: (cashReceived: number, change: number) => void | Promise<void>;
   onCancel: () => void;
 };
 
 const QUICK_AMOUNTS = [20, 50, 100, 500, 1000];
 
-export function CashDrawerModal({ total, onConfirm, onCancel }: CashDrawerProps) {
+export function CashDrawerModal({ total, isSubmitting = false, onConfirm, onCancel }: CashDrawerProps) {
   const [received, setReceived] = useState("");
   const receivedNum = Number(received) || 0;
   const change = Math.max(0, receivedNum - total);
   const isValid = receivedNum >= total;
+  const submitPayment = () => {
+    if (!isValid || isSubmitting) return;
+    onConfirm(receivedNum, change);
+  };
 
   return (
-    <div className="modal-backdrop" onClick={onCancel} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
-      <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "420px", padding: "32px", borderRadius: "16px", background: "var(--surface)" }}>
+    <div className="modal-backdrop" onClick={() => { if (!isSubmitting) onCancel(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+      <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", padding: "32px", borderRadius: "16px", background: "var(--surface)" }}>
         <h2 style={{ marginBottom: "8px" }}>💰 รับเงินสด</h2>
         <p className="muted" style={{ marginBottom: "16px" }}>ยอดที่ต้องชำระ: <strong style={{ color: "var(--accent-dark)", fontSize: "20px" }}>฿{formatMoney(total)}</strong></p>
 
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
           {QUICK_AMOUNTS.map(amt => (
             <button key={amt} className="btn btn--ghost" style={{ flex: 1, minWidth: "60px" }}
+              disabled={isSubmitting}
               onClick={() => setReceived(String(amt))}
             >
               ฿{amt}
             </button>
           ))}
           <button className="btn btn--ghost" style={{ flex: 1, minWidth: "60px" }}
+            disabled={isSubmitting}
             onClick={() => setReceived(String(total))}
           >
             พอดี
@@ -168,7 +183,7 @@ export function CashDrawerModal({ total, onConfirm, onCancel }: CashDrawerProps)
         <Numpad
           value={received}
           onChange={setReceived}
-          onEnter={() => isValid && onConfirm(receivedNum, change)}
+          onEnter={submitPayment}
           enterLabel="ยืนยันรับเงิน"
         />
 
@@ -180,11 +195,12 @@ export function CashDrawerModal({ total, onConfirm, onCancel }: CashDrawerProps)
         </div>
 
         <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
-          <button className="btn btn--ghost btn--full" onClick={onCancel}>ยกเลิก</button>
+          <button className="btn btn--ghost btn--full" onClick={onCancel} disabled={isSubmitting}>ยกเลิก</button>
+          <button className="btn btn--primary btn--full" onClick={submitPayment} disabled={!isValid || isSubmitting}>
+            {isSubmitting ? "กำลังบันทึก..." : "รับเงินและพิมพ์ใบเสร็จ"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
-
-import { useState } from "react";

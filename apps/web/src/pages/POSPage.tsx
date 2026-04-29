@@ -167,6 +167,9 @@ export default function POSPage() {
     const value = Number(discountDraft.value);
     const maxDiscount = discountDraft.maxDiscount ? Number(discountDraft.maxDiscount) : undefined;
     const categoryName = discountDraft.category || promotionCategories[0] || "";
+    if (maxDiscount !== undefined && (!Number.isFinite(maxDiscount) || maxDiscount < 0)) {
+      return toast.error("เพดานส่วนลดต้องเป็นตัวเลข 0 ขึ้นไป");
+    }
 
     let rule: DiscountRule | null = null;
     if (discountDraft.type === "ORDER_PERCENT") {
@@ -185,7 +188,10 @@ export default function POSPage() {
       rule = { id: makeRuleId(), type: "BUY_X_GET_Y", category: categoryName, buyQty, getQty, maxDiscount, label: `${categoryName} ซื้อ ${buyQty} แถม ${getQty}` };
     }
 
-    if (rule) addDiscountRule(rule);
+    if (rule) {
+      addDiscountRule(rule);
+      toast.success("เพิ่มส่วนลดแล้ว");
+    }
   };
 
   const handleCreateMember = async () => {
@@ -214,6 +220,7 @@ export default function POSPage() {
     const totalSnapshot = total;
     const pointsSnapshot = Number(pointsToUse) || 0;
     const rulesSnapshot = [...discountRules];
+    const receiptWindow = window.open("", "_blank", "width=360,height=700");
     try {
       const order = await checkout(paymentMethod, selectedMember?.id ?? null, pointsSnapshot, {
         cashReceived,
@@ -222,7 +229,7 @@ export default function POSPage() {
       setLastOrder(order);
       setShowCashDrawer(false);
       // Print receipt
-      printReceipt({
+      const printed = printReceipt({
         order,
         cart: cartSnapshot,
         discountRules: rulesSnapshot,
@@ -233,14 +240,17 @@ export default function POSPage() {
         paymentMethod,
         cashReceived,
         changeAmount: changeAmt
-      }, activeBranch?.name || "Big B Coffee");
+      }, activeBranch?.name || "Big B Coffee", receiptWindow);
+      if (!printed) toast.error("เปิดหน้าพิมพ์ใบเสร็จไม่สำเร็จ กรุณาอนุญาต popup");
       await refreshCustomers();
       setSelectedMember(null);
       setMemberQuery("");
+    } catch (error) {
+      receiptWindow?.close();
     } finally {
       setIsSubmitting(false);
     }
-  }, [cart, isSubmitting, subtotal, discountAmount, total, pointsToUse, discountRules, checkout, paymentMethod, selectedMember, activeBranch, refreshCustomers]);
+  }, [cart, isSubmitting, subtotal, discountAmount, total, pointsToUse, discountRules, checkout, paymentMethod, selectedMember, activeBranch, refreshCustomers, toast]);
 
   const handleCheckoutClick = () => {
     if (cart.length === 0 || isSubmitting || !activeShift) return;
@@ -393,6 +403,7 @@ export default function POSPage() {
       {showCashDrawer && (
         <CashDrawerModal
           total={total}
+          isSubmitting={isSubmitting}
           onConfirm={(cashReceived, change) => handleCheckout(cashReceived, change)}
           onCancel={() => setShowCashDrawer(false)}
         />

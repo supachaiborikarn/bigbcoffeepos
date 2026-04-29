@@ -126,7 +126,7 @@ export default function CartPanel(props: CartPanelProps) {
       </div>
 
       {/* Cart Items */}
-      <div className="order-list" style={{ overflowY: "auto", flex: 1, padding: "16px 24px" }}>
+      <div className="order-list" style={{ overflowY: "auto", flex: "1 1 0", minHeight: "160px", padding: "16px 24px" }}>
         {cart.length === 0 ? (
           <div className="empty" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, border: "2px dashed var(--border)", padding: "40px 20px" }}>
             <div style={{ background: "var(--bg-muted)", padding: "16px", borderRadius: "50%", color: "var(--text-muted)" }}>
@@ -175,7 +175,7 @@ export default function CartPanel(props: CartPanelProps) {
       </div>
 
       {/* Customer & Discount & Payment */}
-      <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg-subtle)", padding: "16px 20px 20px", overflowY: "auto", flex: "0 1 auto", display: "flex", flexDirection: "column", gap: "12px" }}>
+      <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg-subtle)", padding: "16px 20px 20px", overflowY: "auto", flex: "0 1 50%", maxHeight: "50%", display: "flex", flexDirection: "column", gap: "12px" }}>
         {/* Customer Select */}
         <div className="member-card">
           <div className="member-card__header">

@@ -129,7 +129,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
       amount = unitPrices.sort((a, b) => a - b).slice(0, freeCount).reduce((sum, price) => sum + price, 0);
     }
 
-    const maxDiscount = rule.maxDiscount === undefined ? amount : Math.min(amount, rule.maxDiscount);
+    const validMaxDiscount = Number.isFinite(rule.maxDiscount) ? Math.max(0, Number(rule.maxDiscount)) : undefined;
+    const maxDiscount = validMaxDiscount === undefined ? amount : Math.min(amount, validMaxDiscount);
     return Math.max(0, Math.min(remainingSubtotal, maxDiscount));
   }, [cart, subtotal]);
   
@@ -151,7 +152,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return Math.round(totalDiscount * 100) / 100;
   }, [subtotal, discountType, discountValue, discountRules, computeRuleDiscount]);
 
-  const total = Math.max(0, subtotal - discountAmount - Math.min(Number(pointsToUse) || 0, Math.max(0, subtotal - discountAmount)));
+  const total = useMemo(() => {
+    const pointsDiscount = Math.min(Number(pointsToUse) || 0, Math.max(0, subtotal - discountAmount));
+    return Math.round(Math.max(0, subtotal - discountAmount - pointsDiscount) * 100) / 100;
+  }, [subtotal, discountAmount, pointsToUse]);
 
   const checkout = useCallback(async (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean }) => {
     if (cart.length === 0 || !activeBranch) throw new Error("ไม่สามารถชำระเงินได้");

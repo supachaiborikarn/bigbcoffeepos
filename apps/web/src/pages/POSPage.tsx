@@ -9,6 +9,7 @@ import { CashDrawerModal, printReceipt } from "../components/ReceiptPrinter";
 import ProductGrid from "../components/pos/ProductGrid";
 import CartPanel from "../components/pos/CartPanel";
 import ModifierModal from "../components/pos/ModifierModal";
+import { shouldUseModifierModal } from "../utils/menuRules";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -142,6 +143,15 @@ export default function POSPage() {
     setModifierProduct(null);
   };
 
+  const handleMenuItemClick = (item: MenuItem) => {
+    if (shouldUseModifierModal(item)) {
+      setModifierProduct(item);
+      return;
+    }
+    addCartItem(item);
+    setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} เข้าตะกร้าแล้ว` });
+  };
+
   const processBarcodeScan = (rawCode: string) => {
     const code = rawCode.trim().toLowerCase();
     if (!code) return;
@@ -150,7 +160,7 @@ export default function POSPage() {
       setScanFeedback({ tone: "error", message: `ไม่พบสินค้า: ${code}`, code });
       return;
     }
-    setModifierProduct(item);
+    handleMenuItemClick(item);
     window.requestAnimationFrame(() => scannerInputRef.current?.focus());
   };
 
@@ -359,9 +369,7 @@ export default function POSPage() {
             category={category} 
             search={search} 
             branchType={activeBranch?.branchType} 
-            onItemClick={(item) => {
-              setModifierProduct(item);
-            }} 
+            onItemClick={handleMenuItemClick}
           />
         </div>
       </section>

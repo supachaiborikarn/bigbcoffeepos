@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X, Check } from "lucide-react";
 import type { MenuItem, Modifier } from "../../types";
+import { shouldUseModifierModal } from "../../utils/menuRules";
 
 type Props = {
   item: MenuItem;
@@ -26,10 +27,7 @@ const ADD_ONS = [
 ];
 
 export default function ModifierModal({ item, onClose, onAdd }: Props) {
-  const isCoffeeOrTea = item.category.toLowerCase().includes("กาแฟ") || 
-                        item.category.toLowerCase().includes("ชา") || 
-                        item.category.toLowerCase().includes("coffee") || 
-                        item.category.toLowerCase().includes("tea");
+  const usesModifiers = shouldUseModifierModal(item);
 
   const [type, setType] = useState(item.name.includes("ร้อน") ? "Hot" : item.name.includes("ปั่น") ? "Frappe" : "Iced");
   const [size, setSize] = useState("M");
@@ -40,7 +38,7 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
   const handleAdd = () => {
     const modifiers: Modifier[] = [];
     
-    if (isCoffeeOrTea) {
+    if (usesModifiers) {
       modifiers.push({ name: "Type", value: type, price: 0 });
       modifiers.push({ name: "Size", value: size, price: size === "L" ? 10 : 0 });
       modifiers.push({ name: "Sweetness", value: sweetness, price: 0 });
@@ -86,7 +84,7 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
 
         <div style={{ padding: "24px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 32 }}>
           
-          {isCoffeeOrTea && (
+          {usesModifiers && (
             <>
               {/* Type */}
               <section>
@@ -173,7 +171,7 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
             </>
           )}
 
-          {!isCoffeeOrTea && (
+          {!usesModifiers && (
             <div style={{ padding: "40px 0", textAlign: "center", color: "var(--text-muted)" }}>
               สินค้านี้ไม่มีตัวเลือกเพิ่มเติม
             </div>

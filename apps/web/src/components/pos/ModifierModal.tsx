@@ -66,11 +66,11 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center",
+      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
       background: "rgba(44,30,22,0.4)", backdropFilter: "blur(4px)", padding: "20px"
     }}>
       <div style={{
-        background: "var(--bg-surface)", width: "100%", maxWidth: 500, borderRadius: "24px 24px 0 0",
+        background: "var(--bg-surface)", width: "100%", maxWidth: 500, borderRadius: "24px",
         boxShadow: "var(--shadow-modal)", animation: "slideUp 250ms cubic-bezier(0.16, 1, 0.3, 1)",
         display: "flex", flexDirection: "column", maxHeight: "90vh"
       }}>
@@ -181,7 +181,7 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
 
         </div>
 
-        <div style={{ padding: "20px 24px", borderTop: "1px solid var(--border)", background: "var(--bg-surface)", display: "flex", gap: 16, alignItems: "center", borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
+        <div style={{ padding: "20px 24px", borderTop: "1px solid var(--border)", background: "var(--bg-surface)", display: "flex", gap: 16, alignItems: "center", borderRadius: "0 0 24px 24px" }}>
           <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
             <button onClick={() => setQty(q => Math.max(1, q - 1))} style={{ width: 48, height: 48, background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--text-secondary)" }}>-</button>
             <div style={{ width: 40, textAlign: "center", fontWeight: 600, fontSize: 18 }}>{qty}</div>

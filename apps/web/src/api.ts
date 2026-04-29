@@ -2,6 +2,7 @@ import type {
   Branch,
   CartItem,
   Customer,
+  CustomerInsights,
   CustomerImportInput,
   DailyCloseReport,
   Ingredient,
@@ -18,6 +19,8 @@ import type {
   PurchaseOrder,
   PurchaseOrderItem,
   Recipe,
+  RecipeCoverageReport,
+  ReportSource,
   SalesSummary,
   Shift,
   ShiftCloseResult,
@@ -85,6 +88,14 @@ export async function getCustomers(search?: string) {
   if (search) query.set("search", search);
   const payload = await fetchJson<{ items: Customer[] }>(`${API_URL}/customers?${query.toString()}`);
   return payload.items;
+}
+
+export async function getCustomerInsights(params: { inactiveDays?: number; limit?: number } = {}) {
+  const query = new URLSearchParams();
+  if (params.inactiveDays) query.set("inactiveDays", String(params.inactiveDays));
+  if (params.limit) query.set("limit", String(params.limit));
+  const payload = await fetchJson<{ insights: CustomerInsights }>(`${API_URL}/customers/insights?${query.toString()}`);
+  return payload.insights;
 }
 
 export async function createCustomer(input: { name: string; phone: string }) {
@@ -224,6 +235,15 @@ export async function getRecipes() {
   return payload.items;
 }
 
+export async function getRecipeCoverage(params: { branchId?: number; from?: string; to?: string }) {
+  const query = new URLSearchParams();
+  if (params.branchId) query.set("branchId", String(params.branchId));
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  const payload = await fetchJson<{ report: RecipeCoverageReport }>(`${API_URL}/recipes/coverage?${query.toString()}`);
+  return payload.report;
+}
+
 export async function getRecipe(menuItemId: number) {
   const payload = await fetchJson<{ recipe: Recipe }>(`${API_URL}/recipes/${menuItemId}`);
   return payload.recipe;
@@ -290,28 +310,31 @@ export async function updateOrderStatus(id: number, status: OrderStatus) {
   return payload.order;
 }
 
-export async function getSalesSummary(params: { from?: string; to?: string; branchId?: number }) {
+export async function getSalesSummary(params: { from?: string; to?: string; branchId?: number; source?: ReportSource }) {
   const query = new URLSearchParams();
   if (params.from) query.set("from", params.from);
   if (params.to) query.set("to", params.to);
   if (params.branchId) query.set("branchId", String(params.branchId));
+  if (params.source) query.set("source", params.source);
   const payload = await fetchJson<{ summary: SalesSummary }>(`${API_URL}/reports/summary?${query.toString()}`);
   return payload.summary;
 }
 
-export async function getDailyCloseReport(params: { date?: string; branchId?: number }) {
+export async function getDailyCloseReport(params: { date?: string; branchId?: number; source?: ReportSource }) {
   const query = new URLSearchParams();
   if (params.date) query.set("date", params.date);
   if (params.branchId) query.set("branchId", String(params.branchId));
+  if (params.source) query.set("source", params.source);
   const payload = await fetchJson<{ report: DailyCloseReport }>(`${API_URL}/reports/day-close?${query.toString()}`);
   return payload.report;
 }
 
-export function getOrdersCsvUrl(params: { from?: string; to?: string; branchId?: number }) {
+export function getOrdersCsvUrl(params: { from?: string; to?: string; branchId?: number; source?: ReportSource }) {
   const query = new URLSearchParams();
   if (params.from) query.set("from", params.from);
   if (params.to) query.set("to", params.to);
   if (params.branchId) query.set("branchId", String(params.branchId));
+  if (params.source) query.set("source", params.source);
   return `${API_URL}/reports/orders.csv?${query.toString()}`;
 }
 

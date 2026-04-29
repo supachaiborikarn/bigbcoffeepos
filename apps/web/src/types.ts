@@ -116,6 +116,27 @@ export type Customer = {
   createdAt: string;
 };
 
+export type CustomerInsightItem = Customer & {
+  totalOrders: number;
+  totalSpend: number;
+  recentSpend: number;
+  lastOrderAt: string | null;
+};
+
+export type CustomerInsights = {
+  summary: {
+    totalCustomers: number;
+    customersWithOrders: number;
+    inactiveDays: number;
+    inactiveCustomers: number;
+    recentSpendTotal: number;
+    totalSpend: number;
+    averageSpendPerCustomer: number;
+  };
+  highValueCustomers: CustomerInsightItem[];
+  inactiveCustomers: CustomerInsightItem[];
+};
+
 export type MenuItem = {
   id: number;
   sku?: string | null;
@@ -154,6 +175,34 @@ export type RecipeIngredient = {
 export type Recipe = {
   menuItemId: number;
   ingredients: RecipeIngredient[];
+};
+
+export type RecipeCoverageStatus = "has_recipe" | "missing_recipe" | "not_stock_tracked";
+
+export type RecipeCoverageItem = {
+  menuItemId: number;
+  name: string;
+  category: string;
+  branchType: MenuItem["branchType"];
+  active: boolean;
+  status: RecipeCoverageStatus;
+  recipeIngredientCount: number;
+  soldQty: number;
+  soldRevenue: number;
+};
+
+export type RecipeCoverageReport = {
+  summary: {
+    totalMenuItems: number;
+    activeMenuItems: number;
+    hasRecipe: number;
+    missingRecipe: number;
+    notStockTracked: number;
+    soldMissingRecipe: number;
+    soldMissingRecipeQty: number;
+    soldMissingRecipeRevenue: number;
+  };
+  items: RecipeCoverageItem[];
 };
 
 export type StockMovement = {
@@ -256,7 +305,19 @@ export type CartItem = {
   note?: string;
 };
 
+export type ReportSource = "system" | "pospos" | "all";
+
+export type SalesSourceBreakdown = {
+  system: { orders: number; revenue: number };
+  pospos: { orders: number; revenue: number };
+  all: { orders: number; revenue: number };
+};
+
 export type SalesSummary = {
+  source: ReportSource;
+  sourceBreakdown: SalesSourceBreakdown;
+  importedSalesOnlyOrders: number;
+  importedSalesOnlyRevenue: number;
   totalOrders: number;
   totalRevenue: number;
   averageTicket: number;
@@ -267,6 +328,8 @@ export type SalesSummary = {
 export type DailyCloseReport = {
   date: string;
   generatedAt: string;
+  source: ReportSource;
+  sourceBreakdown: SalesSourceBreakdown;
   branch: { id: number; name: string; location: string; branchType: string } | null;
   totals: {
     totalOrders: number;

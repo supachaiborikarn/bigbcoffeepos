@@ -162,9 +162,9 @@ export default function TopBar() {
           <div className="topbar__item" style={{ gap: 12, cursor: "default" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
               <strong style={{ fontSize: 14 }}>{user?.name}</strong>
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>{user?.role}</span>
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{user?.role}</span>
             </div>
-            <div style={{ width: 32, height: 32, background: "var(--accent-subtle)", color: "var(--accent-dark)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold" }}>
+            <div style={{ width: 32, height: 32, background: "var(--brand-subtle)", color: "var(--brand-hover)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold" }}>
               {user?.name?.charAt(0) || "U"}
             </div>
           </div>

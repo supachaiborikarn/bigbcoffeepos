@@ -121,22 +121,22 @@ export default function StaffPage() {
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>กำลังโหลดข้อมูล...</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+            <table className="inventory-table" style={{ width: "100%" }}>
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontSize: 14 }}>
-                  <th style={{ padding: "16px 24px", fontWeight: 500 }}>พนักงาน</th>
-                  <th style={{ padding: "16px 24px", fontWeight: 500 }}>ตำแหน่ง</th>
-                  <th style={{ padding: "16px 24px", fontWeight: 500 }}>สาขาประจำ</th>
-                  <th style={{ padding: "16px 24px", fontWeight: 500 }}>สถานะ</th>
-                  <th style={{ padding: "16px 24px", fontWeight: 500, textAlign: "right" }}>จัดการ</th>
+                <tr>
+                  <th>พนักงาน</th>
+                  <th>ตำแหน่ง</th>
+                  <th>สาขาประจำ</th>
+                  <th>สถานะ</th>
+                  <th style={{ textAlign: "right" }}>จัดการ</th>
                 </tr>
               </thead>
               <tbody>
                 {staffList.map(user => (
-                  <tr key={user.id} style={{ borderBottom: "1px solid var(--border)", opacity: user.active !== false ? 1 : 0.5 }}>
-                    <td style={{ padding: "16px 24px" }}>
+                  <tr key={user.id} style={{ opacity: user.active !== false ? 1 : 0.5 }}>
+                    <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--bg-alt)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>
+                        <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--bg-muted)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--brand)" }}>
                           <UserIcon size={20} />
                         </div>
                         <div>
@@ -145,22 +145,22 @@ export default function StaffPage() {
                         </div>
                       </div>
                     </td>
-                    <td style={{ padding: "16px 24px" }}>
+                    <td>
                       <span className={`badge ${user.role === 'admin' ? 'badge--active' : ''}`}>
                         {getRoleLabel(user.role)}
                       </span>
                     </td>
-                    <td style={{ padding: "16px 24px", color: "var(--text-muted)" }}>
+                    <td style={{ color: "var(--text-muted)" }}>
                       {user.branch?.name || "ไม่ระบุสาขา"}
                     </td>
-                    <td style={{ padding: "16px 24px" }}>
+                    <td>
                       {user.active !== false ? (
                         <span style={{ color: "var(--success)", display: "flex", alignItems: "center", gap: 4, fontSize: 14 }}><Check size={16} /> ใช้งานปกติ</span>
                       ) : (
                         <span style={{ color: "var(--danger)", fontSize: 14 }}>ระงับการใช้งาน</span>
                       )}
                     </td>
-                    <td style={{ padding: "16px 24px", textAlign: "right" }}>
+                    <td style={{ textAlign: "right" }}>
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                         <button className="btn btn--outline" onClick={() => openEditModal(user)} style={{ padding: 8 }}>
                           <Pencil size={16} />

@@ -42,7 +42,7 @@ export default function ProductCard({ item, onClick }: Props) {
 
       <div style={{ display: "flex", flexDirection: "column", width: "100%", alignItems: "flex-start", marginTop: "4px" }}>
         {/* Name */}
-        <span className="menu-card__name" style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", textAlign: "left", lineHeight: 1.2, height: "34px", overflow: "hidden" }}>{item.name}</span>
+        <span className="menu-card__name" style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", textAlign: "left", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.name}</span>
 
         <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", marginTop: "8px" }}>
           {/* Category Tag */}

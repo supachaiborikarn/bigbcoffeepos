@@ -1,20 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
-import { getCustomers } from "../api";
-import type { Customer } from "../types";
-import { Search, UserCircle, Star, Phone } from "lucide-react";
+import { getCustomerInsights, getCustomers } from "../api";
+import type { Customer, CustomerInsights } from "../types";
+import { Clock, Phone, Search, Star, TrendingUp, UserCircle } from "lucide-react";
 
 function formatMoney(v: number) {
   return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
 }
 
+function formatDate(value?: string | null) {
+  if (!value) return "ยังไม่เคยซื้อ";
+  return new Date(value).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [insights, setInsights] = useState<CustomerInsights | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    getCustomers().then(setCustomers).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([getCustomers(), getCustomerInsights({ inactiveDays: 60, limit: 8 })])
+      .then(([customerItems, insightData]) => {
+        setCustomers(customerItems);
+        setInsights(insightData);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   const filtered = useMemo(() => {
@@ -53,7 +65,63 @@ export default function CustomersPage() {
             <p className="dash-kpi__value">{customers.reduce((s, c) => s + c.points, 0).toLocaleString()}</p>
           </div>
         </div>
+        <div className="dash-kpi">
+          <span className="dash-kpi__icon" style={{ background: "#ECFDF5" }}><TrendingUp size={18} style={{ color: "#10B981" }} /></span>
+          <div>
+            <p className="dash-kpi__label">ยอดสมาชิก 30 วัน</p>
+            <p className="dash-kpi__value">{formatMoney(insights?.summary.recentSpendTotal ?? 0)}</p>
+          </div>
+        </div>
+        <div className="dash-kpi">
+          <span className="dash-kpi__icon" style={{ background: "#FEF2F2" }}><Clock size={18} style={{ color: "#EF4444" }} /></span>
+          <div>
+            <p className="dash-kpi__label">ไม่กลับมา 60 วัน</p>
+            <p className="dash-kpi__value">{insights?.summary.inactiveCustomers ?? 0}</p>
+          </div>
+        </div>
       </div>
+
+      {insights && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+          <section className="panel">
+            <div className="panel__header">
+              <div><h2>ลูกค้ามูลค่าสูง</h2><p className="muted">เรียงจากยอดซื้อสะสมสูงสุด</p></div>
+              <span className="badge">{formatMoney(insights.summary.averageSpendPerCustomer)} เฉลี่ย/คน</span>
+            </div>
+            <div style={{ padding: "0 24px 24px", display: "grid", gap: 8 }}>
+              {insights.highValueCustomers.map((customer) => (
+                <div key={customer.id} className="stock-row" style={{ cursor: "default" }}>
+                  <span>
+                    <strong>{customer.name}</strong>
+                    <small>{customer.totalOrders.toLocaleString("th-TH")} บิล · ล่าสุด {formatDate(customer.lastOrderAt)}</small>
+                  </span>
+                  <span className="positive">{formatMoney(customer.totalSpend)}</span>
+                </div>
+              ))}
+              {insights.highValueCustomers.length === 0 && <div className="empty">ยังไม่มีประวัติซื้อของสมาชิก</div>}
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel__header">
+              <div><h2>ลูกค้าที่ควรชวนกลับมา</h2><p className="muted">ไม่มีออเดอร์ในช่วง {insights.summary.inactiveDays} วัน</p></div>
+              <span className="badge badge--warning">{insights.summary.inactiveCustomers} คน</span>
+            </div>
+            <div style={{ padding: "0 24px 24px", display: "grid", gap: 8 }}>
+              {insights.inactiveCustomers.map((customer) => (
+                <div key={customer.id} className="stock-row" style={{ cursor: "default" }}>
+                  <span>
+                    <strong>{customer.name}</strong>
+                    <small>{customer.phone} · ล่าสุด {formatDate(customer.lastOrderAt)}</small>
+                  </span>
+                  <span>{customer.points.toLocaleString("th-TH")} แต้ม</span>
+                </div>
+              ))}
+              {insights.inactiveCustomers.length === 0 && <div className="empty">ยังไม่มีลูกค้าในกลุ่มนี้</div>}
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Search & Table */}
       <section className="panel" style={{ flex: 1 }}>

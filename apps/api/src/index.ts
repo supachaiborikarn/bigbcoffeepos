@@ -6,11 +6,11 @@ import { audit, log, requestLogger } from "./logger.js";
 const isLocalMode = !process.env.DATABASE_URL || process.env.DATABASE_URL.startsWith("file:") || process.env.DATABASE_URL.includes("placeholder");
 
 import {
-  getBranches, getCustomers, addCustomer, updateCustomer,
+  getBranches, getCustomers, getCustomerInsights, addCustomer, updateCustomer,
   getMenu, addMenuItem, updateMenuItem,
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
-  getRecipes, getRecipe, setRecipe,
+  getRecipes, getRecipeCoverage, getRecipe, setRecipe,
   getOrders, getOrder, createOrder, updateOrderStatus,
   openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
   authenticatePin, getUsers, addUser, updateUser, deleteUser,
@@ -32,6 +32,7 @@ function isStr(v: unknown): v is string { return typeof v === "string" && v.trim
 function parseMoney(v: unknown) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null; }
 function parseNonNegativeNumber(v: unknown) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) / 1000 : null; }
 function parseBranchType(v: unknown) { return v === "coffee" || v === "oil_service" ? v : undefined; }
+function parseReportSource(v: unknown) { return v === "pospos" || v === "all" || v === "system" ? v : "system"; }
 function csvEscape(value: unknown) {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
@@ -151,6 +152,11 @@ app.get("/api/customers", async (req, res) => {
   const search = isStr(req.query.search) ? String(req.query.search).trim() : undefined;
   res.json({ items: await getCustomers(search) });
 });
+app.get("/api/customers/insights", async (req, res) => {
+  const inactiveDays = parseId(req.query.inactiveDays as string) ?? undefined;
+  const limit = parseId(req.query.limit as string) ?? undefined;
+  res.json({ insights: await getCustomerInsights({ inactiveDays, limit }) });
+});
 app.post("/api/customers", async (req, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const phone = isStr(req.body?.phone) ? req.body.phone.trim() : "";
@@ -269,6 +275,12 @@ app.get("/api/stock-movements", requireBranchAccess((req) => parseId(req.query.b
 
 /* ─── Recipes ─── */
 app.get("/api/recipes", async (_req, res) => res.json({ items: await getRecipes() }));
+app.get("/api/recipes/coverage", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  const from = isStr(req.query.from) ? String(req.query.from) : undefined;
+  const to = isStr(req.query.to) ? String(req.query.to) : undefined;
+  return res.json({ report: await getRecipeCoverage({ branchId, from, to }) });
+});
 app.get("/api/recipes/:menuItemId", async (req, res) => {
   const id = parseId(req.params.menuItemId);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
@@ -381,37 +393,43 @@ app.get("/api/reports/summary", requireRole("admin", "manager"), requireBranchAc
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
-  return res.json({ summary: await getSalesSummary({ from, to, branchId }) });
+  const source = parseReportSource(req.query.source);
+  return res.json({ summary: await getSalesSummary({ from, to, branchId, source }) });
 });
 
 app.get("/api/reports/profit", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
-  return res.json(await getProfitReport({ from, to, branchId }));
+  const source = parseReportSource(req.query.source);
+  return res.json(await getProfitReport({ from, to, branchId, source }));
 });
 
 app.get("/api/reports/staff", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
-  return res.json(await getStaffPerformance({ from, to, branchId }));
+  const source = parseReportSource(req.query.source);
+  return res.json(await getStaffPerformance({ from, to, branchId, source }));
 });
 
 app.get("/api/reports/day-close", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const date = isStr(req.query.date) ? String(req.query.date) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
-  return res.json({ report: await getDailyCloseReport({ date, branchId }) });
+  const source = parseReportSource(req.query.source);
+  return res.json({ report: await getDailyCloseReport({ date, branchId, source }) });
 });
 
 app.get("/api/reports/orders.csv", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
-  const rows = await getOrdersCsvRows({ from, to, branchId });
+  const source = parseReportSource(req.query.source);
+  const rows = await getOrdersCsvRows({ from, to, branchId, source });
   return sendCsv(res, `orders_${from ?? "all"}_${to ?? "all"}.csv`, rows, [
     { key: "id", label: "Order ID" },
     { key: "createdAt", label: "วันที่เวลา" },
+    { key: "source", label: "แหล่งที่มา" },
     { key: "branch", label: "สาขา" },
     { key: "customer", label: "ลูกค้า" },
     { key: "staff", label: "พนักงาน" },
@@ -419,6 +437,7 @@ app.get("/api/reports/orders.csv", requireRole("admin", "manager"), requireBranc
     { key: "paymentMethod", label: "ช่องทางชำระ" },
     { key: "itemCount", label: "จำนวนรายการ" },
     { key: "items", label: "สินค้า" },
+    { key: "itemNotes", label: "หมายเหตุรายการ" },
     { key: "subtotal", label: "ยอดก่อนลด" },
     { key: "discountAmount", label: "ส่วนลด" },
     { key: "loyaltyPointsUsed", label: "แต้มที่ใช้" },

@@ -48,10 +48,10 @@ export default function OrderQueuePage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg, #f5f0eb)", padding: "24px" }}>
+    <div style={{ padding: "24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
         <div>
-          <h1 style={{ fontSize: "28px", margin: 0 }}>🍳 คิวออเดอร์</h1>
+          <h1 style={{ fontSize: "24px", margin: 0 }}>🍳 คิวออเดอร์</h1>
           <p className="muted">{activeBranch?.name} · อัปเดตอัตโนมัติทุก 5 วินาที</p>
         </div>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
@@ -67,14 +67,14 @@ export default function OrderQueuePage() {
       {!loading && orders.length === 0 && (
         <div style={{ textAlign: "center", padding: "80px 20px" }}>
           <div style={{ fontSize: "64px", marginBottom: "16px" }}>✅</div>
-          <h2 style={{ color: "var(--ink-secondary)" }}>ไม่มีออเดอร์ค้าง</h2>
+          <h2 style={{ color: "var(--text-secondary)" }}>ไม่มีออเดอร์ค้าง</h2>
           <p className="muted">ออเดอร์ใหม่จะแสดงที่นี่อัตโนมัติ</p>
         </div>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
         {orders.map((order) => (
-          <div key={order.id} className="panel" style={{ padding: "20px", borderLeft: "4px solid var(--accent, #b5482b)" }}>
+          <div key={order.id} className="panel" style={{ padding: "20px", borderLeft: "4px solid var(--brand)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
               <strong style={{ fontSize: "22px" }}>#{order.id}</strong>
               <span className="muted">{formatTime(order.createdAt)}</span>

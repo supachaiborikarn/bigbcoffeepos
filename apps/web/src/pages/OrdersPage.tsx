@@ -71,10 +71,10 @@ export default function OrdersPage() {
   };
 
   return (
-    <main className="container" style={{ padding: "32px", maxWidth: "1200px", margin: "0 auto", height: "100vh", display: "flex", flexDirection: "column" }}>
+    <main className="container" style={{ padding: "32px", maxWidth: "1200px", margin: "0 auto", height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "24px" }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, display: "flex", alignItems: "center", gap: 12 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, display: "flex", alignItems: "center", gap: 12 }}>
             <ShoppingBag size={28} style={{ color: "var(--brand)" }} /> ศูนย์รวมออเดอร์
           </h1>
           <p className="muted" style={{ marginTop: 8 }}>{activeBranch?.name} · ออเดอร์จริงจากระบบขาย</p>

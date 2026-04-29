@@ -175,7 +175,7 @@ export default function CartPanel(props: CartPanelProps) {
       </div>
 
       {/* Customer & Discount & Payment */}
-      <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg-subtle)", padding: "16px 20px 20px", overflowY: "auto", maxHeight: "55vh", display: "flex", flexDirection: "column", gap: "12px" }}>
+      <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg-subtle)", padding: "16px 20px 20px", overflowY: "auto", flex: "0 1 auto", display: "flex", flexDirection: "column", gap: "12px" }}>
         {/* Customer Select */}
         <div className="member-card">
           <div className="member-card__header">

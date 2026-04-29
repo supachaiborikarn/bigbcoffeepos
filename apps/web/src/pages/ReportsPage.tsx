@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSalesSummary, getDailyCloseReport, getOrdersCsvUrl, API_URL } from "../api";
-import type { DailyCloseReport, PaymentMethod, SalesSummary } from "../types";
+import type { DailyCloseReport, PaymentMethod, ReportSource, SalesSummary } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 
@@ -17,6 +17,11 @@ const paymentLabels: Record<PaymentMethod | string, string> = {
   QR: "QR",
   CARD: "บัตร",
   EWALLET: "E-Wallet"
+};
+const reportSourceLabels: Record<ReportSource, string> = {
+  system: "ยอดขายในระบบ",
+  pospos: "POSPOS sales-only",
+  all: "ทั้งหมด"
 };
 
 function formatThaiDate(value: string) {
@@ -68,6 +73,7 @@ export default function ReportsPage() {
   const [staffData, setStaffData] = useState<any>(null);
   const [isPrintingDaily, setIsPrintingDaily] = useState(false);
   const [reportBranchId, setReportBranchId] = useState<number | null>(activeBranch?.id ?? null);
+  const [reportSource, setReportSource] = useState<ReportSource>("system");
   const [reportRange, setReportRange] = useState(() => {
     const today = new Date();
     const from = new Date();
@@ -80,13 +86,14 @@ export default function ReportsPage() {
     params.set("from", reportRange.from);
     params.set("to", reportRange.to);
     if (reportBranchId) params.set("branchId", String(reportBranchId));
+    params.set("source", reportSource);
     return params.toString();
-  }, [reportRange, reportBranchId]);
+  }, [reportRange, reportBranchId, reportSource]);
 
   const refresh = useCallback(async () => {
     try {
       const [s, p, st] = await Promise.all([
-        getSalesSummary({ from: reportRange.from, to: reportRange.to, branchId: reportBranchId ?? undefined }),
+        getSalesSummary({ from: reportRange.from, to: reportRange.to, branchId: reportBranchId ?? undefined, source: reportSource }),
         fetchAuth<any>(`${API_URL}/reports/profit?${queryStr}`),
         fetchAuth<any>(`${API_URL}/reports/staff?${queryStr}`)
       ]);
@@ -94,7 +101,7 @@ export default function ReportsPage() {
       setProfitData(p);
       setStaffData(st);
     } catch (e: any) { toast.error("โหลดรายงานไม่สำเร็จ"); }
-  }, [reportRange, reportBranchId, queryStr, toast]);
+  }, [reportRange, reportBranchId, reportSource, queryStr, toast]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -108,7 +115,7 @@ export default function ReportsPage() {
   };
 
   const handleExportOrdersCsv = async () => {
-    const url = getOrdersCsvUrl({ from: reportRange.from, to: reportRange.to, branchId: reportBranchId ?? undefined });
+    const url = getOrdersCsvUrl({ from: reportRange.from, to: reportRange.to, branchId: reportBranchId ?? undefined, source: reportSource });
     try {
       const token = localStorage.getItem("bb_pos_token");
       const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
@@ -128,9 +135,15 @@ export default function ReportsPage() {
   const printDailySummary = async () => {
     setIsPrintingDaily(true);
     try {
-      const report = await getDailyCloseReport({ date: reportRange.to, branchId: reportBranchId ?? activeBranch?.id });
+      const report = await getDailyCloseReport({ date: reportRange.to, branchId: reportBranchId ?? activeBranch?.id, source: reportSource });
       const printWindow = window.open("", "_blank", "width=900,height=1000");
       if (!printWindow) throw new Error("ไม่สามารถเปิดหน้าพิมพ์ได้");
+      const sourceLabel = reportSourceLabels[report.source] ?? reportSourceLabels.system;
+      const sourceRows = `
+        <tr><td>ยอดขายในระบบ</td><td class="num">${report.sourceBreakdown.system.orders.toLocaleString("th-TH")}</td><td class="num">${formatMoney(report.sourceBreakdown.system.revenue)}</td></tr>
+        <tr><td>POSPOS sales-only</td><td class="num">${report.sourceBreakdown.pospos.orders.toLocaleString("th-TH")}</td><td class="num">${formatMoney(report.sourceBreakdown.pospos.revenue)}</td></tr>
+        <tr><td>ทั้งหมด</td><td class="num">${report.sourceBreakdown.all.orders.toLocaleString("th-TH")}</td><td class="num">${formatMoney(report.sourceBreakdown.all.revenue)}</td></tr>
+      `;
       const paymentRows = report.payments.map((payment) => `
         <tr>
           <td>${escapeHtml(paymentLabels[payment.method])}</td>
@@ -195,6 +208,7 @@ export default function ReportsPage() {
         <h1>ใบสรุปส่งยอดประจำวัน</h1>
         <p><strong>${escapeHtml(report.branch?.name ?? "ทุกสาขา")}</strong></p>
         <p class="muted">วันที่ ${formatThaiDate(report.date)}</p>
+        <p class="muted">ชุดข้อมูล: ${escapeHtml(sourceLabel)}</p>
       </div>
       <div class="stamp">
         <p>พิมพ์เมื่อ</p>
@@ -208,6 +222,12 @@ export default function ReportsPage() {
       <div class="box"><span>เฉลี่ย/บิล</span><strong>${formatMoney(report.totals.averageTicket)}</strong></div>
       <div class="box"><span>ส่วนลดรวม</span><strong>${formatMoney(report.totals.discountAmount)}</strong></div>
     </section>
+
+    <h2>แยกตามแหล่งข้อมูล</h2>
+    <table>
+      <thead><tr><th>แหล่งข้อมูล</th><th class="num">บิล</th><th class="num">ยอดรวม</th></tr></thead>
+      <tbody>${sourceRows}</tbody>
+    </table>
 
     <h2>สรุปช่องทางชำระเงิน</h2>
     <table>
@@ -287,6 +307,11 @@ export default function ReportsPage() {
               <option value="">ทุกสาขา</option>
               {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
+            <select className="input" value={reportSource} onChange={e => setReportSource(e.target.value as ReportSource)}>
+              <option value="system">ยอดขายในระบบ</option>
+              <option value="pospos">POSPOS sales-only</option>
+              <option value="all">ทั้งหมด</option>
+            </select>
             <input className="input" type="date" value={reportRange.from} onChange={e => setReportRange({...reportRange, from: e.target.value})} />
             <input className="input" type="date" value={reportRange.to} onChange={e => setReportRange({...reportRange, to: e.target.value})} />
             <button className="btn btn--primary" onClick={printDailySummary} disabled={isPrintingDaily}>
@@ -312,18 +337,28 @@ export default function ReportsPage() {
                 <button className="btn btn--ghost" onClick={handleExportSales}>📥 Export CSV</button>
                 <button className="btn btn--ghost" onClick={handleExportOrdersCsv}>Export Orders CSV</button>
               </div>
-              <div style={{ marginBottom: "32px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
-                <div style={{ padding: "20px", background: "var(--bg-alt)", borderRadius: "12px" }}>
-                  <span className="muted">ยอดขายรวม</span>
+              <div style={{ marginBottom: "32px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px" }}>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
+                  <span className="muted">{reportSourceLabels[summary.source]}</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(summary.totalRevenue)}</strong>
                 </div>
-                <div style={{ padding: "20px", background: "var(--bg-alt)", borderRadius: "12px" }}>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
                   <span className="muted">จำนวนออเดอร์</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{summary.totalOrders}</strong>
                 </div>
-                <div style={{ padding: "20px", background: "var(--bg-alt)", borderRadius: "12px" }}>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
                   <span className="muted">ยอดเฉลี่ย/บิล</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(summary.averageTicket)}</strong>
+                </div>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
+                  <span className="muted">ยอดขายในระบบ</span>
+                  <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(summary.sourceBreakdown.system.revenue)}</strong>
+                  <small className="muted">{summary.sourceBreakdown.system.orders.toLocaleString("th-TH")} บิล</small>
+                </div>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
+                  <span className="muted">POSPOS sales-only</span>
+                  <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(summary.importedSalesOnlyRevenue)}</strong>
+                  <small className="muted">{summary.importedSalesOnlyOrders.toLocaleString("th-TH")} บิล</small>
                 </div>
               </div>
 
@@ -368,21 +403,21 @@ export default function ReportsPage() {
                 <button className="btn btn--ghost" onClick={handleExportProfit}>📥 Export CSV</button>
               </div>
               <div style={{ marginBottom: "24px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px" }}>
-                <div style={{ padding: "20px", background: "var(--bg-alt)", borderRadius: "12px" }}>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
                   <span className="muted">รายได้รวม</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(profitData.totalRevenue)}</strong>
                 </div>
-                <div style={{ padding: "20px", background: "var(--bg-alt)", borderRadius: "12px" }}>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
                   <span className="muted">ต้นทุนรวม</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(profitData.totalCost)}</strong>
                 </div>
-                <div style={{ padding: "20px", background: "var(--bg-alt)", borderRadius: "12px" }}>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
                   <span className="muted">กำไรสุทธิ</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px", color: profitData.totalProfit > 0 ? "#16a34a" : "#b5482b" }}>
                     {formatMoney(profitData.totalProfit)}
                   </strong>
                 </div>
-                <div style={{ padding: "20px", background: "var(--bg-alt)", borderRadius: "12px" }}>
+                <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
                   <span className="muted">Margin</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{profitData.marginPercent}%</strong>
                 </div>
@@ -392,7 +427,7 @@ export default function ReportsPage() {
               <div style={{ marginTop: "16px", overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
-                    <tr style={{ textAlign: "left", color: "var(--muted)", fontSize: "13px" }}>
+                    <tr style={{ textAlign: "left", color: "var(--text-muted)", fontSize: "13px" }}>
                       <th style={{ padding: "10px 8px" }}>เมนู</th>
                       <th style={{ padding: "10px 8px", textAlign: "right" }}>ขาย</th>
                       <th style={{ padding: "10px 8px", textAlign: "right" }}>รายได้</th>

@@ -1,9 +1,51 @@
 import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
 
-function buildOrderWhere(input: { from?: string; to?: string; branchId?: number }) {
+export type ReportSource = "system" | "pospos" | "all";
+
+const SALES_ONLY_ITEM_NAME = "POSPOS sales-only record";
+
+type ReportInput = { from?: string; to?: string; branchId?: number; source?: ReportSource };
+type SourceBreakdown = {
+  system: { orders: number; revenue: number };
+  pospos: { orders: number; revenue: number };
+  all: { orders: number; revenue: number };
+};
+
+function normalizeReportSource(source?: string): ReportSource {
+  return source === "pospos" || source === "all" || source === "system" ? source : "system";
+}
+
+function sourceWhere(source: ReportSource): Prisma.OrderWhereInput {
+  if (source === "pospos") return { items: { some: { name: SALES_ONLY_ITEM_NAME } } };
+  if (source === "system") return { items: { none: { name: SALES_ONLY_ITEM_NAME } } };
+  return {};
+}
+
+function sourceSql(source: ReportSource, alias: "orders" | "o") {
+  const orderId = alias === "o" ? Prisma.sql`o.id` : Prisma.sql`orders.id`;
+  return Prisma.sql`
+    AND (
+      ${source}::text = 'all'
+      OR (${source}::text = 'system' AND NOT EXISTS (
+        SELECT 1 FROM order_items oi_source
+        WHERE oi_source.order_id = ${orderId}
+          AND oi_source.name = ${SALES_ONLY_ITEM_NAME}
+      ))
+      OR (${source}::text = 'pospos' AND EXISTS (
+        SELECT 1 FROM order_items oi_source
+        WHERE oi_source.order_id = ${orderId}
+          AND oi_source.name = ${SALES_ONLY_ITEM_NAME}
+      ))
+    )
+  `;
+}
+
+function buildOrderWhere(input: ReportInput) {
+  const source = normalizeReportSource(input.source);
   const where: Prisma.OrderWhereInput = {
-    status: { notIn: ["CANCELLED", "REFUNDED"] }
+    status: { notIn: ["CANCELLED", "REFUNDED"] },
+    ...sourceWhere(source)
   };
   if (input.from) where.createdAt = { gte: new Date(input.from) };
   if (input.to) where.createdAt = { ...(where.createdAt as object), lte: new Date(input.to + "T23:59:59Z") };
@@ -24,8 +66,30 @@ function roundMoney(value: number | null | undefined) {
   return Math.round(Number(value ?? 0) * 100) / 100;
 }
 
-export async function getSalesSummary(input: { from?: string; to?: string; branchId?: number }) {
-  const where = buildOrderWhere(input);
+async function getSourceBreakdown(baseWhere: Prisma.OrderWhereInput): Promise<SourceBreakdown> {
+  const systemWhere: Prisma.OrderWhereInput = { ...baseWhere, ...sourceWhere("system") };
+  const posposWhere: Prisma.OrderWhereInput = { ...baseWhere, ...sourceWhere("pospos") };
+
+  const [systemOrders, systemTotals, posposOrders, posposTotals] = await Promise.all([
+    prisma.order.count({ where: systemWhere }),
+    prisma.order.aggregate({ where: systemWhere, _sum: { total: true } }),
+    prisma.order.count({ where: posposWhere }),
+    prisma.order.aggregate({ where: posposWhere, _sum: { total: true } })
+  ]);
+
+  const systemRevenue = roundMoney(systemTotals._sum.total);
+  const posposRevenue = roundMoney(posposTotals._sum.total);
+  return {
+    system: { orders: systemOrders, revenue: systemRevenue },
+    pospos: { orders: posposOrders, revenue: posposRevenue },
+    all: { orders: systemOrders + posposOrders, revenue: roundMoney(systemRevenue + posposRevenue) }
+  };
+}
+
+export async function getSalesSummary(input: ReportInput) {
+  const source = normalizeReportSource(input.source);
+  const where = buildOrderWhere({ ...input, source });
+  const breakdownWhere = buildOrderWhere({ ...input, source: "all" });
 
   const totalOrders = await prisma.order.count({ where });
   const agg = await prisma.order.aggregate({
@@ -58,6 +122,7 @@ export async function getSalesSummary(input: { from?: string; to?: string; branc
       AND (${input.branchId ?? null}::int IS NULL OR branch_id = ${input.branchId ?? null}::int)
       AND (${input.from ?? null}::text IS NULL OR created_at >= ${input.from ? new Date(input.from) : null})
       AND (${input.to ?? null}::text IS NULL OR created_at <= ${input.to ? new Date(input.to + "T23:59:59Z") : null})
+      ${sourceSql(source, "orders")}
     GROUP BY date_trunc('day', created_at)
     ORDER BY date ASC
   `;
@@ -67,11 +132,23 @@ export async function getSalesSummary(input: { from?: string; to?: string; branc
     revenue: Math.round(Number(row.revenue ?? 0) * 100) / 100
   }));
 
-  return { totalOrders, totalRevenue, averageTicket, topItems, daily };
+  const sourceBreakdown = await getSourceBreakdown(breakdownWhere);
+
+  return {
+    source,
+    sourceBreakdown,
+    importedSalesOnlyOrders: sourceBreakdown.pospos.orders,
+    importedSalesOnlyRevenue: sourceBreakdown.pospos.revenue,
+    totalOrders,
+    totalRevenue,
+    averageTicket,
+    topItems,
+    daily
+  };
 }
 
-export async function getProfitReport(input: { from?: string; to?: string; branchId?: number }) {
-  const where = buildOrderWhere(input);
+export async function getProfitReport(input: ReportInput) {
+  const source = normalizeReportSource(input.source);
 
   const rows = await prisma.$queryRaw<Array<{
     menuItemId: number;
@@ -97,6 +174,7 @@ export async function getProfitReport(input: { from?: string; to?: string; branc
       AND (${input.branchId ?? null}::int IS NULL OR o.branch_id = ${input.branchId ?? null}::int)
       AND (${input.from ?? null}::text IS NULL OR o.created_at >= ${input.from ? new Date(input.from) : null})
       AND (${input.to ?? null}::text IS NULL OR o.created_at <= ${input.to ? new Date(input.to + "T23:59:59Z") : null})
+      ${sourceSql(source, "o")}
     GROUP BY oi.menu_item_id, oi.name, mi.cost
     ORDER BY profit DESC
   `;
@@ -118,8 +196,9 @@ export async function getProfitReport(input: { from?: string; to?: string; branc
   return { items, totalRevenue, totalCost, totalProfit, marginPercent };
 }
 
-export async function getStaffPerformance(input: { from?: string; to?: string; branchId?: number }) {
-  const where = buildOrderWhere(input);
+export async function getStaffPerformance(input: ReportInput) {
+  const source = normalizeReportSource(input.source);
+  const where = buildOrderWhere({ ...input, source });
 
   const staffRows = await prisma.order.groupBy({
     by: ["userId"],
@@ -151,53 +230,62 @@ export async function getStaffPerformance(input: { from?: string; to?: string; b
   return { staff };
 }
 
-export async function getOrdersCsvRows(input: { from?: string; to?: string; branchId?: number }) {
+export async function getOrdersCsvRows(input: ReportInput) {
+  const source = normalizeReportSource(input.source);
   const orders = await prisma.order.findMany({
-    where: buildOrderWhere(input),
+    where: buildOrderWhere({ ...input, source }),
     include: {
       branch: { select: { name: true } },
       customer: { select: { name: true, phone: true } },
       user: { select: { name: true } },
-      items: { select: { name: true, qty: true, lineTotal: true } }
+      items: { select: { name: true, qty: true, lineTotal: true, note: true } }
     },
     orderBy: { createdAt: "asc" }
   });
 
-  return orders.map((order) => ({
-    id: order.id,
-    createdAt: order.createdAt.toISOString(),
-    branch: order.branch.name,
-    customer: order.customer ? `${order.customer.name} (${order.customer.phone})` : "",
-    staff: order.user?.name ?? "",
-    status: order.status,
-    paymentMethod: order.paymentMethod,
-    itemCount: order.items.length,
-    items: order.items.map((item) => `${item.qty}x ${item.name}`).join(" | "),
-    subtotal: roundMoney(order.subtotal),
-    discountAmount: roundMoney(order.discountAmount),
-    loyaltyPointsUsed: order.loyaltyPointsUsed,
-    tax: roundMoney(order.tax),
-    total: roundMoney(order.total)
-  }));
+  return orders.map((order) => {
+    const isPosposSalesOnly = order.items.some((item) => item.name === SALES_ONLY_ITEM_NAME);
+    return {
+      id: order.id,
+      createdAt: order.createdAt.toISOString(),
+      source: isPosposSalesOnly ? "POSPOS sales-only import" : "System POS",
+      branch: order.branch.name,
+      customer: order.customer ? `${order.customer.name} (${order.customer.phone})` : "",
+      staff: order.user?.name ?? "",
+      status: order.status,
+      paymentMethod: order.paymentMethod,
+      itemCount: order.items.length,
+      items: order.items.map((item) => `${item.qty}x ${item.name}`).join(" | "),
+      itemNotes: order.items.map((item) => item.note).filter(Boolean).join(" | "),
+      subtotal: roundMoney(order.subtotal),
+      discountAmount: roundMoney(order.discountAmount),
+      loyaltyPointsUsed: order.loyaltyPointsUsed,
+      tax: roundMoney(order.tax),
+      total: roundMoney(order.total)
+    };
+  });
 }
 
-export async function getDailyCloseReport(input: { date?: string; branchId?: number }) {
+export async function getDailyCloseReport(input: { date?: string; branchId?: number; source?: ReportSource }) {
+  const source = normalizeReportSource(input.source);
   const range = buildDayRange(input.date);
   const branch = input.branchId
     ? await prisma.branch.findUnique({ where: { id: input.branchId }, select: { id: true, name: true, location: true, branchType: true } })
     : null;
 
-  const paidWhere: Prisma.OrderWhereInput = {
+  const basePaidWhere: Prisma.OrderWhereInput = {
     status: { notIn: ["CANCELLED", "REFUNDED"] },
     createdAt: { gte: range.from, lte: range.to },
     ...(input.branchId ? { branchId: input.branchId } : {})
   };
+  const paidWhere: Prisma.OrderWhereInput = { ...basePaidWhere, ...sourceWhere(source) };
   const allWhere: Prisma.OrderWhereInput = {
     createdAt: { gte: range.from, lte: range.to },
-    ...(input.branchId ? { branchId: input.branchId } : {})
+    ...(input.branchId ? { branchId: input.branchId } : {}),
+    ...sourceWhere(source)
   };
 
-  const [orderCount, totals, statusRows, paymentRows, topItemsRaw, shifts] = await Promise.all([
+  const [orderCount, totals, statusRows, paymentRows, topItemsRaw, shifts, sourceBreakdown] = await Promise.all([
     prisma.order.count({ where: paidWhere }),
     prisma.order.aggregate({
       where: paidWhere,
@@ -242,7 +330,8 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
         user: { select: { name: true } }
       },
       orderBy: { openedAt: "asc" }
-    })
+    }),
+    getSourceBreakdown(basePaidWhere)
   ]);
 
   const shiftIds = shifts.map((shift) => shift.id);
@@ -296,6 +385,8 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
   return {
     date: range.date,
     branch,
+    source,
+    sourceBreakdown,
     generatedAt: new Date().toISOString(),
     totals: {
       totalOrders: orderCount,

@@ -92,7 +92,7 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
   return (
     <main className="dashboard-grid">
       {/* Page Header */}
-      <div style={{ marginBottom: 4 }}>
+      <div style={{ marginBottom: 8 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700 }}>แดชบอร์ด</h1>
         <p className="muted" style={{ marginTop: 4 }}>{activeBranch?.name} · {new Date().toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
       </div>
@@ -141,7 +141,7 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
       )}
 
       {/* Charts Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 20 }}>
+      <div className="dash-charts-row" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 20 }}>
         {/* 7-day Revenue Chart */}
         <section className="panel">
           <div className="panel__header">
@@ -182,7 +182,7 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
       </div>
 
       {/* Bottom Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+      <div className="dash-bottom-row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         {/* Low Stock Alerts */}
         <section className="panel">
           <div className="panel__header">

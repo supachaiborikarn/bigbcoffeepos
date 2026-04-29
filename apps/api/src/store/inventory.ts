@@ -1,4 +1,7 @@
 import prisma from "../prisma.js";
+import { Prisma } from "@prisma/client";
+
+const SALES_ONLY_ITEM_NAME = "POSPOS sales-only record";
 
 export async function getIngredients() {
   return prisma.ingredient.findMany({
@@ -218,6 +221,79 @@ export async function getRecipes() {
   });
 
   return Array.from(map.values());
+}
+
+export async function getRecipeCoverage(input: { branchId?: number; from?: string; to?: string } = {}) {
+  const branch = input.branchId
+    ? await prisma.branch.findUnique({ where: { id: input.branchId }, select: { branchType: true } })
+    : null;
+  const menuItems = await prisma.menuItem.findMany({
+    where: branch?.branchType ? { branchType: branch.branchType } : undefined,
+    include: { _count: { select: { recipes: true } } },
+    orderBy: [{ active: "desc" }, { name: "asc" }]
+  });
+
+  const orderWhere: Prisma.OrderWhereInput = {
+    status: { notIn: ["CANCELLED", "REFUNDED"] }
+  };
+  if (input.branchId) orderWhere.branchId = input.branchId;
+  if (input.from) orderWhere.createdAt = { gte: new Date(input.from) };
+  if (input.to) orderWhere.createdAt = { ...(orderWhere.createdAt as object), lte: new Date(input.to + "T23:59:59Z") };
+
+  const soldRows = await prisma.orderItem.groupBy({
+    by: ["menuItemId", "name"],
+    where: {
+      name: { not: SALES_ONLY_ITEM_NAME },
+      order: orderWhere
+    },
+    _sum: { qty: true, lineTotal: true }
+  });
+
+  const soldByMenuItemId = new Map(soldRows.map((row) => [
+    row.menuItemId,
+    {
+      qty: Number(row._sum.qty ?? 0),
+      revenue: Math.round(Number(row._sum.lineTotal ?? 0) * 100) / 100
+    }
+  ]));
+
+  const items = menuItems.map((item) => {
+    const recipeIngredientCount = item._count.recipes;
+    const sold = soldByMenuItemId.get(item.id) ?? { qty: 0, revenue: 0 };
+    const status =
+      !item.active || item.name === SALES_ONLY_ITEM_NAME
+        ? "not_stock_tracked"
+        : recipeIngredientCount > 0
+          ? "has_recipe"
+          : "missing_recipe";
+
+    return {
+      menuItemId: item.id,
+      name: item.name,
+      category: item.category,
+      branchType: item.branchType,
+      active: item.active,
+      status,
+      recipeIngredientCount,
+      soldQty: sold.qty,
+      soldRevenue: sold.revenue
+    };
+  });
+
+  const soldMissingRecipeItems = items.filter((item) => item.status === "missing_recipe" && item.soldQty > 0);
+  return {
+    summary: {
+      totalMenuItems: items.length,
+      activeMenuItems: items.filter((item) => item.active && item.name !== SALES_ONLY_ITEM_NAME).length,
+      hasRecipe: items.filter((item) => item.status === "has_recipe").length,
+      missingRecipe: items.filter((item) => item.status === "missing_recipe").length,
+      notStockTracked: items.filter((item) => item.status === "not_stock_tracked").length,
+      soldMissingRecipe: soldMissingRecipeItems.length,
+      soldMissingRecipeQty: Math.round(soldMissingRecipeItems.reduce((sum, item) => sum + item.soldQty, 0) * 1000) / 1000,
+      soldMissingRecipeRevenue: Math.round(soldMissingRecipeItems.reduce((sum, item) => sum + item.soldRevenue, 0) * 100) / 100
+    },
+    items
+  };
 }
 
 export async function getRecipe(menuItemId: number) {

@@ -104,7 +104,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <div className="panel__header" style={{ padding: 0, marginBottom: 16 }}>
+      <div className="panel__header" style={{ paddingLeft: 0, paddingRight: 0 }}>
         <div>
           <h2>ตั้งค่า</h2>
           <p className="muted">ตรวจสถานะระบบเชื่อมต่อและงาน outbox สำหรับ Phase 3</p>
@@ -169,7 +169,7 @@ export default function SettingsPage() {
                 <p className="muted" style={{ marginBottom: 8 }}>ต้องตั้งค่า</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {item.missingEnv.map((name) => (
-                    <code key={name} style={{ background: "var(--bg-alt)", padding: "4px 8px", borderRadius: 6 }}>
+                    <code key={name} style={{ background: "var(--bg-muted)", padding: "4px 8px", borderRadius: 6 }}>
                       {name}
                     </code>
                   ))}

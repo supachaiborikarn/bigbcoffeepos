@@ -37,3 +37,34 @@ Close the UI/workflow gaps found in the latest audit so the POS can be used end-
 - [x] Add recipe readiness signal in inventory/POS where appropriate.
 - [x] Build and smoke test the main POS flow.
 - [x] Add printable daily send-total summary for end-of-day reporting.
+
+## POSPOS Data Utilization Roadmap
+
+### Phase 1: Report Source Separation
+
+- [x] Add report source filters: system sales, POSPOS sales-only imports, and all sales.
+- [x] Show POSPOS sales-only totals/counts separately in sales reports and daily close reports.
+- [x] Ensure exported order CSV includes source labels so imported totals are auditable.
+- [x] Keep imported sales-only rows out of menu/profit rankings unless the user explicitly selects POSPOS/all data.
+- [x] Preserve receipt/staff context in future POSPOS sales-only imports.
+
+### Phase 2: Stock Recipe Readiness
+
+- [x] Add recipe coverage status per menu item: has recipe, missing recipe, or not stock-tracked.
+- [x] Create a fast recipe-mapping workflow from imported stock ingredients to menu items.
+- [x] Add recipe templates for common coffee/oil-service products.
+- [x] Add report for sold items that cannot decrement stock because recipe data is missing.
+
+### Phase 3: Customer And Staff Mapping
+
+- [x] Map POSPOS staff names to local users for historical sales attribution.
+- [ ] Store POSPOS customer metadata when available, such as tier, notes, birthday, or total spend.
+- [ ] Link imported POSPOS receipts to customers when POSPOS exposes member data in receipt details.
+- [x] Add customer insight widgets: recent spend, inactive customers, and high-value customers.
+
+### Phase 4: Product Metadata Expansion
+
+- [ ] Import or support product images where POSPOS exposes them.
+- [ ] Support modifier/option catalogs instead of treating every variant as a separate product.
+- [ ] Normalize noisy categories from POSPOS into shop-friendly groups.
+- [ ] Add product tax/unit metadata when the source provides it.

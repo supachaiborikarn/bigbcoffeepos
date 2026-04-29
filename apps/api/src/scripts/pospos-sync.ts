@@ -59,6 +59,10 @@ function parseThaiDate(raw: string): Date | null {
   } catch { return null; }
 }
 
+function normalizeStaffName(raw: string) {
+  return raw.trim().toLowerCase().replace(/\s+/g, "");
+}
+
 // ── Branch Mapping ───────────────────────────────────────────────────────────
 
 const BRANCH_MAP: Record<number, string> = {
@@ -282,6 +286,8 @@ export async function syncPosposData(branchId: number) {
         };
       }).filter((c) => c.receiptNo);
     }, "Sales");
+    const users = await prisma.user.findMany({ where: { active: true }, select: { id: true, name: true } });
+    const userByStaffName = new Map(users.map((user) => [normalizeStaffName(user.name), user]));
 
     for (const row of salesData) {
       if (row.status !== "สำเร็จ") continue;
@@ -290,6 +296,14 @@ export async function syncPosposData(branchId: number) {
       const discountAmount = parseFloat(discountStr) || 0;
       const paymentMethod = mapPayment(row.paymentMethod);
       const createdAt = parseThaiDate(row.date) || new Date();
+      const receiptContext = [
+        row.receiptNo ? `receipt ${row.receiptNo}` : "",
+        row.staff ? `staff ${row.staff}` : "",
+      ].filter(Boolean).join(", ");
+      const importNote = receiptContext
+        ? `POSPOS ${receiptContext}: sales total only, no item detail`
+        : "POSPOS sales total only, no item detail";
+      const staffUser = row.staff ? userByStaffName.get(normalizeStaffName(row.staff)) : undefined;
 
       const existingOrder = await prisma.order.findFirst({
         where: {
@@ -315,6 +329,7 @@ export async function syncPosposData(branchId: number) {
         await prisma.order.create({
           data: {
             branchId,
+            userId: staffUser?.id ?? null,
             status: "PAID",
             subtotal: total + discountAmount,
             discountAmount,
@@ -329,7 +344,7 @@ export async function syncPosposData(branchId: number) {
                 basePrice: total,
                 modifiers: "[]",
                 lineTotal: total,
-                note: row.receiptNo ? `POSPOS receipt ${row.receiptNo}: sales total only, no item detail` : "POSPOS sales total only, no item detail",
+                note: importNote,
               }],
             },
           },

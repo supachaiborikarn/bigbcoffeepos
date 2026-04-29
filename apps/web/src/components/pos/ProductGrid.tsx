@@ -28,12 +28,11 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+      gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
       gridAutoRows: "max-content",
-      gap: "16px",
+      gap: "14px",
       alignContent: "start",
-      padding: "20px 24px",
-      overflowY: "auto",
+      padding: "20px",
       flex: 1,
       minHeight: 0
     }}>

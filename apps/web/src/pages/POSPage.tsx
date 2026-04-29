@@ -342,7 +342,7 @@ export default function POSPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1, padding: "16px", overflowY: "auto", background: "#fff" }}>
+        <div style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
           <ProductGrid 
             menu={menu} 
             category={category} 

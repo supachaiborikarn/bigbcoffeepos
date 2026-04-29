@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ChevronLeft, ChevronRight, Edit2, PackageCheck, Plus, Save, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, PackageCheck, Plus, Save, Search, X } from "lucide-react";
 import {
   createIngredient,
   createMenuItem,
@@ -10,12 +10,13 @@ import {
   getMenu,
   getPurchases,
   getRecipe,
+  getRecipeCoverage,
   getStockMovements,
   updateInventoryItem,
   updateMenuItem,
   updateRecipe
 } from "../api";
-import type { Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, RecipeIngredient, StockMovement } from "../types";
+import type { Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient, StockMovement } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 
@@ -28,6 +29,12 @@ const moneyFormatter = new Intl.NumberFormat("th-TH", {
 const branchTypeLabels: Record<MenuItem["branchType"], string> = {
   coffee: "ร้านกาแฟ",
   oil_service: "ศูนย์บริการน้ำมัน"
+};
+
+const recipeStatusLabels: Record<RecipeCoverageStatus, string> = {
+  has_recipe: "มีสูตร",
+  missing_recipe: "ยังไม่มีสูตร",
+  not_stock_tracked: "ไม่ตัดสต็อก"
 };
 
 const PRODUCT_PAGE_SIZE = 50;
@@ -57,6 +64,22 @@ const recipePresets = [
     items: [
       { label: "แก้วร้อน", qty: 1, keywords: ["แก้วร้อน", "แก้วกระดาษ"] },
       { label: "ฝาร้อน", qty: 1, keywords: ["ฝาร้อน", "ฝาแก้ว"] }
+    ]
+  },
+  {
+    id: "oil-change",
+    label: "เปลี่ยนน้ำมัน",
+    items: [
+      { label: "น้ำมันเครื่อง", qty: 1, keywords: ["น้ำมันเครื่อง", "engine oil", "น้ำมัน"] },
+      { label: "ไส้กรองน้ำมันเครื่อง", qty: 1, keywords: ["ไส้กรองน้ำมันเครื่อง", "oil filter", "ไส้กรอง"] }
+    ]
+  },
+  {
+    id: "filter-service",
+    label: "ไส้กรอง",
+    items: [
+      { label: "ไส้กรองอากาศ", qty: 1, keywords: ["ไส้กรองอากาศ", "air filter"] },
+      { label: "ไส้กรองแอร์", qty: 1, keywords: ["ไส้กรองแอร์", "cabin filter"] }
     ]
   }
 ];
@@ -145,6 +168,7 @@ export default function InventoryPage() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [purchases, setPurchases] = useState<PurchaseOrder[]>([]);
+  const [recipeCoverage, setRecipeCoverage] = useState<RecipeCoverageReport | null>(null);
 
   const [menuForm, setMenuForm] = useState<ProductFormState>(() => createBlankProductForm(defaultBranchType));
   const [ingredientForm, setIngredientForm] = useState({ name: "", unit: "ชิ้น", costPerUnit: "", stockQty: "", reorderLevel: "" });
@@ -166,6 +190,7 @@ export default function InventoryPage() {
 
   const [recipeProductSearch, setRecipeProductSearch] = useState("");
   const [recipeIngredientSearch, setRecipeIngredientSearch] = useState("");
+  const [recipeStatusFilter, setRecipeStatusFilter] = useState<"all" | RecipeCoverageStatus | "sold_missing">("all");
   const [selectedRecipeProduct, setSelectedRecipeProduct] = useState<MenuItem | null>(null);
   const [recipeLines, setRecipeLines] = useState<RecipeLineForm[]>([]);
   const [isRecipeLoading, setIsRecipeLoading] = useState(false);
@@ -217,18 +242,35 @@ export default function InventoryPage() {
 
   const activeProductCount = useMemo(() => menu.filter((item) => item.active).length, [menu]);
 
+  const recipeCoverageByMenuId = useMemo(() => {
+    const map = new Map<number, RecipeCoverageReport["items"][number]>();
+    recipeCoverage?.items.forEach((item) => map.set(item.menuItemId, item));
+    return map;
+  }, [recipeCoverage]);
+
+  const soldMissingRecipeItems = useMemo(
+    () => (recipeCoverage?.items ?? [])
+      .filter((item) => item.status === "missing_recipe" && item.soldQty > 0)
+      .sort((a, b) => b.soldRevenue - a.soldRevenue)
+      .slice(0, 12),
+    [recipeCoverage]
+  );
+
   const recipeProducts = useMemo(() => {
     const query = recipeProductSearch.trim().toLowerCase();
     const branchType = activeBranch?.branchType;
     return menu
       .filter((item) => {
+        const coverage = recipeCoverageByMenuId.get(item.id);
         if (branchType && item.branchType !== branchType) return false;
         if (!item.active) return false;
+        if (recipeStatusFilter === "sold_missing" && !(coverage?.status === "missing_recipe" && (coverage.soldQty ?? 0) > 0)) return false;
+        if (recipeStatusFilter !== "all" && recipeStatusFilter !== "sold_missing" && coverage?.status !== recipeStatusFilter) return false;
         if (!query) return true;
         return `${item.name} ${item.category} ${item.sku ?? ""}`.toLowerCase().includes(query);
       })
       .slice(0, 30);
-  }, [activeBranch, menu, recipeProductSearch]);
+  }, [activeBranch, menu, recipeCoverageByMenuId, recipeProductSearch, recipeStatusFilter]);
 
   const recipeIngredientMatches = useMemo(() => {
     const query = normalizeText(recipeIngredientSearch.trim());
@@ -263,17 +305,20 @@ export default function InventoryPage() {
       setInventory([]);
       setMovements([]);
       setPurchases([]);
+      setRecipeCoverage(null);
       return;
     }
 
-    const [inventoryItems, movementItems, purchaseItemsFromApi] = await Promise.all([
+    const [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport] = await Promise.all([
       getInventory(activeBranch.id),
       getStockMovements(activeBranch.id),
-      getPurchases(activeBranch.id)
+      getPurchases(activeBranch.id),
+      getRecipeCoverage({ branchId: activeBranch.id })
     ]);
     setInventory(inventoryItems);
     setMovements(movementItems.slice(0, 20));
     setPurchases(purchaseItemsFromApi);
+    setRecipeCoverage(coverageReport);
     setSelectedStock((current) => (
       current ? inventoryItems.find((item) => item.ingredientId === current.ingredientId) ?? null : null
     ));
@@ -430,6 +475,7 @@ export default function InventoryPage() {
         ingredientId: String(ingredient.ingredientId),
         qty: String(ingredient.qty)
       })));
+      await refreshInventory();
       toast.success("บันทึกสูตรตัดสต็อกแล้ว");
     } catch (err) {
       toast.error((err as Error).message);
@@ -842,27 +888,101 @@ export default function InventoryPage() {
           {selectedRecipeProduct && <span className="badge">{recipeSummary.length} รายการในสูตร</span>}
         </div>
 
+        {recipeCoverage && (
+          <div style={{ padding: "0 24px 20px", display: "grid", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 14, background: "var(--bg-surface)" }}>
+                <span className="muted">มีสูตรแล้ว</span>
+                <strong style={{ display: "block", fontSize: 24, marginTop: 4 }}>{recipeCoverage.summary.hasRecipe}</strong>
+              </div>
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 14, background: "var(--bg-surface)" }}>
+                <span className="muted">ยังไม่มีสูตร</span>
+                <strong style={{ display: "block", fontSize: 24, marginTop: 4 }}>{recipeCoverage.summary.missingRecipe}</strong>
+              </div>
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 14, background: "var(--bg-surface)" }}>
+                <span className="muted">ขายแล้วแต่ยังไม่มีสูตร</span>
+                <strong className={recipeCoverage.summary.soldMissingRecipe ? "negative" : "positive"} style={{ display: "block", fontSize: 24, marginTop: 4 }}>{recipeCoverage.summary.soldMissingRecipe}</strong>
+              </div>
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 14, background: "var(--bg-surface)" }}>
+                <span className="muted">ยอดที่ยังไม่ตัดสต็อก</span>
+                <strong style={{ display: "block", fontSize: 24, marginTop: 4 }}>{formatMoney(recipeCoverage.summary.soldMissingRecipeRevenue)}</strong>
+              </div>
+            </div>
+
+            {soldMissingRecipeItems.length > 0 && (
+              <div style={{ border: "1px solid var(--warning-bg)", borderRadius: 8, background: "var(--warning-bg)", padding: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <AlertTriangle size={16} />
+                  <strong>เมนูที่ขายแล้วแต่ยังตัดสต็อกไม่ได้</strong>
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {soldMissingRecipeItems.map((item) => (
+                    <button
+                      type="button"
+                      key={item.menuItemId}
+                      className="stock-row"
+                      onClick={() => {
+                        const menuItem = menu.find((candidate) => candidate.id === item.menuItemId);
+                        if (menuItem) handleRecipeProductSelect(menuItem);
+                      }}
+                    >
+                      <span>
+                        <strong>{item.name}</strong>
+                        <small>{item.category} · ขาย {item.soldQty.toLocaleString("th-TH")} รายการ</small>
+                      </span>
+                      <span className="negative">{formatMoney(item.soldRevenue)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="recipe-builder">
           <div className="recipe-products">
             <label className="inventory-search">
               <Search size={16} />
               <input value={recipeProductSearch} onChange={(e) => setRecipeProductSearch(e.target.value)} placeholder="ค้นหาเมนูขาย" />
             </label>
-            <div className="recipe-product-list">
-              {recipeProducts.map((item) => (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {([
+                ["all", "ทั้งหมด"],
+                ["missing_recipe", "ยังไม่มีสูตร"],
+                ["sold_missing", "ขายแล้วแต่ไม่มีสูตร"],
+                ["has_recipe", "มีสูตรแล้ว"]
+              ] as [typeof recipeStatusFilter, string][]).map(([value, label]) => (
                 <button
                   type="button"
-                  key={item.id}
-                  className={`recipe-product-row ${selectedRecipeProduct?.id === item.id ? "is-selected" : ""}`}
-                  onClick={() => handleRecipeProductSelect(item)}
+                  key={value}
+                  className={`btn ${recipeStatusFilter === value ? "btn--primary" : "btn--ghost"}`}
+                  onClick={() => setRecipeStatusFilter(value)}
                 >
-                  <span>
-                    <strong>{item.name}</strong>
-                    <small>{item.category} · {formatMoney(item.basePrice)}</small>
-                  </span>
-                  <PackageCheck size={16} />
+                  {label}
                 </button>
               ))}
+            </div>
+            <div className="recipe-product-list">
+              {recipeProducts.map((item) => {
+                const coverage = recipeCoverageByMenuId.get(item.id);
+                const status = coverage?.status ?? "missing_recipe";
+                return (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={`recipe-product-row ${selectedRecipeProduct?.id === item.id ? "is-selected" : ""}`}
+                    onClick={() => handleRecipeProductSelect(item)}
+                  >
+                    <span>
+                      <strong>{item.name}</strong>
+                      <small>{item.category} · {formatMoney(item.basePrice)} · {recipeStatusLabels[status]}</small>
+                    </span>
+                    <span className={`status-badge ${status === "has_recipe" ? "status-badge--active" : "status-badge--inactive"}`}>
+                      {coverage?.recipeIngredientCount ?? 0}
+                    </span>
+                  </button>
+                );
+              })}
               {recipeProducts.length === 0 && <div className="empty">ไม่พบเมนูขาย</div>}
             </div>
           </div>

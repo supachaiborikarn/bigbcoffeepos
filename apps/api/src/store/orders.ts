@@ -1,9 +1,8 @@
 import prisma from "../prisma.js";
-import { adjustStock, getRecipe } from "./inventory.js";
-import { updateCustomerPoints, getCustomer } from "./customers.js";
-import { enqueueIntegrationEvent } from "./integrations.js";
+import { getCustomer } from "./customers.js";
 
 type Modifier = { name: string; value: string; price: number };
+type PaymentDetails = { cashReceived?: number; changeAmount?: number; paymentConfirmed?: boolean };
 type DiscountType = "PERCENT" | "FIXED" | null;
 type PaymentMethod = "CASH" | "QR" | "CARD" | "EWALLET";
 type DiscountRuleType = "ORDER_PERCENT" | "ORDER_FIXED" | "CATEGORY_PERCENT" | "BUY_X_GET_Y";
@@ -29,6 +28,37 @@ type OrderItemDraft = {
   note?: string;
 };
 
+const PAYMENT_METHODS = new Set<PaymentMethod>(["CASH", "QR", "CARD", "EWALLET"]);
+const ALLOWED_STATUSES = new Set(["PAID", "READY", "CANCELLED", "REFUNDED"]);
+const REVERSAL_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
+const DRINK_CATEGORIES = ["กาแฟ", "ชา", "เครื่องดื่ม"];
+const MODIFIER_CATALOG = {
+  Type: new Map([
+    ["Hot", { label: "Hot", price: 0 }],
+    ["Iced", { label: "Iced", price: 0 }],
+    ["Frappe", { label: "Frappe", price: 0 }]
+  ]),
+  Size: new Map([
+    ["M", { label: "M", price: 0 }],
+    ["L", { label: "L", price: 10 }]
+  ]),
+  Sweetness: new Map([
+    ["0%", { label: "0%", price: 0 }],
+    ["25%", { label: "25%", price: 0 }],
+    ["50%", { label: "50%", price: 0 }],
+    ["100%", { label: "100%", price: 0 }],
+    ["120%", { label: "120%", price: 0 }]
+  ]),
+  "Add-on": new Map([
+    ["เพิ่มช็อตกาแฟ", { label: "เพิ่มช็อตกาแฟ", price: 15 }],
+    ["เปลี่ยนเป็นนมโอ๊ต", { label: "เปลี่ยนเป็นนมโอ๊ต", price: 20 }],
+    ["เปลี่ยนเป็นนมอัลมอนด์", { label: "เปลี่ยนเป็นนมอัลมอนด์", price: 20 }],
+    ["เพิ่มไซรัปวานิลลา", { label: "เพิ่มไซรัปวานิลลา", price: 15 }],
+    ["เพิ่มไซรัปคาราเมล", { label: "เพิ่มไซรัปคาราเมล", price: 15 }],
+    ["วิปครีม", { label: "วิปครีม", price: 15 }]
+  ])
+} as const;
+
 function roundMoney(v: number) {
   return Math.round(v * 100) / 100;
 }
@@ -43,6 +73,21 @@ function hydrateOrder(row: any) {
       modifiers: typeof i.modifiers === "string" ? JSON.parse(i.modifiers) : i.modifiers
     }))
   };
+}
+
+function normalizeModifiers(value: Modifier[], category: string) {
+  if (!Array.isArray(value)) return [];
+  if (!DRINK_CATEGORIES.includes(category) && value.length) throw new Error("สินค้านี้ไม่มีตัวเลือกเพิ่มเติม");
+  return value.map((modifier) => {
+    const name = String(modifier?.name ?? "").trim();
+    const modValue = String(modifier?.value ?? "").trim();
+    const catalog = MODIFIER_CATALOG[name as keyof typeof MODIFIER_CATALOG];
+    const catalogItem = catalog?.get(modValue);
+    if (!catalogItem) {
+      throw new Error("ตัวเลือกสินค้าไม่ถูกต้อง");
+    }
+    return { name, value: catalogItem.label, price: catalogItem.price };
+  });
 }
 
 function normalizeRule(rule: DiscountRule): DiscountRule | null {
@@ -76,12 +121,8 @@ function normalizeRule(rule: DiscountRule): DiscountRule | null {
 }
 
 function legacyDiscountRule(discountType: DiscountType, discountValue: number): DiscountRule | null {
-  if (discountType === "PERCENT" && discountValue > 0) {
-    return normalizeRule({ type: "ORDER_PERCENT", value: discountValue });
-  }
-  if (discountType === "FIXED" && discountValue > 0) {
-    return normalizeRule({ type: "ORDER_FIXED", value: discountValue });
-  }
+  if (discountType === "PERCENT" && discountValue > 0) return normalizeRule({ type: "ORDER_PERCENT", value: discountValue });
+  if (discountType === "FIXED" && discountValue > 0) return normalizeRule({ type: "ORDER_FIXED", value: discountValue });
   return null;
 }
 
@@ -133,6 +174,30 @@ function computeDiscount(rules: DiscountRule[], subtotal: number, orderItems: Or
   return { discountAmount: roundMoney(totalDiscount), applied };
 }
 
+function normalizePaymentMethod(value: string): PaymentMethod {
+  if (!PAYMENT_METHODS.has(value as PaymentMethod)) throw new Error("วิธีชำระเงินไม่ถูกต้อง");
+  return value as PaymentMethod;
+}
+
+function normalizePaymentDetails(paymentMethod: PaymentMethod, total: number, details: PaymentDetails = {}) {
+  if (paymentMethod === "CASH") {
+    const cashReceived = Number(details.cashReceived);
+    if (!Number.isFinite(cashReceived) || cashReceived < total) throw new Error("ยอดรับเงินสดไม่พอ");
+    return {
+      status: "CONFIRMED",
+      cashReceived: roundMoney(cashReceived),
+      changeAmount: roundMoney(cashReceived - total)
+    };
+  }
+
+  if (details.paymentConfirmed !== true) throw new Error("กรุณายืนยันการชำระเงินก่อนบันทึกออเดอร์");
+  return {
+    status: "CONFIRMED",
+    cashReceived: null,
+    changeAmount: null
+  };
+}
+
 export async function getOrders(branchId?: number) {
   const orders = await prisma.order.findMany({
     where: branchId ? { branchId } : undefined,
@@ -151,6 +216,87 @@ export async function getOrder(id: number) {
 }
 
 export async function updateOrderStatus(id: number, status: string) {
+  if (!ALLOWED_STATUSES.has(status)) throw new Error("สถานะออเดอร์ไม่ถูกต้อง");
+
+  if (REVERSAL_STATUSES.has(status)) {
+    const order = await prisma.$transaction(async (tx) => {
+      const current = await tx.order.findUnique({
+        where: { id },
+        include: { items: true }
+      });
+      if (!current) return null;
+      if (REVERSAL_STATUSES.has(current.status)) return current;
+
+      for (const item of current.items) {
+        const recipes = await tx.recipe.findMany({ where: { menuItemId: item.menuItemId } });
+        for (const recipe of recipes) {
+          const restoreQty = recipe.qty * item.qty;
+          await tx.ingredientStock.upsert({
+            where: {
+              branchId_ingredientId: {
+                branchId: current.branchId,
+                ingredientId: recipe.ingredientId
+              }
+            },
+            update: { stockQty: { increment: restoreQty } },
+            create: {
+              branchId: current.branchId,
+              ingredientId: recipe.ingredientId,
+              stockQty: restoreQty,
+              reorderLevel: 0
+            }
+          });
+          await tx.stockMovement.create({
+            data: {
+              branchId: current.branchId,
+              ingredientId: recipe.ingredientId,
+              qty: restoreQty,
+              reason: `${status}-${current.id}`
+            }
+          });
+        }
+      }
+
+      if (current.customerId) {
+        await tx.customer.update({
+          where: { id: current.customerId },
+          data: {
+            points: {
+              increment: current.loyaltyPointsUsed - current.loyaltyPointsEarned
+            }
+          }
+        });
+        await tx.customer.updateMany({
+          where: { id: current.customerId, points: { lt: 0 } },
+          data: { points: 0 }
+        });
+      }
+
+      if (current.shiftId) {
+        const cashAdd = current.paymentMethod === "CASH" ? -current.total : 0;
+        const qrAdd = current.paymentMethod === "QR" ? -current.total : 0;
+        const cardAdd = current.paymentMethod === "CARD" || current.paymentMethod === "EWALLET" ? -current.total : 0;
+        await tx.shift.update({
+          where: { id: current.shiftId },
+          data: {
+            totalSales: { increment: -current.total },
+            totalOrders: { increment: -1 },
+            cashSales: { increment: cashAdd },
+            qrSales: { increment: qrAdd },
+            cardSales: { increment: cardAdd }
+          }
+        });
+      }
+
+      return tx.order.update({
+        where: { id },
+        data: { status },
+        include: { items: true }
+      });
+    });
+    return hydrateOrder(order);
+  }
+
   try {
     const updated = await prisma.order.update({
       where: { id },
@@ -174,7 +320,9 @@ export async function createOrder(input: {
   userId?: number;
   shiftId?: number;
   discounts?: DiscountRule[];
+  paymentDetails?: PaymentDetails;
 }) {
+  const paymentMethod = normalizePaymentMethod(input.paymentMethod);
   const branch = await prisma.branch.findFirst({ where: { id: input.branchId, active: true } });
   if (!branch) throw new Error("ไม่พบสาขาที่ระบุ");
 
@@ -184,9 +332,15 @@ export async function createOrder(input: {
   const orderItems: OrderItemDraft[] = [];
 
   for (const item of input.items) {
+    if (!Number.isFinite(item.menuItemId) || !Number.isFinite(item.qty) || item.qty <= 0 || item.qty > 999) {
+      throw new Error("รายการสินค้าไม่ถูกต้อง");
+    }
     const mi = await prisma.menuItem.findFirst({ where: { id: item.menuItemId, active: true } });
     if (!mi) throw new Error(`ไม่พบสินค้า ID ${item.menuItemId}`);
-    const modTotal = item.modifiers.reduce((s, m) => s + m.price, 0);
+    if (mi.branchType !== branch.branchType) throw new Error(`สินค้า ${mi.name} ไม่ตรงกับประเภทสาขา`);
+
+    const modifiers = normalizeModifiers(item.modifiers, mi.category);
+    const modTotal = modifiers.reduce((s, m) => s + m.price, 0);
     const lineTotal = roundMoney((mi.basePrice + modTotal) * item.qty);
     orderItems.push({
       menuItemId: mi.id,
@@ -194,7 +348,7 @@ export async function createOrder(input: {
       category: mi.category,
       qty: item.qty,
       basePrice: mi.basePrice,
-      modifiers: item.modifiers,
+      modifiers,
       lineTotal,
       note: item.note
     });
@@ -210,17 +364,77 @@ export async function createOrder(input: {
 
   const discountable = Math.max(0, subtotal - discountAmount);
   const availablePoints = customer ? customer.points : 0;
-  const pointsToUse = Math.min(Math.max(0, Math.floor(input.loyaltyPointsToUse)), availablePoints, Math.floor(discountable));
+  const requestedPoints = Math.max(0, Math.floor(input.loyaltyPointsToUse));
+  const pointsToUse = Math.min(requestedPoints, availablePoints, Math.floor(discountable));
   const total = roundMoney(discountable - pointsToUse);
 
-  const DRINK_CATEGORIES = ["กาแฟ", "ชา", "เครื่องดื่ม"];
-  const drinkCount = customer ? orderItems.reduce((sum, oi) => {
-    return sum + (DRINK_CATEGORIES.includes(oi.category) ? oi.qty : 0);
-  }, 0) : 0;
+  const drinkCount = customer ? orderItems.reduce((sum, oi) => sum + (DRINK_CATEGORIES.includes(oi.category) ? oi.qty : 0), 0) : 0;
   const pointsEarned = Math.floor(drinkCount);
+  const paymentDetails = normalizePaymentDetails(paymentMethod, total, input.paymentDetails);
 
-  // Use a transaction for atomic DB updates
+  const integrationPayload = {
+    branchId: input.branchId,
+    customerId: input.customerId,
+    userId: input.userId ?? null,
+    shiftId: input.shiftId ?? null,
+    paymentMethod,
+    subtotal,
+    discountAmount,
+    discounts: appliedDiscounts,
+    loyaltyPointsUsed: pointsToUse,
+    loyaltyPointsEarned: pointsEarned,
+    total,
+    paymentStatus: paymentDetails.status,
+    cashReceived: paymentDetails.cashReceived,
+    changeAmount: paymentDetails.changeAmount,
+    items: orderItems.map((item) => ({
+      menuItemId: item.menuItemId,
+      name: item.name,
+      category: item.category,
+      qty: item.qty,
+      lineTotal: item.lineTotal
+    }))
+  };
+
   const order = await prisma.$transaction(async (tx) => {
+    const requiredStock = new Map<number, number>();
+    for (const i of orderItems) {
+      const recipes = await tx.recipe.findMany({ where: { menuItemId: i.menuItemId } });
+      for (const recipe of recipes) {
+        requiredStock.set(recipe.ingredientId, roundMoney((requiredStock.get(recipe.ingredientId) ?? 0) + recipe.qty * i.qty));
+      }
+    }
+
+    for (const [ingredientId, requiredQty] of requiredStock) {
+      const stock = await tx.ingredientStock.findUnique({
+        where: {
+          branchId_ingredientId: {
+            branchId: input.branchId,
+            ingredientId
+          }
+        },
+        include: { ingredient: { select: { name: true } } }
+      });
+      if (!stock || stock.stockQty < requiredQty) {
+        const name = stock?.ingredient.name ?? `วัตถุดิบ #${ingredientId}`;
+        const available = stock?.stockQty ?? 0;
+        throw new Error(`สต็อกไม่พอ: ${name} คงเหลือ ${available}, ต้องใช้ ${requiredQty}`);
+      }
+    }
+
+    if (customer && pointsToUse > 0) {
+      const pointsResult = await tx.customer.updateMany({
+        where: { id: input.customerId!, points: { gte: pointsToUse } },
+        data: { points: { increment: -pointsToUse + pointsEarned } }
+      });
+      if (pointsResult.count !== 1) throw new Error("แต้มสมาชิกไม่พอ กรุณารีเฟรชข้อมูลสมาชิก");
+    } else if (customer && pointsEarned > 0) {
+      await tx.customer.update({
+        where: { id: input.customerId! },
+        data: { points: { increment: pointsEarned } }
+      });
+    }
+
     const newOrder = await tx.order.create({
       data: {
         branchId: input.branchId,
@@ -236,7 +450,7 @@ export async function createOrder(input: {
         loyaltyPointsEarned: pointsEarned,
         tax: 0,
         total,
-        paymentMethod: input.paymentMethod,
+        paymentMethod,
         items: {
           create: orderItems.map(i => ({
             menuItemId: i.menuItemId,
@@ -252,11 +466,30 @@ export async function createOrder(input: {
       include: { items: true }
     });
 
+    for (const [ingredientId, requiredQty] of requiredStock) {
+      const decrementResult = await tx.ingredientStock.updateMany({
+        where: {
+          branchId: input.branchId,
+          ingredientId,
+          stockQty: { gte: requiredQty }
+        },
+        data: { stockQty: { decrement: requiredQty } }
+      });
+      if (decrementResult.count !== 1) throw new Error("สต็อกมีการเปลี่ยนแปลง กรุณาลองชำระเงินใหม่");
+      await tx.stockMovement.create({
+        data: {
+          branchId: input.branchId,
+          ingredientId,
+          qty: -requiredQty,
+          reason: `SALE-${newOrder.id}`
+        }
+      });
+    }
+
     if (input.shiftId) {
-      const pm = input.paymentMethod;
-      const cashAdd = pm === "CASH" ? total : 0;
-      const qrAdd = pm === "QR" ? total : 0;
-      const cardAdd = (pm === "CARD" || pm === "EWALLET") ? total : 0;
+      const cashAdd = paymentMethod === "CASH" ? total : 0;
+      const qrAdd = paymentMethod === "QR" ? total : 0;
+      const cardAdd = paymentMethod === "CARD" || paymentMethod === "EWALLET" ? total : 0;
       await tx.shift.update({
         where: { id: input.shiftId },
         data: {
@@ -269,53 +502,17 @@ export async function createOrder(input: {
       });
     }
 
+    const outboxPayload = { ...integrationPayload, orderId: newOrder.id };
+    await tx.integrationOutbox.createMany({
+      data: [
+        { provider: "rd_tax", eventType: "ORDER_TAX_RECEIPT_READY", entityType: "order", entityId: newOrder.id, payload: JSON.stringify(outboxPayload) },
+        { provider: "line_oa", eventType: "ORDER_RECEIPT_MESSAGE_READY", entityType: "order", entityId: newOrder.id, payload: JSON.stringify(outboxPayload) },
+        { provider: "lineman", eventType: "ORDER_SYNC_READY", entityType: "order", entityId: newOrder.id, payload: JSON.stringify(outboxPayload) }
+      ]
+    });
+
     return newOrder;
   });
-
-  // These can be done outside transaction as they manage their own logic/transactions
-  for (const i of orderItems) {
-    const recipe = await getRecipe(i.menuItemId);
-    if (recipe) {
-      for (const ing of recipe.ingredients) {
-        await adjustStock({
-          branchId: input.branchId,
-          ingredientId: ing.ingredientId,
-          qty: -(ing.qty * i.qty),
-          reason: `SALE-${order.id}`
-        });
-      }
-    }
-  }
-
-  if (customer) {
-    await updateCustomerPoints(input.customerId!, -pointsToUse + pointsEarned);
-  }
-
-  const integrationPayload = {
-    orderId: order.id,
-    branchId: input.branchId,
-    customerId: input.customerId,
-    userId: input.userId ?? null,
-    shiftId: input.shiftId ?? null,
-    paymentMethod: input.paymentMethod,
-    subtotal,
-    discountAmount,
-    discounts: appliedDiscounts,
-    loyaltyPointsUsed: pointsToUse,
-    loyaltyPointsEarned: pointsEarned,
-    total,
-    items: orderItems.map((item) => ({
-      menuItemId: item.menuItemId,
-      name: item.name,
-      category: item.category,
-      qty: item.qty,
-      lineTotal: item.lineTotal
-    }))
-  };
-
-  await enqueueIntegrationEvent({ provider: "rd_tax", eventType: "ORDER_TAX_RECEIPT_READY", entityType: "order", entityId: order.id, payload: integrationPayload });
-  await enqueueIntegrationEvent({ provider: "line_oa", eventType: "ORDER_RECEIPT_MESSAGE_READY", entityType: "order", entityId: order.id, payload: integrationPayload });
-  await enqueueIntegrationEvent({ provider: "lineman", eventType: "ORDER_SYNC_READY", entityType: "order", entityId: order.id, payload: integrationPayload });
 
   return hydrateOrder(order);
 }

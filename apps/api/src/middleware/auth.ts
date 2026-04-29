@@ -9,12 +9,13 @@ export interface AuthRequest extends Request {
     id: number;
     name: string;
     role: string;
+    branchId?: number | null;
   };
 }
 
-export function generateToken(user: { id: number; name: string; role: string }) {
+export function generateToken(user: { id: number; name: string; role: string; branchId?: number | null }) {
   return jwt.sign(
-    { id: user.id, name: user.name, role: user.role },
+    { id: user.id, name: user.name, role: user.role, branchId: user.branchId ?? null },
     JWT_SECRET,
     { expiresIn: "12h" } // Token expires in 12 hours
   );
@@ -28,7 +29,7 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
 
   const token = authHeader.substring(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { id: number; name: string; role: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { id: number; name: string; role: string; branchId?: number | null };
     req.user = payload;
     next();
   } catch (err) {
@@ -41,4 +42,27 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
     return res.status(403).json({ error: "Forbidden: Admin access required" });
   }
   next();
+}
+
+export function requireRole(...roles: string[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Forbidden: insufficient role" });
+    }
+    next();
+  };
+}
+
+export function requireBranchAccess(resolveBranchId: (req: AuthRequest) => number | null) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    if (req.user.role === "admin" || req.user.role === "manager") return next();
+
+    const requestedBranchId = resolveBranchId(req);
+    if (requestedBranchId === null) return res.status(400).json({ error: "ระบุสาขา" });
+    if (req.user.branchId !== requestedBranchId) {
+      return res.status(403).json({ error: "Forbidden: branch access denied" });
+    }
+    next();
+  };
 }

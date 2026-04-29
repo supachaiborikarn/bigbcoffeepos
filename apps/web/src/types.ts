@@ -1,5 +1,5 @@
 export type PaymentMethod = "CASH" | "QR" | "CARD" | "EWALLET";
-export type OrderStatus = "PAID" | "READY";
+export type OrderStatus = "PAID" | "READY" | "CANCELLED" | "REFUNDED";
 export type DiscountType = "PERCENT" | "FIXED" | null;
 export type DiscountRuleType = "ORDER_PERCENT" | "ORDER_FIXED" | "CATEGORY_PERCENT" | "BUY_X_GET_Y";
 

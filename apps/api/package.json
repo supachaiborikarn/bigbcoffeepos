@@ -8,7 +8,11 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "backup": "tsx src/scripts/backup-now.ts",
-    "phase13:check": "tsx src/scripts/phase13-infra-check.ts"
+    "phase13:check": "tsx src/scripts/phase13-infra-check.ts",
+    "production-hardening:check": "tsx src/scripts/production-hardening-check.ts",
+    "orders:check": "tsx src/scripts/check-orders.ts",
+    "data:export": "tsx src/scripts/export-data.ts",
+    "mock-history:generate": "tsx src/scripts/generate-mock-history.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

@@ -244,6 +244,10 @@ export async function getOrders(branchId: number) {
 export async function createOrder(input: {
   items: CartItem[];
   paymentMethod: PaymentMethod;
+  paymentDetails?: {
+    cashReceived?: number;
+    paymentConfirmed?: boolean;
+  };
   discountType: DiscountType;
   discountValue: number;
   discounts?: DiscountRule[];
@@ -263,6 +267,7 @@ export async function createOrder(input: {
         note: item.note
       })),
       paymentMethod: input.paymentMethod,
+      paymentDetails: input.paymentDetails,
       discountType: input.discountType,
       discountValue: input.discountValue,
       discounts: input.discounts,

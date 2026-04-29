@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { audit, log, requestLogger } from "./logger.js";
 
 // Detect local vs cloud mode
 const isLocalMode = !process.env.DATABASE_URL || process.env.DATABASE_URL.startsWith("file:") || process.env.DATABASE_URL.includes("placeholder");
@@ -22,6 +23,7 @@ const app = express();
 const PORT = Number(process.env.PORT ?? 5175);
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+app.use(requestLogger);
 
 /* ─── Helpers ─── */
 function parseId(raw: string | number | undefined) { const id = Number(raw); return Number.isFinite(id) ? id : null; }
@@ -35,23 +37,45 @@ if (isLocalMode) {
   import("./db.js").then(() => import("./db-migrate.js")).then(({ runMigrations }) => {
     runMigrations();
     import("./backup.js").then(({ startAutoBackup }) => startAutoBackup());
-  }).catch(err => console.error("[Local Init Error]", err));
+  }).catch(err => log("error", "local_init_failed", { message: err instanceof Error ? err.message : String(err) }));
 } else {
-  console.log("[DB] Cloud mode — using Neon PostgreSQL");
+  log("info", "db_mode", { mode: "cloud", provider: "neon_postgresql" });
 }
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-import { requireAuth, requireAdmin, generateToken } from "./middleware/auth.js";
+import { requireAuth, requireAdmin, requireRole, requireBranchAccess, generateToken, type AuthRequest } from "./middleware/auth.js";
+
+const pinAttempts = new Map<string, { count: number; resetAt: number }>();
+function enforcePinRateLimit(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const key = req.ip || "unknown";
+  const now = Date.now();
+  const current = pinAttempts.get(key);
+  if (!current || current.resetAt < now) {
+    pinAttempts.set(key, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  if (current.count >= 8) {
+    audit("auth.pin.rate_limited", req, { ip: key });
+    return res.status(429).json({ error: "ลองผิดหลายครั้งเกินไป กรุณารอสักครู่" });
+  }
+  current.count += 1;
+  return next();
+}
 
 /* ─── Auth ─── */
-app.post("/api/auth/pin", async (req, res) => {
+app.post("/api/auth/pin", enforcePinRateLimit, async (req, res) => {
   const pin = String(req.body?.pin ?? "").trim();
   if (!pin) return res.status(400).json({ error: "กรุณาใส่ PIN" });
   const user = await authenticatePin(pin);
-  if (!user) return res.status(401).json({ error: "PIN ไม่ถูกต้อง" });
+  if (!user) {
+    audit("auth.pin.failed", req, { ip: req.ip });
+    return res.status(401).json({ error: "PIN ไม่ถูกต้อง" });
+  }
   
   const token = generateToken(user);
+  pinAttempts.delete(req.ip || "unknown");
+  audit("auth.pin.succeeded", req, { userId: user.id, role: user.role, branchId: user.branchId ?? null });
   return res.json({ user, token });
 });
 
@@ -59,9 +83,9 @@ app.post("/api/auth/pin", async (req, res) => {
 app.use("/api", requireAuth);
 
 /* ─── Users ─── */
-app.get("/api/users", async (_req, res) => res.json({ items: await getUsers() }));
+app.get("/api/users", requireAdmin, async (_req, res) => res.json({ items: await getUsers() }));
 
-app.post("/api/users", async (req, res) => {
+app.post("/api/users", requireAdmin, async (req, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const pin = isStr(req.body?.pin) ? req.body.pin.trim() : "";
   const role = req.body?.role || "cashier";
@@ -69,11 +93,15 @@ app.post("/api/users", async (req, res) => {
   if (!name || !pin) return res.status(400).json({ error: "กรุณากรอกชื่อและ PIN" });
   if (pin.length !== 4 || !/^\d{4}$/.test(pin)) return res.status(400).json({ error: "PIN ต้องเป็นตัวเลข 4 หลัก" });
   if (!["admin", "manager", "cashier"].includes(role)) return res.status(400).json({ error: "Role ไม่ถูกต้อง" });
-  try { return res.status(201).json({ user: await addUser({ name, pin, role: role as "admin"|"manager"|"cashier", branchId: branchId ?? undefined }) }); }
+  try {
+    const user = await addUser({ name, pin, role: role as "admin"|"manager"|"cashier", branchId: branchId ?? undefined });
+    audit("user.created", req, { targetUserId: user?.id, role, branchId });
+    return res.status(201).json({ user });
+  }
   catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.put("/api/users/:id", async (req, res) => {
+app.put("/api/users/:id", requireAdmin, async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const data: any = {};
@@ -91,14 +119,16 @@ app.put("/api/users/:id", async (req, res) => {
   try {
     const user = await updateUser(id, data);
     if (!user) return res.status(404).json({ error: "ไม่พบพนักงาน" });
+    audit("user.updated", req, { targetUserId: id, changedFields: Object.keys(data) });
     return res.json({ user });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.delete("/api/users/:id", async (req, res) => {
+app.delete("/api/users/:id", requireAdmin, async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const user = await deleteUser(id);
+  audit("user.deactivated", req, { targetUserId: id });
   return res.json({ user });
 });
 
@@ -129,15 +159,16 @@ app.put("/api/customers/:id", async (req, res) => {
 
 /* ─── Menu ─── */
 app.get("/api/menu", async (_req, res) => res.json({ items: await getMenu() }));
-app.post("/api/menu", async (req, res) => {
+app.post("/api/menu", requireRole("admin", "manager"), async (req, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const category = isStr(req.body?.category) ? req.body.category.trim() : "";
   const basePrice = parseMoney(req.body?.basePrice);
   if (!name || !category || basePrice === null) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
   const item = await addMenuItem({ name, category, basePrice, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(), cost: parseMoney(req.body?.cost) ?? undefined, branchType: parseBranchType(req.body?.branchType) });
+  audit("menu.created", req, { menuItemId: item.id, branchType: item.branchType });
   return res.status(201).json({ item });
 });
-app.put("/api/menu/:id", async (req, res) => {
+app.put("/api/menu/:id", requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const cost = req.body?.cost === null || req.body?.cost === "" ? null : req.body?.cost !== undefined ? parseMoney(req.body.cost) ?? undefined : undefined;
@@ -149,12 +180,13 @@ app.put("/api/menu/:id", async (req, res) => {
     branchType: parseBranchType(req.body?.branchType)
   });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
+  audit("menu.updated", req, { menuItemId: id });
   return res.json({ item });
 });
 
 /* ─── Ingredients & Inventory ─── */
 app.get("/api/ingredients", async (_req, res) => res.json({ items: await getIngredients() }));
-app.post("/api/ingredients", async (req, res) => {
+app.post("/api/ingredients", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
@@ -162,21 +194,23 @@ app.post("/api/ingredients", async (req, res) => {
   const costPerUnit = parseMoney(req.body?.costPerUnit);
   if (!name || !unit || costPerUnit === null) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
   const ingredient = await addIngredient({ name, unit, costPerUnit, stockQty: Number(req.body?.stockQty) || 0, reorderLevel: Number(req.body?.reorderLevel) || 0, branchId });
+  audit("ingredient.created", req, { ingredientId: ingredient?.id, branchId });
   return res.status(201).json({ ingredient });
 });
-app.put("/api/ingredients/:id", async (req, res) => {
+app.put("/api/ingredients/:id", requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const ingredient = await updateIngredient(id, { name: req.body?.name?.trim(), unit: req.body?.unit?.trim(), costPerUnit: req.body?.costPerUnit !== undefined ? parseMoney(req.body.costPerUnit) ?? undefined : undefined });
   if (!ingredient) return res.status(404).json({ error: "ไม่พบวัตถุดิบ" });
+  audit("ingredient.updated", req, { ingredientId: id });
   return res.json({ ingredient });
 });
-app.get("/api/inventory", async (req, res) => {
+app.get("/api/inventory", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string);
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
   res.json({ items: await getInventoryItems(branchId) });
 });
-app.put("/api/inventory/:ingredientId", async (req, res) => {
+app.put("/api/inventory/:ingredientId", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   const ingredientId = parseId(req.params.ingredientId);
   if (branchId === null || ingredientId === null) return res.status(400).json({ error: "ระบุสาขาและสินค้า" });
@@ -203,9 +237,10 @@ app.put("/api/inventory/:ingredientId", async (req, res) => {
     reorderLevel: normalizedReorderLevel
   });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้าในสต็อก" });
+  audit("inventory.updated", req, { branchId, ingredientId, changedFields: Object.keys(req.body ?? {}) });
   return res.json({ item });
 });
-app.post("/api/stock-adjustments", async (req, res) => {
+app.post("/api/stock-adjustments", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   const ingredientId = parseId(req.body?.ingredientId);
   const qty = Number(req.body?.qty);
@@ -213,9 +248,10 @@ app.post("/api/stock-adjustments", async (req, res) => {
   const result = await adjustStock({ branchId, ingredientId, qty, reason: req.body?.reason?.trim() || "ADJUSTMENT" });
   const items = await getInventoryItems(branchId);
   const inventoryItem = items.find((item: any) => item.ingredientId === ingredientId) ?? null;
+  audit("stock.adjusted", req, { branchId, ingredientId, qty, reason: req.body?.reason?.trim() || "ADJUSTMENT" });
   return res.status(201).json({ inventoryItem, movement: result.movement });
 });
-app.get("/api/stock-movements", async (req, res) => {
+app.get("/api/stock-movements", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   res.json({ items: await getStockMovements(branchId) });
 });
@@ -228,15 +264,16 @@ app.get("/api/recipes/:menuItemId", async (req, res) => {
   const recipe = await getRecipe(id);
   return res.json({ recipe });
 });
-app.put("/api/recipes/:menuItemId", async (req, res) => {
+app.put("/api/recipes/:menuItemId", requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.menuItemId);
   if (id === null || !Array.isArray(req.body?.ingredients)) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
   const recipe = await setRecipe({ menuItemId: id, ingredients: req.body.ingredients });
+  audit("recipe.updated", req, { menuItemId: id, ingredientCount: req.body.ingredients.length });
   return res.json({ recipe });
 });
 
 /* ─── Orders ─── */
-app.get("/api/orders", async (req, res) => {
+app.get("/api/orders", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   res.json({ items: await getOrders(branchId) });
 });
@@ -247,14 +284,17 @@ app.get("/api/orders/:id", async (req, res) => {
   if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
   return res.json({ order });
 });
-app.patch("/api/orders/:id", async (req, res) => {
+app.patch("/api/orders/:id", requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
-  const order = await updateOrderStatus(id, req.body?.status ?? "PAID");
-  if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
-  return res.json({ order });
+  try {
+    const order = await updateOrderStatus(id, req.body?.status ?? "PAID");
+    if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
+    audit("order.status_updated", req, { orderId: id, status: req.body?.status ?? "PAID" });
+    return res.json({ order });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
-app.post("/api/orders", async (req, res) => {
+app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)), async (req: AuthRequest, res) => {
   const branchId = parseId(req.body?.branchId);
   if (branchId === null || !Array.isArray(req.body?.items) || !req.body.items.length) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
   try {
@@ -271,38 +311,45 @@ app.post("/api/orders", async (req, res) => {
       discountValue: Number(req.body.discountValue) || 0,
       discounts: Array.isArray(req.body.discounts) ? req.body.discounts : undefined,
       loyaltyPointsToUse: Number(req.body.loyaltyPointsToUse) || 0,
-      userId: req.body.userId ?? undefined,
-      shiftId: req.body.shiftId ?? undefined
+      userId: req.user?.id ?? req.body.userId ?? undefined,
+      shiftId: req.body.shiftId ?? undefined,
+      paymentDetails: {
+        cashReceived: req.body?.paymentDetails?.cashReceived,
+        paymentConfirmed: req.body?.paymentDetails?.paymentConfirmed === true
+      }
     });
+    audit("order.created", req, { orderId: order.id, branchId, total: order.total, paymentMethod: order.paymentMethod });
     return res.status(201).json({ order });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
 /* ─── Shifts ─── */
-app.get("/api/shifts", async (req, res) => {
+app.get("/api/shifts", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   res.json({ items: await getShifts(branchId) });
 });
-app.get("/api/shifts/current", async (req, res) => {
+app.get("/api/shifts/current", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string);
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
   const shift = await getCurrentShift(branchId);
   return res.json({ shift });
 });
-app.post("/api/shifts/open", async (req, res) => {
+app.post("/api/shifts/open", requireBranchAccess((req) => parseId(req.body?.branchId)), async (req: AuthRequest, res) => {
   const branchId = parseId(req.body?.branchId);
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
   try {
-    const shift = await openShift({ branchId, userId: req.body?.userId ?? undefined, openingCash: Number(req.body?.openingCash) || 0 });
+    const shift = await openShift({ branchId, userId: req.user?.id ?? req.body?.userId ?? undefined, openingCash: Number(req.body?.openingCash) || 0 });
+    audit("shift.opened", req, { shiftId: shift?.id, branchId, openingCash: Number(req.body?.openingCash) || 0 });
     return res.status(201).json({ shift });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
-app.post("/api/shifts/:id/close", async (req, res) => {
+app.post("/api/shifts/:id/close", requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
     const shift = await closeShift(id, Number(req.body?.closingCash) || 0);
     const summary = await getShiftSummary(id);
+    audit("shift.closed", req, { shiftId: id, closingCash: Number(req.body?.closingCash) || 0, difference: summary?.cash.difference ?? null });
     return res.json({ shift, summary });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
@@ -316,21 +363,21 @@ app.get("/api/shifts/:id/summary", async (req, res) => {
 });
 
 /* ─── Reports ─── */
-app.get("/api/reports/summary", async (req, res) => {
+app.get("/api/reports/summary", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   return res.json({ summary: await getSalesSummary({ from, to, branchId }) });
 });
 
-app.get("/api/reports/profit", async (req, res) => {
+app.get("/api/reports/profit", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   return res.json(await getProfitReport({ from, to, branchId }));
 });
 
-app.get("/api/reports/staff", async (req, res) => {
+app.get("/api/reports/staff", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
@@ -356,6 +403,7 @@ app.post("/api/backups", requireAdmin, async (req, res) => {
     const { createDatabaseBackup } = await import("./backup.js");
     const reason = isStr(req.body?.reason) ? req.body.reason.trim() : "manual";
     const backup = await createDatabaseBackup(reason);
+    audit("backup.created", req, { reason, filename: backup?.filename });
     return res.status(201).json({ backup });
   } catch (e) {
     return res.status(409).json({ error: (e as Error).message });
@@ -363,12 +411,12 @@ app.post("/api/backups", requireAdmin, async (req, res) => {
 });
 
 /* ─── Purchases ─── */
-app.get("/api/purchases", async (req, res) => {
+app.get("/api/purchases", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
   res.json({ items: await getPurchases(branchId) });
 });
 
-app.post("/api/purchases", async (req, res) => {
+app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   const supplier = isStr(req.body?.supplier) ? req.body.supplier.trim() : "";
   const note = String(req.body?.note ?? "").trim();
@@ -385,6 +433,7 @@ app.post("/api/purchases", async (req, res) => {
   }
   try {
     const po = await createPurchase(branchId, supplier || "ไม่ระบุผู้ขาย", note, normalizedItems as { ingredientId: number; qty: number; unitCost: number }[]);
+    audit("purchase.created", req, { purchaseId: po?.id, branchId, total: po?.totalCost });
     return res.status(201).json({ purchase: po });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
@@ -406,6 +455,7 @@ app.post("/api/integrations/events/:id/retry", requireAdmin, async (req, res) =>
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const event = await retryIntegrationEvent(id);
   if (!event) return res.status(404).json({ error: "ไม่พบ integration event" });
+  audit("integration_event.retry", req, { eventId: id });
   return res.json({ event });
 });
 
@@ -422,16 +472,17 @@ app.post("/api/migration/sync", async (req, res) => {
   try {
     const { syncPosposData } = await import("./scripts/pospos-sync.js");
     const result = await syncPosposData(branchId);
+    audit("migration.pospos_sync", req, { branchId, result });
     return res.status(200).json(result);
   } catch (e) {
-    console.error("Migration Sync Error:", e);
+    log("error", "migration_sync_failed", { message: (e as Error).message, branchId });
     return res.status(500).json({ error: (e as Error).message });
   }
 });
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
+  log("error", "unhandled_error", { message: err.message, stack: err.stack });
   res.status(500).json({ error: "Internal server error" });
 });
 
-app.listen(PORT, () => console.log(`🚀 Big B Coffee API on http://localhost:${PORT}`));
+app.listen(PORT, () => log("info", "api_started", { url: `http://localhost:${PORT}` }));

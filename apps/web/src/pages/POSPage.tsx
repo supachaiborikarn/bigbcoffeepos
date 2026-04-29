@@ -213,7 +213,10 @@ export default function POSPage() {
     const pointsSnapshot = Number(pointsToUse) || 0;
     const rulesSnapshot = [...discountRules];
     try {
-      const order = await checkout(paymentMethod, selectedMember?.id ?? null, pointsSnapshot);
+      const order = await checkout(paymentMethod, selectedMember?.id ?? null, pointsSnapshot, {
+        cashReceived,
+        paymentConfirmed: paymentMethod !== "CASH"
+      });
       setLastOrder(order);
       setShowCashDrawer(false);
       // Print receipt
@@ -242,6 +245,8 @@ export default function POSPage() {
     if (paymentMethod === "CASH") {
       setShowCashDrawer(true);
     } else {
+      const label = paymentMethod === "QR" ? "QR" : paymentMethod === "CARD" ? "บัตร" : "E-Wallet";
+      if (!window.confirm(`ยืนยันว่าได้รับชำระผ่าน ${label} แล้ว?`)) return;
       handleCheckout();
     }
   };

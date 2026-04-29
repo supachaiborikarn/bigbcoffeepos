@@ -88,6 +88,11 @@ export async function syncPosposData(branchId: number) {
 
   const branch = await prisma.branch.findUnique({ where: { id: branchId } });
   if (!branch) throw new Error("Branch not found");
+  const posposEmail = process.env.POSPOS_EMAIL;
+  const posposPassword = process.env.POSPOS_PASSWORD;
+  if (!posposEmail || !posposPassword) {
+    throw new Error("POSPOS_EMAIL and POSPOS_PASSWORD are required for POSPOS sync");
+  }
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ acceptDownloads: true });
@@ -117,8 +122,8 @@ export async function syncPosposData(branchId: number) {
     // ── 1. Login ──
     console.log("\n[1/6] Logging into POSPOS...");
     await page.goto("https://go.pospos.co/");
-    await page.fill('input[type="email"], input[name="email"]', "wazabin@hotmail.com");
-    await page.fill('input[type="password"], input[name="password"]', "1478963");
+    await page.fill('input[type="email"], input[name="email"]', posposEmail);
+    await page.fill('input[type="password"], input[name="password"]', posposPassword);
     await page.click('button[type="submit"]');
     await page.waitForTimeout(5000);
 

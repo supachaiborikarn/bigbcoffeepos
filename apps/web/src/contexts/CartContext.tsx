@@ -26,7 +26,7 @@ type CartContextType = {
   clearDiscountRules: () => void;
   setPointsToUse: (val: string) => void;
   setScanFeedback: (feedback: ScanFeedback) => void;
-  checkout: (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number) => Promise<Order>;
+  checkout: (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean }) => Promise<Order>;
   subtotal: number;
   discountAmount: number;
   total: number;
@@ -153,13 +153,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const total = Math.max(0, subtotal - discountAmount - Math.min(Number(pointsToUse) || 0, Math.max(0, subtotal - discountAmount)));
 
-  const checkout = useCallback(async (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number) => {
+  const checkout = useCallback(async (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean }) => {
     if (cart.length === 0 || !activeBranch) throw new Error("ไม่สามารถชำระเงินได้");
     if (!activeShift) throw new Error("กรุณาเปิดกะก่อนขาย");
     try {
       const order = await createOrder({
         items: cart,
         paymentMethod,
+        paymentDetails,
         discountType,
         discountValue: Number(discountValue) || 0,
         discounts: discountRules,

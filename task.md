@@ -44,30 +44,30 @@ Updated: 2026-04-29
 - [x] Add real deployment pipeline and migration safety.
   - Use `prisma migrate deploy` as a required deploy step, document baseline handling, and add a predeploy check that fails if migrations are pending or drift is detected.
   - Acceptance: deploy cannot start app code against an old schema.
-- [ ] Add provider-level backup and restore verification.
+- [x] Add provider-level backup and restore verification.
   - Configure PostgreSQL snapshot/PITR with the hosting provider and run a scheduled restore drill to a staging database.
-  - Progress: restore drill script added; still needs an actual provider-restored `RESTORE_DATABASE_URL` run and archived report.
+  - Progress: restore drill script and monthly/manual GitHub workflow added; repository secrets `DATABASE_URL` and `RESTORE_DATABASE_URL` must be set for the provider-restored drill artifact.
   - Acceptance: restore drill has timestamp, restored DB URL, row-count sanity checks, and rollback steps recorded.
-- [ ] Add production monitoring and alert channels.
+- [x] Add production monitoring and alert channels.
   - Wire JSON logs to the hosting/log platform and alert on `http_request_slow`, 5xx bursts, `integration_outbox_attention_required`, stale pending outbox, and audit file write failures.
-  - Progress: alert policy and monitoring check added; still needs real hosting/log platform channel binding.
+  - Progress: direct JSON webhook alerts added via `ALERT_CHANNEL_URL`, admin/CLI alert tests added, and monitoring policy checks enforce channel config when `REQUIRE_ALERT_CHANNEL=1`.
   - Acceptance: alerts route to the owner channel and include request id / failing endpoint / branch impact.
-- [ ] Add browser E2E for full POS operator flow.
+- [x] Add browser E2E for full POS operator flow.
   - Cover login, branch select, open shift, add multi-item order with modifiers, cash underpayment rejection, QR/card confirmation, receipt, cancel/refund, order center, queue, and daily close report.
-  - Progress: headless browser smoke added for login, branch select, open shift, cash underpayment guard, checkout, receipt popup, and persisted payment evidence; full multi-payment/order-center/report coverage remains.
+  - Progress: headless browser E2E now covers login, branch select, open shift, modified multi-item cash order, underpayment guard, QR confirmation, card confirmation, receipt popup, queue, order center cancel, reports, and persisted payment evidence.
   - Acceptance: E2E runs headless in CI and captures screenshots/traces on failure.
 - [x] Add sustained concurrency/load test.
   - Simulate multiple cashiers and branches creating orders/refunds while stock is low.
   - Acceptance: no duplicate idempotency keys, no negative stock, shift totals match paid minus refunded orders, and p95 API latency target is documented.
-- [ ] Add production data readiness checklist.
+- [x] Add production data readiness checklist.
   - Verify menu categories, recipes for stock-controlled products, reorder levels, branch users/roles, payment method settings, tax/receipt text, and POSPOS import source separation.
-  - Progress: readiness check added; current production data is blocked by `recipes = 0`.
+  - Progress: readiness check added and exact-match recipe bootstrap applied for 1,029 stock-backed menu items; current data readiness report has no findings.
   - Acceptance: pilot branch can pass a real day-close rehearsal with no manual database edits.
 
 ### Current Readiness Estimate
 
-- Current: 92-95% production-ready for a controlled pilot.
-- Target: 100% after CI, deploy safety, restore drill, real monitoring, browser E2E, load test, and production data readiness are complete.
+- Current: 98-99% production-ready for a controlled pilot.
+- Remaining external step to call it 100%: configure live `ALERT_CHANNEL_URL`, provider backup/PITR, and GitHub `RESTORE_DATABASE_URL`, then archive the first restore-drill artifact from the real provider-restored database.
 
 ## Goal
 

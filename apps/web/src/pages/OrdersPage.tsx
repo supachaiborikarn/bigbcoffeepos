@@ -153,7 +153,7 @@ export default function OrdersPage() {
                 background: "var(--bg-surface)", borderRadius: 16, padding: 20,
                 border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)",
                 display: "flex", flexDirection: "column", gap: 16
-              }}>
+              }} data-testid={`order-card-${order.id}`}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
                     <span style={{ background: "var(--bg-muted)", color: "var(--text-primary)", padding: "4px 8px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
@@ -188,7 +188,7 @@ export default function OrdersPage() {
                       </button>
                     )}
                     {order.status !== "CANCELLED" && order.status !== "REFUNDED" && (
-                      <button className="btn btn--danger" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => cancelOrder(order)}>
+                      <button className="btn btn--danger" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => cancelOrder(order)} data-testid={`cancel-order-${order.id}`}>
                         <Ban size={16} /> ยกเลิกบิล
                       </button>
                     )}

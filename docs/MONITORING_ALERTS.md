@@ -17,7 +17,19 @@ Responses include `X-Request-ID`; support staff should ask for this id when inve
 
 ## Required Alerts
 
-Route alerts to the owner/on-call channel configured as `ALERT_CHANNEL_URL` in the monitoring platform.
+Route alerts to the owner/on-call channel configured as `ALERT_CHANNEL_URL`. The API posts JSON directly to this webhook for critical runtime signals, and the hosting/log platform should also alert on the same JSON log events.
+
+Webhook payload shape:
+
+```json
+{
+  "text": "[CRITICAL] http_request_5xx",
+  "severity": "critical",
+  "event": "http_request_5xx",
+  "ts": "2026-04-29T00:00:00.000Z",
+  "meta": { "requestId": "..." }
+}
+```
 
 | Signal | Severity | Suggested Rule | Action |
 | --- | --- | --- | --- |
@@ -27,6 +39,15 @@ Route alerts to the owner/on-call channel configured as `ALERT_CHANNEL_URL` in t
 | Outbox stale pending | High | `/api/integrations/summary.oldestPending` older than 15m | Confirm worker interval and provider health. |
 | Audit write failure | High | `event=audit_file_write_failed` | Check filesystem/log drain permissions. |
 | PIN abuse | Medium | `action=auth.pin.rate_limited count>=3 in 10m` | Check IP/location and rotate PIN if needed. |
+
+## Alert Test
+
+Use either path after setting `ALERT_CHANNEL_URL`:
+
+- CLI: `npm run monitoring:alert-test --workspace apps/api`
+- API: `POST /api/monitoring/alert-test` with an admin token
+
+When `REQUIRE_ALERT_CHANNEL=1`, monitoring checks fail if `ALERT_CHANNEL_URL` is missing.
 
 ## Dashboards
 

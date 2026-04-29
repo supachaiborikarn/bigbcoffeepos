@@ -1,8 +1,14 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import fs from "fs";
 import net from "net";
 import path from "path";
-import { chromium } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import prisma from "../prisma.js";
+
+type TestMenuItem = {
+  id: number;
+  name: string;
+};
 
 type TestData = {
   tag: string;
@@ -10,8 +16,9 @@ type TestData = {
   branchId: number;
   branchName: string;
   userId: number;
-  menuItemId: number;
-  menuItemName: string;
+  cookie: TestMenuItem;
+  latte: TestMenuItem;
+  menuItemIds: number[];
 };
 
 function assert(condition: unknown, message: string) {
@@ -68,24 +75,30 @@ async function seedTestData(): Promise<TestData> {
   const user = await prisma.user.create({
     data: { name: `${tag}_admin`, pin, role: "admin", active: true, branchId: null }
   });
-  const menuItem = await prisma.menuItem.create({
-    data: { sku: tag, name: `${tag}_cookie`, category: "เบเกอรี่", basePrice: 40, branchType: "coffee", active: true }
-  });
+  const [cookie, latte] = await Promise.all([
+    prisma.menuItem.create({
+      data: { sku: `${tag}-cookie`, name: `${tag}_cookie`, category: "เบเกอรี่", basePrice: 40, branchType: "coffee", active: true }
+    }),
+    prisma.menuItem.create({
+      data: { sku: `${tag}-latte`, name: `${tag}_ลาเต้`, category: "กาแฟ", basePrice: 50, branchType: "coffee", active: true }
+    })
+  ]);
   return {
     tag,
     pin,
     branchId: branch.id,
     branchName: branch.name,
     userId: user.id,
-    menuItemId: menuItem.id,
-    menuItemName: menuItem.name
+    cookie: { id: cookie.id, name: cookie.name },
+    latte: { id: latte.id, name: latte.name },
+    menuItemIds: [cookie.id, latte.id]
   };
 }
 
 async function cleanupTestData(data: TestData | null) {
   if (!data) return;
   const orders = await prisma.order.findMany({
-    where: { items: { some: { menuItemId: data.menuItemId } } },
+    where: { items: { some: { menuItemId: { in: data.menuItemIds } } } },
     select: { id: true }
   });
   const orderIds = orders.map((order) => order.id);
@@ -100,9 +113,42 @@ async function cleanupTestData(data: TestData | null) {
     });
   }
   await prisma.shift.deleteMany({ where: { branchId: data.branchId } });
-  await prisma.menuItem.deleteMany({ where: { id: data.menuItemId } });
+  await prisma.menuItem.deleteMany({ where: { id: { in: data.menuItemIds } } });
   await prisma.user.deleteMany({ where: { id: data.userId } });
   await prisma.branch.deleteMany({ where: { id: data.branchId } });
+}
+
+async function addSimpleItem(page: Page, itemName: string) {
+  await page.getByPlaceholder("ค้นหาสินค้า (F1)").fill(itemName);
+  await page.getByRole("button", { name: `เพิ่ม ${itemName}` }).click();
+}
+
+async function addModifiedLatte(page: Page, itemName: string) {
+  await page.getByPlaceholder("ค้นหาสินค้า (F1)").fill(itemName);
+  await page.getByRole("button", { name: `เพิ่ม ${itemName}` }).click();
+  await page.getByRole("heading", { name: itemName }).waitFor({ timeout: 10_000 });
+  await page.getByRole("button", { name: /L \(แก้วใหญ่\)/ }).click();
+  await page.getByRole("button", { name: "หวานน้อย (50%)" }).click();
+  await page.getByRole("button", { name: /เพิ่มช็อตกาแฟ/ }).click();
+  await page.getByRole("button", { name: /เพิ่มลงตะกร้า/ }).click();
+}
+
+async function enterNumpad(modal: Locator, digits: string) {
+  for (const digit of digits) await modal.getByRole("button", { name: digit, exact: true }).click();
+}
+
+async function backspaceNumpad(modal: Locator, count: number) {
+  for (let index = 0; index < count; index += 1) {
+    await modal.getByRole("button", { name: "⌫", exact: true }).click();
+  }
+}
+
+async function getLatestOrderByMenuItem(menuItemId: number) {
+  return prisma.order.findFirst({
+    where: { items: { some: { menuItemId } } },
+    orderBy: { id: "desc" },
+    include: { payments: true, items: true, events: true }
+  });
 }
 
 async function main() {
@@ -113,6 +159,10 @@ async function main() {
   const webUrl = `http://127.0.0.1:${webPort}`;
   let apiProcess: ChildProcessWithoutNullStreams | undefined;
   let webProcess: ChildProcessWithoutNullStreams | undefined;
+  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
+  let traceStopped = false;
   let data: TestData | null = null;
 
   try {
@@ -129,9 +179,10 @@ async function main() {
     await waitForUrl(`${apiUrl}/health`);
     await waitForUrl(webUrl);
 
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    browser = await chromium.launch({ headless: true });
+    context = await browser.newContext();
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+    page = await context.newPage();
 
     await page.goto(`${webUrl}/login`, { waitUntil: "networkidle" });
     await page.getByPlaceholder("● ● ● ●").fill(data.pin);
@@ -144,39 +195,120 @@ async function main() {
     await page.getByRole("button", { name: /ยืนยันเปิดกะ/ }).click();
     await page.getByRole("banner").getByText(/กะ #/).waitFor({ timeout: 10_000 });
 
-    await page.getByPlaceholder("ค้นหาสินค้า (F1)").fill(data.menuItemName);
-    await page.getByRole("button", { name: `เพิ่ม ${data.menuItemName}` }).click();
-    await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
+    await addModifiedLatte(page, data.latte.name);
+    await addSimpleItem(page, data.cookie.name);
+    await page.getByText(/ยอดรวม \(2 รายการ\)/).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByText("รับเงินสด").waitFor({ timeout: 10_000 });
     const cashModal = page.locator(".modal-backdrop").last();
 
-    await cashModal.getByRole("button", { name: "1", exact: true }).click();
-    await cashModal.getByRole("button", { name: "0", exact: true }).click();
+    await enterNumpad(cashModal, "100");
     await expectDisabled(cashModal.getByRole("button", { name: "รับเงินและพิมพ์ใบเสร็จ" }), "Underpayment should keep cash confirmation disabled");
 
-    await cashModal.getByRole("button", { name: "⌫", exact: true }).click();
-    await cashModal.getByRole("button", { name: "⌫", exact: true }).click();
-    await cashModal.getByRole("button", { name: "5", exact: true }).click();
-    await cashModal.getByRole("button", { name: "0", exact: true }).click();
+    await backspaceNumpad(cashModal, 3);
+    await enterNumpad(cashModal, "120");
     const popupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
     await cashModal.getByRole("button", { name: "รับเงินและพิมพ์ใบเสร็จ" }).click();
     const popup = await popupPromise;
     await popup?.close();
     await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
 
-    const order = await prisma.order.findFirst({
-      where: { items: { some: { menuItemId: data.menuItemId } } },
-      include: { payments: true, items: true }
-    });
-    if (!order) throw new Error("Browser checkout did not create an order");
-    assert(order.total === 40, `Browser checkout total mismatch: ${order.total}`);
-    assert(order.payments[0]?.amountReceived === 50, "Browser checkout payment evidence missing");
+    const cashOrder = await getLatestOrderByMenuItem(data.latte.id);
+    if (!cashOrder) throw new Error("Browser cash checkout did not create an order");
+    const latteId = data.latte.id;
+    const latteLine = cashOrder.items.find((item) => item.menuItemId === latteId);
+    const latteModifiers = latteLine ? JSON.parse(latteLine.modifiers) as Array<{ value: string; price: number }> : [];
+    assert(cashOrder.total === 115, `Browser cash checkout total mismatch: ${cashOrder.total}`);
+    assert(cashOrder.items.length === 2, `Browser cash checkout item count mismatch: ${cashOrder.items.length}`);
+    assert(latteLine?.lineTotal === 75, `Modified latte line total mismatch: ${latteLine?.lineTotal}`);
+    assert(latteModifiers.some((modifier) => modifier.value === "L" && modifier.price === 10), "Size modifier was not persisted");
+    assert(latteModifiers.some((modifier) => modifier.value === "หวานน้อย (50%)" || modifier.value === "50%"), "Sweetness modifier was not persisted");
+    assert(latteModifiers.some((modifier) => modifier.value === "เพิ่มช็อตกาแฟ" && modifier.price === 15), "Add-on modifier was not persisted");
+    assert(cashOrder.payments[0]?.amountReceived === 120, "Cash payment evidence missing");
+    assert(cashOrder.payments[0]?.changeAmount === 5, "Cash change amount mismatch");
 
-    await browser.close();
+    await addSimpleItem(page, data.cookie.name);
+    await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "สแกนจ่าย (QR)" }).click();
+    page.once("dialog", (dialog) => dialog.accept());
+    const qrPopupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
+    await page.getByRole("button", { name: /ชำระเงิน/ }).click();
+    const qrPopup = await qrPopupPromise;
+    await qrPopup?.close();
+    await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
+
+    const qrOrder = await getLatestOrderByMenuItem(data.cookie.id);
+    if (!qrOrder) throw new Error("Browser QR checkout did not create an order");
+    assert(qrOrder.id !== cashOrder.id, "QR checkout reused the cash order");
+    assert(qrOrder.paymentMethod === "QR", `QR payment method mismatch: ${qrOrder.paymentMethod}`);
+    assert(qrOrder.payments[0]?.status === "CONFIRMED", "QR payment confirmation was not persisted");
+
+    await addSimpleItem(page, data.cookie.name);
+    await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "บัตรเครดิต" }).click();
+    page.once("dialog", (dialog) => dialog.accept());
+    const cardPopupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
+    await page.getByRole("button", { name: /ชำระเงิน/ }).click();
+    const cardPopup = await cardPopupPromise;
+    await cardPopup?.close();
+    await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
+
+    const cardOrder = await getLatestOrderByMenuItem(data.cookie.id);
+    if (!cardOrder) throw new Error("Browser card checkout did not create an order");
+    assert(cardOrder.id !== qrOrder.id && cardOrder.id !== cashOrder.id, "Card checkout reused an existing order");
+    assert(cardOrder.paymentMethod === "CARD", `Card payment method mismatch: ${cardOrder.paymentMethod}`);
+    assert(cardOrder.payments[0]?.status === "CONFIRMED", "Card payment confirmation was not persisted");
+
+    await page.getByRole("link", { name: /คิวครัว/ }).click();
+    await page.waitForURL("**/queue", { timeout: 10_000 });
+    await page.getByText(/รอจัดเตรียม/).waitFor({ timeout: 10_000 });
+    await page.getByText(`#${qrOrder.id}`).waitFor({ timeout: 10_000 });
+    await page.getByText(`#${cardOrder.id}`).waitFor({ timeout: 10_000 });
+
+    await page.getByRole("link", { name: /ออเดอร์\/เดลิเวอรี่/ }).click();
+    await page.waitForURL("**/orders", { timeout: 10_000 });
+    await page.getByPlaceholder("ค้นหาเลขออเดอร์ / สินค้า").fill(String(cashOrder.id));
+    const cashOrderCard = page.getByTestId(`order-card-${cashOrder.id}`);
+    await cashOrderCard.waitFor({ timeout: 10_000 });
+    const cancelResponsePromise = page.waitForResponse((response) =>
+      response.url().includes(`/api/orders/${cashOrder.id}`)
+      && response.request().method() === "PATCH"
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId(`cancel-order-${cashOrder.id}`).click();
+    const cancelResponse = await cancelResponsePromise;
+    assert(cancelResponse.ok(), `Cancel response failed with ${cancelResponse.status()}`);
+    await cashOrderCard.getByText("ยกเลิกแล้ว").waitFor({ timeout: 10_000 });
+
+    const cancelledCashOrder = await prisma.order.findUnique({
+      where: { id: cashOrder.id },
+      include: { events: true }
+    });
+    assert(cancelledCashOrder?.status === "CANCELLED", "Order center cancellation did not persist");
+    assert(cancelledCashOrder?.events.some((event) => event.eventType === "ORDER_CANCELLED"), "Cancellation event was not persisted");
+
+    await page.getByRole("link", { name: "รายงาน" }).click();
+    await page.waitForURL("**/reports", { timeout: 10_000 });
+    await page.getByRole("heading", { name: "รายงาน" }).waitFor({ timeout: 10_000 });
+    await page.getByText("จำนวนออเดอร์").waitFor({ timeout: 10_000 });
+
+    await context.tracing.stop().catch(() => {});
+    traceStopped = true;
+
     console.log("Browser E2E check passed");
-    console.log(JSON.stringify({ branch: data.branchName, orderId: order.id, total: order.total }, null, 2));
+    console.log(JSON.stringify({ branch: data.branchName, cashOrderId: cashOrder.id, qrOrderId: qrOrder.id, cardOrderId: cardOrder.id }, null, 2));
+  } catch (error) {
+    const artifactDir = path.join(root, "debug_screenshots");
+    await fs.promises.mkdir(artifactDir, { recursive: true }).catch(() => {});
+    const suffix = data?.tag || `failure-${Date.now()}`;
+    await page?.screenshot({ path: path.join(artifactDir, `${suffix}.png`), fullPage: true }).catch(() => {});
+    if (context && !traceStopped) {
+      await context.tracing.stop({ path: path.join(artifactDir, `${suffix}-trace.zip`) }).catch(() => {});
+      traceStopped = true;
+    }
+    throw error;
   } finally {
+    await browser?.close().catch(() => {});
     stopProcess(webProcess);
     stopProcess(apiProcess);
     await cleanupTestData(data);

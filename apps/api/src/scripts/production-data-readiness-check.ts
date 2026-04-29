@@ -13,6 +13,10 @@ function addFinding(findings: Finding[], severity: Finding["severity"], message:
   findings.push({ severity, message });
 }
 
+function normalizeName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 async function main() {
   const findings: Finding[] = [];
 
@@ -48,6 +52,22 @@ async function main() {
     prisma.order.count({ where: { items: { some: { name: "POSPOS sales-only record" } } } }).catch(() => 0)
   ]);
 
+  const [menuWithoutRecipes, ingredientMatches] = await Promise.all([
+    prisma.menuItem.findMany({ where: { active: true, recipes: { none: {} } }, select: { name: true } }),
+    prisma.ingredient.findMany({
+      select: {
+        name: true,
+        stocks: { select: { branchId: true } }
+      }
+    })
+  ]);
+  const uniqueStockedIngredientNames = new Set(
+    ingredientMatches
+      .filter((ingredient) => ingredient.stocks.length > 0)
+      .map((ingredient) => normalizeName(ingredient.name))
+  );
+  const exactRecipeBootstrapCandidates = menuWithoutRecipes.filter((item) => uniqueStockedIngredientNames.has(normalizeName(item.name))).length;
+
   if (activeBranches < 1) addFinding(findings, "critical", "No active branches are configured.");
   if (activeUsers < 1) addFinding(findings, "critical", "No active users are configured.");
   if (admins < 1) addFinding(findings, "critical", "No active admin user is configured.");
@@ -58,9 +78,9 @@ async function main() {
   if (ingredients < 1) addFinding(findings, "high", "No ingredients are configured.");
   if (stockRows < 1) addFinding(findings, "high", "No branch stock rows are configured.");
   if (reorderRows < 1) addFinding(findings, "medium", "No reorder levels are configured.");
-  if (recipes < 1) addFinding(findings, "critical", "No recipes are configured; checkout will not decrement stock for menu items.");
+  if (recipes < 1) addFinding(findings, "critical", `No recipes are configured; checkout will not decrement stock for menu items. Exact-match bootstrap candidates: ${exactRecipeBootstrapCandidates}.`);
   if (activeMenu > 0 && stockControlledProducts / activeMenu < 0.5) {
-    addFinding(findings, "high", `Only ${stockControlledProducts}/${activeMenu} active menu items have recipes.`);
+    addFinding(findings, "high", `Only ${stockControlledProducts}/${activeMenu} active menu items have recipes. Run npm run recipes:bootstrap-exact --workspace apps/api for a guarded exact-match dry run.`);
   }
 
   const report = {
@@ -78,6 +98,7 @@ async function main() {
       reorderRows,
       recipes,
       stockControlledProducts,
+      exactRecipeBootstrapCandidates,
       posposSalesOnly,
       paymentMethodsSeen
     },

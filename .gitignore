@@ -5,6 +5,7 @@ data/
 downloads/
 debug_screenshots/
 production-data-readiness-report.json
+recipe-bootstrap-report.json
 restore-drill-report.json
 *.db
 *.db-shm

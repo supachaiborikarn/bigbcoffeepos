@@ -12,7 +12,9 @@
     "browser:e2e": "npm run browser:e2e --workspace apps/api",
     "backup:restore-check": "npm run backup:restore-check --workspace apps/api",
     "monitoring:check": "npm run monitoring:check --workspace apps/api",
+    "monitoring:alert-test": "npm run monitoring:alert-test --workspace apps/api",
     "data:readiness": "npm run data:readiness --workspace apps/api",
+    "recipes:bootstrap-exact": "npm run recipes:bootstrap-exact --workspace apps/api",
     "menu:clean": "npm run menu:clean --workspace apps/api",
     "sync:pospos": "npx tsx apps/api/run-sync.ts"
   }

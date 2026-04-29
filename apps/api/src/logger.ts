@@ -5,10 +5,13 @@ import type { AuthRequest } from "./middleware/auth.js";
 
 type LogLevel = "info" | "warn" | "error";
 type LogMeta = Record<string, unknown>;
+type AlertSeverity = "info" | "warning" | "critical";
 
 const auditLogFile = process.env.AUDIT_LOG_FILE || path.resolve(process.cwd(), "data", "audit.log");
 const redactKeys = new Set(["pin", "token", "authorization", "password", "clientSecret"]);
 const slowRequestMs = Number(process.env.SLOW_REQUEST_MS || 1000);
+const alertTimeoutMs = Number(process.env.ALERT_TIMEOUT_MS || 3000);
+let lastAlertFailureLogAt = 0;
 
 function redact(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
@@ -34,6 +37,50 @@ export function log(level: LogLevel, event: string, meta: LogMeta = {}) {
   else console.log(line);
 }
 
+export function sendAlert(severity: AlertSeverity, event: string, meta: LogMeta = {}) {
+  const url = process.env.ALERT_CHANNEL_URL;
+  if (!url) return false;
+
+  const payload = {
+    text: `[${severity.toUpperCase()}] ${event}`,
+    severity,
+    event,
+    ts: new Date().toISOString(),
+    meta: redact(meta)
+  };
+
+  void postAlert(url, payload);
+  return true;
+}
+
+async function postAlert(url: string, payload: Record<string, unknown>) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), alertTimeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`Alert webhook returned ${response.status}`);
+  } catch (error) {
+    const now = Date.now();
+    if (now - lastAlertFailureLogAt > 60_000) {
+      lastAlertFailureLogAt = now;
+      console.warn(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "warn",
+        event: "alert_delivery_failed",
+        message: error instanceof Error ? error.message : String(error)
+      }));
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function requestLogger(req: express.Request, res: express.Response, next: express.NextFunction) {
   const start = Date.now();
   const requestId = String(req.headers["x-request-id"] || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
@@ -43,7 +90,8 @@ export function requestLogger(req: express.Request, res: express.Response, next:
     if (req.path === "/api/health") return;
     const durationMs = Date.now() - start;
     const isSlow = Number.isFinite(slowRequestMs) && durationMs >= slowRequestMs;
-    log(res.statusCode >= 500 ? "error" : res.statusCode >= 400 || isSlow ? "warn" : "info", isSlow ? "http_request_slow" : "http_request", {
+    const event = isSlow ? "http_request_slow" : "http_request";
+    const meta = {
       requestId,
       method: req.method,
       path: req.originalUrl,
@@ -52,7 +100,10 @@ export function requestLogger(req: express.Request, res: express.Response, next:
       ip: req.ip,
       userId: (req as AuthRequest).user?.id,
       role: (req as AuthRequest).user?.role
-    });
+    };
+    log(res.statusCode >= 500 ? "error" : res.statusCode >= 400 || isSlow ? "warn" : "info", event, meta);
+    if (res.statusCode >= 500) sendAlert("critical", "http_request_5xx", meta);
+    else if (isSlow) sendAlert("warning", "http_request_slow", meta);
   });
   next();
 }
@@ -79,6 +130,8 @@ export function audit(action: string, req: AuthRequest | express.Request, detail
   fs.promises.mkdir(path.dirname(auditLogFile), { recursive: true })
     .then(() => fs.promises.appendFile(auditLogFile, `${line}\n`))
     .catch((err) => {
-      log("warn", "audit_file_write_failed", { message: err instanceof Error ? err.message : String(err) });
+      const meta = { message: err instanceof Error ? err.message : String(err) };
+      log("warn", "audit_file_write_failed", meta);
+      sendAlert("warning", "audit_file_write_failed", meta);
     });
 }

@@ -1,0 +1,42 @@
+name: Restore Drill
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 1 * *"
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      RESTORE_DATABASE_URL: ${{ secrets.RESTORE_DATABASE_URL }}
+      JWT_SECRET: restore-drill-only-secret
+      NODE_ENV: test
+      RESTORE_DRILL_OUT: restore-drill-report.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compare live and restored database
+        run: npm run backup:restore-check --workspace apps/api
+
+      - name: Upload restore drill report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: restore-drill-report
+          path: restore-drill-report.json
+          if-no-files-found: ignore

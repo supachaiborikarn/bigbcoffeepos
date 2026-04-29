@@ -2,7 +2,7 @@ import cors from "cors";
 import express from "express";
 import fs from "fs";
 import path from "path";
-import { audit, log, requestLogger } from "./logger.js";
+import { audit, log, requestLogger, sendAlert } from "./logger.js";
 
 const isProduction = process.env.NODE_ENV === "production";
 const databaseUrl = process.env.DATABASE_URL;
@@ -135,6 +135,21 @@ app.get("/api/audit.csv", requireAdmin, async (req, res) => {
     { key: "orderId", label: "Order ID" },
     { key: "branchId", label: "Branch ID" }
   ]);
+});
+
+/* ─── Monitoring ─── */
+app.post("/api/monitoring/alert-test", requireAdmin, async (req, res) => {
+  const authReq = req as AuthRequest;
+  const event = isStr(req.body?.event) ? req.body.event.trim() : "monitoring_alert_test";
+  const configured = sendAlert("info", event, {
+    requestId: (req as express.Request & { requestId?: string }).requestId,
+    actorId: authReq.user?.id,
+    role: authReq.user?.role,
+    branchId: authReq.user?.branchId ?? null,
+    note: isStr(req.body?.note) ? req.body.note.trim() : undefined
+  });
+  audit("monitoring.alert_test", req, { event, configured });
+  return res.json({ ok: true, configured });
 });
 
 /* ─── Users ─── */
@@ -632,9 +647,12 @@ if (Number.isFinite(outboxIntervalMs) && outboxIntervalMs >= 30_000) {
       if (result.total > 0) log("info", "integration_outbox_tick", result);
       if (result.failed > 0 || result.remainingFailed > 0) {
         log("warn", "integration_outbox_attention_required", result);
+        sendAlert("warning", "integration_outbox_attention_required", result);
       }
     }).catch((error) => {
-      log("error", "integration_outbox_tick_failed", { message: error instanceof Error ? error.message : String(error) });
+      const meta = { message: error instanceof Error ? error.message : String(error) };
+      log("error", "integration_outbox_tick_failed", meta);
+      sendAlert("critical", "integration_outbox_tick_failed", meta);
     });
   }, outboxIntervalMs).unref();
 }
@@ -651,13 +669,23 @@ app.post("/api/migration/sync", async (req, res) => {
     audit("migration.pospos_sync", req, { branchId, result });
     return res.status(200).json(result);
   } catch (e) {
-    log("error", "migration_sync_failed", { message: (e as Error).message, branchId });
+    const meta = { message: (e as Error).message, branchId };
+    log("error", "migration_sync_failed", meta);
+    sendAlert("critical", "migration_sync_failed", meta);
     return res.status(500).json({ error: (e as Error).message });
   }
 });
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  log("error", "unhandled_error", { message: err.message, stack: err.stack });
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const meta = {
+    requestId: (req as express.Request & { requestId?: string }).requestId,
+    method: req.method,
+    path: req.originalUrl,
+    message: err.message,
+    stack: err.stack
+  };
+  log("error", "unhandled_error", meta);
+  sendAlert("critical", "unhandled_error", meta);
   res.status(500).json({ error: "Internal server error" });
 });
 

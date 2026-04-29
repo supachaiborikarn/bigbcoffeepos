@@ -199,6 +199,16 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     pattern: /SLOW_REQUEST_MS[\s\S]*http_request_slow/
   },
   {
+    name: "alert webhook delivery is implemented",
+    file: "apps/api/src/logger.ts",
+    pattern: /sendAlert[\s\S]*ALERT_CHANNEL_URL[\s\S]*fetch\(url/
+  },
+  {
+    name: "admin monitoring alert test endpoint exists",
+    file: "apps/api/src/index.ts",
+    pattern: /\/api\/monitoring\/alert-test[\s\S]*monitoring\.alert_test/
+  },
+  {
     name: "audit search endpoint exists",
     file: "apps/api/src/index.ts",
     pattern: /\/api\/audit[\s\S]*readAuditRows/
@@ -251,7 +261,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "browser E2E check exists",
     file: "apps/api/src/scripts/browser-e2e-check.ts",
-    pattern: /chromium\.launch[\s\S]*waitForURL\("\*\*\/pos"[\s\S]*Underpayment should keep cash confirmation disabled/
+    pattern: /chromium\.launch[\s\S]*addModifiedLatte[\s\S]*Underpayment should keep cash confirmation disabled[\s\S]*สแกนจ่าย \(QR\)[\s\S]*บัตรเครดิต[\s\S]*ORDER_CANCELLED/
   },
   {
     name: "CI installs browser runtime",
@@ -269,9 +279,14 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     pattern: /RESTORE_DATABASE_URL[\s\S]*rollbackSteps[\s\S]*Report written/
   },
   {
+    name: "restore drill workflow is scheduled",
+    file: ".github/workflows/restore-drill.yml",
+    pattern: /workflow_dispatch[\s\S]*schedule[\s\S]*RESTORE_DATABASE_URL[\s\S]*upload-artifact/
+  },
+  {
     name: "monitoring policy check exists",
     file: "apps/api/src/scripts/monitoring-policy-check.ts",
-    pattern: /ALERT_CHANNEL_URL[\s\S]*integration_outbox_attention_required/
+    pattern: /integration_outbox_attention_required[\s\S]*admin alert test endpoint exists[\s\S]*ALERT_CHANNEL_URL/
   },
   {
     name: "monitoring alert policy exists",
@@ -282,6 +297,16 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     name: "production data readiness check exists",
     file: "apps/api/src/scripts/production-data-readiness-check.ts",
     pattern: /No recipes are configured[\s\S]*dayCloseRehearsalRequired/
+  },
+  {
+    name: "exact-match recipe bootstrap is guarded",
+    file: "apps/api/src/scripts/bootstrap-exact-match-recipes.ts",
+    pattern: /APPLY_RECIPE_BOOTSTRAP[\s\S]*ALLOW_RECIPE_BOOTSTRAP[\s\S]*skipDuplicates/
+  },
+  {
+    name: "exact-match recipe bootstrap is runnable",
+    file: "apps/api/package.json",
+    pattern: /recipes:bootstrap-exact/
   }
 ];
 

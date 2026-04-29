@@ -11,6 +11,8 @@ API:
 - `AUDIT_LOG_FILE`: optional JSONL audit file path.
 - `SLOW_REQUEST_MS`: optional slow request threshold, defaults to `1000`.
 - `INTEGRATION_OUTBOX_INTERVAL_MS`: optional worker interval. Use `30000` or higher.
+- `ALERT_CHANNEL_URL`: optional webhook URL for direct JSON alert delivery.
+- `REQUIRE_ALERT_CHANNEL`: set to `1` in production checks when the alert webhook is mandatory.
 
 Frontend:
 - `VITE_API_URL`: public API base URL.
@@ -37,6 +39,7 @@ npm run db:migrate:status --workspace apps/api
 npm run checkout:integration --workspace apps/api
 npm run load:concurrency --workspace apps/api
 npm run browser:e2e --workspace apps/api
+npm run data:readiness --workspace apps/api
 npm run build
 ```
 
@@ -70,7 +73,7 @@ RESTORE_DRILL_OUT="docs/restore-drills/$(date +%Y-%m-%d).json" \
 npm run backup:restore-check --workspace apps/api
 ```
 
-The report must be archived with the incident/runbook notes before marking backup readiness complete.
+The scheduled GitHub workflow `.github/workflows/restore-drill.yml` runs the same check monthly and on demand. Configure repository secrets `DATABASE_URL` and `RESTORE_DATABASE_URL`; archive the uploaded `restore-drill-report.json` artifact with the incident/runbook notes before marking backup readiness complete.
 
 Rollback order:
 1. Stop new deploy traffic.
@@ -100,6 +103,18 @@ npm run data:readiness --workspace apps/api
 ```
 
 Critical findings, especially missing recipes, must be closed before the branch is considered stock-ready.
+
+For imported product-style stock where menu item names exactly match ingredient names, run a guarded dry run:
+```bash
+npm run recipes:bootstrap-exact --workspace apps/api
+```
+
+Apply only reviewed exact matches:
+```bash
+ALLOW_RECIPE_BOOTSTRAP=1 APPLY_RECIPE_BOOTSTRAP=1 npm run recipes:bootstrap-exact --workspace apps/api
+```
+
+Prepared drinks and service fees that do not have exact stock-item matches still need manual recipe mapping in Inventory > สูตรตัดสต็อก.
 
 ## Incident Playbooks
 

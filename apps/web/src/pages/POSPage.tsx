@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { createCustomer, getCustomers, getMenu } from "../api";
+import { createCustomer, getCustomers, getMenu, getRecipes } from "../api";
 import type { Customer, DiscountRule, MenuItem, PaymentMethod } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useCart } from "../contexts/CartContext";
@@ -45,6 +45,7 @@ export default function POSPage() {
   const [showCashDrawer, setShowCashDrawer] = useState(false);
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
+  const [recipeCount, setRecipeCount] = useState<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const { activeBranch } = useBranch();
@@ -79,6 +80,7 @@ export default function POSPage() {
 
   useEffect(() => {
     getMenu().then(setMenu).catch(() => {});
+    getRecipes().then((items) => setRecipeCount(items.length)).catch(() => setRecipeCount(null));
     refreshCustomers().catch(() => {});
   }, []);
 
@@ -279,6 +281,11 @@ export default function POSPage() {
               <h2 style={{ fontSize: "20px", fontWeight: "bold", color: "var(--pos-sidebar)" }}>ขายสินค้า (POS)</h2>
               <p className="muted" style={{ fontSize: "12px" }}>{activeBranch?.name}</p>
             </div>
+            {recipeCount === 0 && (
+              <span className="badge badge--warning" title="ระบบขายได้ แต่ยังไม่มีสูตรสำหรับตัดวัตถุดิบออกจากสต็อกอัตโนมัติ">
+                ยังไม่มีสูตรตัดสต็อก
+              </span>
+            )}
           </div>
           
           <div style={{ display: "flex", gap: "16px" }}>

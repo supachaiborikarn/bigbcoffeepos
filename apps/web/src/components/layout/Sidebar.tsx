@@ -11,9 +11,7 @@ import {
   LogOut,
   Coffee,
   UserCircle,
-  Wallet,
   ShoppingBag,
-  Megaphone,
 } from "lucide-react";
 
 const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
@@ -26,7 +24,7 @@ const navItems = [
   { to: "/customers", label: "ลูกค้า", icon: UserCircle, minRole: 2 },
   { to: "/staff", label: "พนักงาน", icon: Users, minRole: 3 },
   { to: "/reports", label: "รายงาน", icon: BarChart3, minRole: 2 },
-  { to: "/marketing", label: "การตลาด", icon: Megaphone, minRole: 3 },
+  { to: "/queue", label: "คิวครัว", icon: ShoppingBag, minRole: 1 },
   { to: "/settings", label: "ตั้งค่า", icon: Settings, minRole: 3 },
 ];
 

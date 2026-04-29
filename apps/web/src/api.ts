@@ -3,6 +3,7 @@ import type {
   CartItem,
   Customer,
   CustomerImportInput,
+  DailyCloseReport,
   Ingredient,
   HistoricalOrderImportInput,
   IntegrationEvent,
@@ -298,6 +299,14 @@ export async function getSalesSummary(params: { from?: string; to?: string; bran
   return payload.summary;
 }
 
+export async function getDailyCloseReport(params: { date?: string; branchId?: number }) {
+  const query = new URLSearchParams();
+  if (params.date) query.set("date", params.date);
+  if (params.branchId) query.set("branchId", String(params.branchId));
+  const payload = await fetchJson<{ report: DailyCloseReport }>(`${API_URL}/reports/day-close?${query.toString()}`);
+  return payload.report;
+}
+
 export function getOrdersCsvUrl(params: { from?: string; to?: string; branchId?: number }) {
   const query = new URLSearchParams();
   if (params.from) query.set("from", params.from);
@@ -373,7 +382,7 @@ export async function getShifts(branchId: number) {
 
 /* ─── Migration ─── */
 export async function syncPosposMigration(branchId: number) {
-  return fetchJson<{ products?: number; customers?: number; message?: string }>(`${API_URL}/migration/sync`, {
+  return fetchJson<{ success?: boolean; menuItems?: number; ingredients?: number; customers?: number; sales?: number; message?: string }>(`${API_URL}/migration/sync`, {
     method: "POST",
     body: JSON.stringify({ branchId })
   });
@@ -417,4 +426,12 @@ export async function retryIntegrationEvent(id: number) {
     body: JSON.stringify({})
   });
   return payload.event;
+}
+
+export async function processIntegrationOutbox() {
+  const payload = await fetchJson<{ result: { processed: number; total: number } }>(`${API_URL}/integrations/process`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  return payload.result;
 }

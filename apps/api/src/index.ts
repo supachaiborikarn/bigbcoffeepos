@@ -14,9 +14,10 @@ import {
   getOrders, getOrder, createOrder, updateOrderStatus,
   openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
   authenticatePin, getUsers, addUser, updateUser, deleteUser,
-  getSalesSummary, getProfitReport, getStaffPerformance,
+  getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows, getDailyCloseReport,
   createPurchase, getPurchases,
-  getIntegrationStatus, getIntegrationEvents, retryIntegrationEvent
+  getIntegrationStatus, getIntegrationEvents, retryIntegrationEvent, processOutboxQueue,
+  importProducts, importCustomers, importHistoricalOrders
 } from "./store/index.js";
 
 const app = express();
@@ -31,6 +32,16 @@ function isStr(v: unknown): v is string { return typeof v === "string" && v.trim
 function parseMoney(v: unknown) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null; }
 function parseNonNegativeNumber(v: unknown) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) / 1000 : null; }
 function parseBranchType(v: unknown) { return v === "coffee" || v === "oil_service" ? v : undefined; }
+function csvEscape(value: unknown) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+function sendCsv(res: express.Response, filename: string, rows: Record<string, unknown>[], columns: { key: string; label: string }[]) {
+  const header = columns.map((column) => csvEscape(column.label)).join(",");
+  const body = rows.map((row) => columns.map((column) => csvEscape(row[column.key])).join(",")).join("\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  return res.send(`\uFEFF${header}\n${body}`);
+}
 
 /* ─── Local Mode Init ─── */
 if (isLocalMode) {
@@ -347,7 +358,10 @@ app.post("/api/shifts/:id/close", requireRole("admin", "manager"), async (req, r
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
-    const shift = await closeShift(id, Number(req.body?.closingCash) || 0);
+    const shift = await closeShift(id, Number(req.body?.closingCash) || 0, {
+      cashCounts: req.body?.cashCounts,
+      note: req.body?.note
+    });
     const summary = await getShiftSummary(id);
     audit("shift.closed", req, { shiftId: id, closingCash: Number(req.body?.closingCash) || 0, difference: summary?.cash.difference ?? null });
     return res.json({ shift, summary });
@@ -382,6 +396,59 @@ app.get("/api/reports/staff", requireRole("admin", "manager"), requireBranchAcce
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   return res.json(await getStaffPerformance({ from, to, branchId }));
+});
+
+app.get("/api/reports/day-close", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const date = isStr(req.query.date) ? String(req.query.date) : undefined;
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ report: await getDailyCloseReport({ date, branchId }) });
+});
+
+app.get("/api/reports/orders.csv", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const from = isStr(req.query.from) ? String(req.query.from) : undefined;
+  const to = isStr(req.query.to) ? String(req.query.to) : undefined;
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  const rows = await getOrdersCsvRows({ from, to, branchId });
+  return sendCsv(res, `orders_${from ?? "all"}_${to ?? "all"}.csv`, rows, [
+    { key: "id", label: "Order ID" },
+    { key: "createdAt", label: "วันที่เวลา" },
+    { key: "branch", label: "สาขา" },
+    { key: "customer", label: "ลูกค้า" },
+    { key: "staff", label: "พนักงาน" },
+    { key: "status", label: "สถานะ" },
+    { key: "paymentMethod", label: "ช่องทางชำระ" },
+    { key: "itemCount", label: "จำนวนรายการ" },
+    { key: "items", label: "สินค้า" },
+    { key: "subtotal", label: "ยอดก่อนลด" },
+    { key: "discountAmount", label: "ส่วนลด" },
+    { key: "loyaltyPointsUsed", label: "แต้มที่ใช้" },
+    { key: "tax", label: "ภาษี" },
+    { key: "total", label: "ยอดสุทธิ" }
+  ]);
+});
+
+/* ─── Imports ─── */
+app.post("/api/import/products", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
+  const branchId = parseId(req.body?.branchId);
+  if (branchId === null || !Array.isArray(req.body?.items)) return res.status(400).json({ error: "ข้อมูลนำเข้าไม่ครบ" });
+  const result = await importProducts({ branchId, items: req.body.items });
+  audit("import.products", req, { branchId, ...result, errors: result.errors.length });
+  return res.json({ result });
+});
+
+app.post("/api/import/customers", requireRole("admin", "manager"), async (req, res) => {
+  if (!Array.isArray(req.body?.items)) return res.status(400).json({ error: "ข้อมูลนำเข้าไม่ครบ" });
+  const result = await importCustomers({ items: req.body.items });
+  audit("import.customers", req, { ...result, errors: result.errors.length });
+  return res.json({ result });
+});
+
+app.post("/api/import/orders", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
+  const branchId = parseId(req.body?.branchId);
+  if (branchId === null || !Array.isArray(req.body?.items)) return res.status(400).json({ error: "ข้อมูลนำเข้าไม่ครบ" });
+  const result = await importHistoricalOrders({ branchId, items: req.body.items });
+  audit("import.historical_orders", req, { branchId, ...result, errors: result.errors.length });
+  return res.json({ result });
 });
 
 /* ─── Backups (local mode only) ─── */
@@ -458,6 +525,23 @@ app.post("/api/integrations/events/:id/retry", requireAdmin, async (req, res) =>
   audit("integration_event.retry", req, { eventId: id });
   return res.json({ event });
 });
+
+app.post("/api/integrations/process", requireAdmin, async (req, res) => {
+  const result = await processOutboxQueue();
+  audit("integration_outbox.processed", req, result);
+  return res.json({ result });
+});
+
+const outboxIntervalMs = Number(process.env.INTEGRATION_OUTBOX_INTERVAL_MS || 0);
+if (Number.isFinite(outboxIntervalMs) && outboxIntervalMs >= 30_000) {
+  setInterval(() => {
+    processOutboxQueue().then((result) => {
+      if (result.total > 0) log("info", "integration_outbox_tick", result);
+    }).catch((error) => {
+      log("error", "integration_outbox_tick_failed", { message: error instanceof Error ? error.message : String(error) });
+    });
+  }, outboxIntervalMs).unref();
+}
 
 // pospos-sync is dynamically imported in local mode only (requires Playwright)
 

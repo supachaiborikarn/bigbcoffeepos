@@ -87,6 +87,10 @@ export type ShiftSummary = {
     closingCash: number | null;
     difference: number | null;
   };
+  closeDetails?: {
+    cashCounts: Record<string, number>;
+    note: string | null;
+  };
   payments: ShiftPaymentSummary[];
   topItems: Array<{ menuItemId: number; name: string; qty: number; revenue: number }>;
   orders: Array<{
@@ -233,7 +237,7 @@ export type IntegrationEvent = {
   eventType: string;
   entityType: string;
   entityId: number | null;
-  status: "PENDING" | "SENT" | "FAILED";
+  status: "PENDING" | "SENT" | "FAILED" | "SKIPPED";
   attempts: number;
   payload: Record<string, unknown>;
   lastError: string | null;
@@ -258,6 +262,51 @@ export type SalesSummary = {
   averageTicket: number;
   topItems: Array<{ menuItemId: number; name: string; qty: number; revenue: number }>;
   daily: Array<{ date: string; orders: number; revenue: number }>;
+};
+
+export type DailyCloseReport = {
+  date: string;
+  generatedAt: string;
+  branch: { id: number; name: string; location: string; branchType: string } | null;
+  totals: {
+    totalOrders: number;
+    subtotal: number;
+    discountAmount: number;
+    loyaltyPointsUsed: number;
+    loyaltyPointsEarned: number;
+    tax: number;
+    totalRevenue: number;
+    averageTicket: number;
+    cancelledOrders: number;
+    refundedOrders: number;
+  };
+  payments: Array<{ method: PaymentMethod; count: number; total: number }>;
+  cash: {
+    cashSales: number;
+    expectedCash: number;
+    countedCash: number;
+    difference: number;
+  };
+  shifts: Array<{
+    id: number;
+    branchName: string;
+    userName: string;
+    status: string;
+    openedAt: string;
+    closedAt: string | null;
+    openingCash: number;
+    cashSales: number;
+    qrSales: number;
+    cardSales: number;
+    totalSales: number;
+    totalOrders: number;
+    expectedCash: number;
+    closingCash: number | null;
+    difference: number | null;
+    cashCounts: Record<string, number>;
+    note: string | null;
+  }>;
+  topItems: Array<{ menuItemId: number; name: string; qty: number; revenue: number }>;
 };
 
 export type ProductImportInput = {

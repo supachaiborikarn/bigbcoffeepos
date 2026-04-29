@@ -20,7 +20,10 @@ export default function MigrationPage() {
       setSyncLogs(["เริ่มการเชื่อมต่อกับ POSPOS..."]);
       const data = await syncPosposMigration(activeBranch.id);
       
-      setSyncLogs(prev => [...prev, `ดึงข้อมูลสำเร็จ! ได้สินค้า ${data.products} รายการ และลูกค้า ${data.customers} รายการ`]);
+      setSyncLogs(prev => [
+        ...prev,
+        `ดึงข้อมูลสำเร็จ! ได้เมนู ${data.menuItems ?? 0} รายการ, วัตถุดิบ ${data.ingredients ?? 0} รายการ, ลูกค้า ${data.customers ?? 0} รายการ และยอดขาย ${data.sales ?? 0} รายการ`
+      ]);
       toast.success("ดึงข้อมูลสำเร็จ");
     } catch (e) {
       toast.error((e as Error).message);

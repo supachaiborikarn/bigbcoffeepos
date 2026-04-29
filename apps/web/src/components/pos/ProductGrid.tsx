@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import type { MenuItem } from "../../types";
 import ProductCard from "./ProductCard";
 
+const PRODUCT_RENDER_LIMIT = 120;
+
 interface ProductGridProps {
   menu: MenuItem[];
   category: string;
@@ -20,6 +22,8 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
       return true;
     });
   }, [menu, category, search, branchType]);
+  const renderedMenu = visibleMenu.slice(0, PRODUCT_RENDER_LIMIT);
+  const hiddenCount = Math.max(0, visibleMenu.length - renderedMenu.length);
 
   return (
     <div style={{
@@ -34,13 +38,20 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
       minHeight: 0
     }}>
       {visibleMenu.length === 0 ? (
-        <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px", color: "var(--muted)" }}>
+        <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
           ไม่พบสินค้า
         </div>
       ) : (
-        visibleMenu.map((item) => (
-          <ProductCard key={item.id} item={item} onClick={onItemClick} />
-        ))
+        <>
+          {renderedMenu.map((item) => (
+            <ProductCard key={item.id} item={item} onClick={onItemClick} />
+          ))}
+          {hiddenCount > 0 && (
+            <div className="empty" style={{ gridColumn: "1 / -1", padding: "16px" }}>
+              แสดง {renderedMenu.length} จาก {visibleMenu.length} รายการ ใช้ช่องค้นหาหรือเลือกหมวดเพื่อกรองสินค้าเพิ่มเติม
+            </div>
+          )}
+        </>
       )}
     </div>
   );

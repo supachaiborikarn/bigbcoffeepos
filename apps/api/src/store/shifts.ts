@@ -1,9 +1,50 @@
 import prisma from "../prisma.js";
 
 const PAYMENT_METHODS = ["CASH", "QR", "CARD", "EWALLET"] as const;
+type ShiftCloseDetails = { cashCounts?: Record<string, number>; note?: string };
+let closeDetailsTableReady = false;
 
 function toIso(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
+}
+
+async function ensureShiftCloseDetailsTable() {
+  if (closeDetailsTableReady) return;
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS shift_close_details (
+      shift_id INTEGER PRIMARY KEY REFERENCES shifts(id) ON DELETE CASCADE,
+      cash_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  closeDetailsTableReady = true;
+}
+
+async function saveShiftCloseDetails(shiftId: number, details?: ShiftCloseDetails) {
+  if (!details) return;
+  const cashCounts = details.cashCounts ?? {};
+  const note = typeof details.note === "string" && details.note.trim() ? details.note.trim() : null;
+  if (!Object.keys(cashCounts).length && !note) return;
+  await ensureShiftCloseDetailsTable();
+  await prisma.$executeRaw`
+    INSERT INTO shift_close_details (shift_id, cash_counts, note)
+    VALUES (${shiftId}, CAST(${JSON.stringify(cashCounts)} AS jsonb), ${note})
+    ON CONFLICT (shift_id) DO UPDATE SET
+      cash_counts = EXCLUDED.cash_counts,
+      note = EXCLUDED.note,
+      updated_at = now()
+  `;
+}
+
+export async function getShiftCloseDetails(shiftId: number) {
+  await ensureShiftCloseDetailsTable();
+  const rows = await prisma.$queryRaw<Array<{ cash_counts: unknown; note: string | null }>>`
+    SELECT cash_counts, note FROM shift_close_details WHERE shift_id = ${shiftId}
+  `;
+  const row = rows[0];
+  return row ? { cashCounts: row.cash_counts ?? {}, note: row.note } : { cashCounts: {}, note: null };
 }
 
 export async function openShift(input: { branchId: number; userId?: number; openingCash: number }) {
@@ -22,7 +63,7 @@ export async function openShift(input: { branchId: number; userId?: number; open
   return getShift(shift.id);
 }
 
-export async function closeShift(id: number, closingCash: number) {
+export async function closeShift(id: number, closingCash: number, details?: ShiftCloseDetails) {
   const shift = await getShift(id);
   if (!shift) throw new Error("ไม่พบกะที่ระบุ");
   if (shift.status !== "OPEN") throw new Error("กะนี้ปิดไปแล้ว");
@@ -41,6 +82,7 @@ export async function closeShift(id: number, closingCash: number) {
       closedAt: new Date()
     }
   });
+  await saveShiftCloseDetails(id, details);
 
   return getShift(id);
 }
@@ -113,6 +155,9 @@ export async function getShiftSummary(id: number) {
   const cashSales = payments.find((payment) => payment.method === "CASH")?.total ?? shift.cashSales;
   const expectedCash = Math.round((shift.openingCash + cashSales) * 100) / 100;
   const difference = shift.closingCash == null ? null : Math.round((shift.closingCash - expectedCash) * 100) / 100;
+  const closeDetails = shift.status === "CLOSED"
+    ? await getShiftCloseDetails(id).catch(() => ({ cashCounts: {}, note: null }))
+    : { cashCounts: {}, note: null };
 
   const itemMap = new Map<number, { menuItemId: number; name: string; qty: number; revenue: number }>();
   orders.forEach((order) => {
@@ -174,6 +219,7 @@ export async function getShiftSummary(id: number) {
       closingCash: shift.closingCash,
       difference
     },
+    closeDetails,
     payments,
     topItems,
     orders: orders.slice(-20).reverse().map((order) => ({

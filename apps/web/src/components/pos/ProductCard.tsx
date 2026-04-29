@@ -32,11 +32,6 @@ export default function ProductCard({ item, onClick }: Props) {
         <span style={{ opacity: 0.5 }}>☕</span>
       </div>
 
-      {/* Stock Warning */}
-      {item.cost !== null && item.cost !== undefined && item.cost <= 0 && (
-        <span className="menu-card__stock-warn" style={{ position: "absolute", top: "16px", left: "16px" }}>สต็อกต่ำ</span>
-      )}
-
       {/* Popular Badge */}
       {isPopular && (
         <span style={{

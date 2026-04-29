@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getIntegrationEvents, getIntegrationStatus, retryIntegrationEvent } from "../api";
+import { getIntegrationEvents, getIntegrationStatus, processIntegrationOutbox, retryIntegrationEvent } from "../api";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import type { IntegrationEvent, IntegrationProvider, IntegrationStatus } from "../types";
@@ -30,6 +30,7 @@ export default function SettingsPage() {
   const [events, setEvents] = useState<IntegrationEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [retryingId, setRetryingId] = useState<number | null>(null);
+  const [processing, setProcessing] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -76,6 +77,19 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleProcessOutbox() {
+    setProcessing(true);
+    try {
+      const result = await processIntegrationOutbox();
+      toast.success(`ประมวลผลคิว ${result.total} งาน ส่งสำเร็จ ${result.processed} งาน`);
+      await refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setProcessing(false);
+    }
+  }
+
   if (user?.role !== "admin") {
     return (
       <div>
@@ -95,9 +109,14 @@ export default function SettingsPage() {
           <h2>ตั้งค่า</h2>
           <p className="muted">ตรวจสถานะระบบเชื่อมต่อและงาน outbox สำหรับ Phase 3</p>
         </div>
-        <button className="btn btn--ghost" onClick={refresh} disabled={loading}>
-          {loading ? "กำลังโหลด..." : "รีเฟรช"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn--ghost" onClick={handleProcessOutbox} disabled={processing}>
+            {processing ? "กำลังส่งคิว..." : "ส่งคิวตอนนี้"}
+          </button>
+          <button className="btn btn--ghost" onClick={refresh} disabled={loading}>
+            {loading ? "กำลังโหลด..." : "รีเฟรช"}
+          </button>
+        </div>
       </div>
 
       <section

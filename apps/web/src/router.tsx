@@ -16,18 +16,18 @@ import OrdersPage from "./pages/OrdersPage";
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/branch", element: <BranchSelectPage /> },
-  { path: "/queue", element: <OrderQueuePage /> },
   {
     element: <AppLayout />,
     children: [
       { path: "/dashboard", element: <DashboardPage branchId={null} /> },
       { path: "/pos", element: <POSPage /> },
+      { path: "/queue", element: <OrderQueuePage /> },
       { path: "/orders", element: <OrdersPage /> },
       { path: "/inventory", element: <InventoryPage /> },
       { path: "/customers", element: <CustomersPage /> },
       { path: "/staff", element: <StaffPage /> },
       { path: "/reports", element: <ReportsPage /> },
-      { path: "/marketing", element: <div style={{ padding: 40, textAlign: "center" }}><h2>การตลาด & โปรโมชั่น</h2><p className="muted" style={{ marginTop: 8 }}>Coming Soon — ระบบจัดการโปรโมชั่นส่วนลดต่างๆ</p></div> },
+      { path: "/marketing", element: <Navigate to="/pos" replace /> },
       { path: "/migration", element: <MigrationPage /> },
       { path: "/settings", element: <SettingsPage /> },
     ],

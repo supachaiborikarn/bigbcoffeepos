@@ -56,9 +56,19 @@ npm run ci:verify
 เมื่อมี `DATABASE_URL` ชี้ไปที่ test/staging PostgreSQL ให้รัน integration check ที่สร้างและลบข้อมูล `QA_CHECK_*` เอง:
 ```bash
 npm run checkout:integration --workspace apps/api
+npm run load:concurrency --workspace apps/api
+npm run browser:e2e --workspace apps/api
+```
+
+Ops checks:
+```bash
+npm run monitoring:check --workspace apps/api
+RESTORE_DATABASE_URL="postgresql://restored-db" npm run backup:restore-check --workspace apps/api
+npm run data:readiness --workspace apps/api
 ```
 
 Production deploy/runbook: [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md)
+Monitoring policy: [docs/MONITORING_ALERTS.md](docs/MONITORING_ALERTS.md)
 
 ## Maintenance Scripts
 API scripts ที่ตั้งใจให้ใช้ได้:

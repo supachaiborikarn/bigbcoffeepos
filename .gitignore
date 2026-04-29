@@ -4,6 +4,8 @@ dist
 data/
 downloads/
 debug_screenshots/
+production-data-readiness-report.json
+restore-drill-report.json
 *.db
 *.db-shm
 *.db-wal

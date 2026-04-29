@@ -31,9 +31,12 @@ npm run ci:verify
 For manual step-by-step verification:
 ```bash
 npm run production-hardening:check --workspace apps/api
+npm run monitoring:check --workspace apps/api
 npm run db:migrate --workspace apps/api
 npm run db:migrate:status --workspace apps/api
 npm run checkout:integration --workspace apps/api
+npm run load:concurrency --workspace apps/api
+npm run browser:e2e --workspace apps/api
 npm run build
 ```
 
@@ -60,6 +63,15 @@ curl -fsS "$API_URL/health"
 
 The runtime database is PostgreSQL through Prisma. Production backup must be handled by the managed PostgreSQL provider using snapshots or PITR. The app intentionally disables SQLite backup endpoints in the PostgreSQL runtime.
 
+Restore drill:
+```bash
+RESTORE_DATABASE_URL="postgresql://restored-staging-db" \
+RESTORE_DRILL_OUT="docs/restore-drills/$(date +%Y-%m-%d).json" \
+npm run backup:restore-check --workspace apps/api
+```
+
+The report must be archived with the incident/runbook notes before marking backup readiness complete.
+
 Rollback order:
 1. Stop new deploy traffic.
 2. Restore the previous app version.
@@ -77,6 +89,17 @@ Collect API stdout/stderr JSON logs. Alerts should cover:
 - high `remainingFailed` or old `oldestPending` from `/api/integrations/summary`
 
 Every HTTP log includes `requestId`; responses include `X-Request-ID`. Audit events also carry the same request id when available.
+
+Alert policy details are in [MONITORING_ALERTS.md](MONITORING_ALERTS.md).
+
+## Production Data Readiness
+
+Before pilot day, run:
+```bash
+npm run data:readiness --workspace apps/api
+```
+
+Critical findings, especially missing recipes, must be closed before the branch is considered stock-ready.
 
 ## Incident Playbooks
 

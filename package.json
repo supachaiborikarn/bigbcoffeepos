@@ -5,9 +5,14 @@
   "scripts": {
     "dev": "echo \"Run dev servers:\\n1) npm run dev --workspace apps/api\\n2) npm run dev --workspace apps/web\"",
     "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
-    "ci:verify": "npm run production-hardening:check --workspace apps/api && npm run db:migrate --workspace apps/api && npm run db:migrate:status --workspace apps/api && npm run build && npm run checkout:integration --workspace apps/api",
+    "ci:verify": "npm run production-hardening:check --workspace apps/api && npm run monitoring:check --workspace apps/api && npm run db:migrate --workspace apps/api && npm run db:migrate:status --workspace apps/api && npm run build && npm run checkout:integration --workspace apps/api && npm run load:concurrency --workspace apps/api && npm run browser:e2e --workspace apps/api",
     "pos:smoke": "npm run pos:smoke --workspace apps/api",
     "checkout:integration": "npm run checkout:integration --workspace apps/api",
+    "load:concurrency": "npm run load:concurrency --workspace apps/api",
+    "browser:e2e": "npm run browser:e2e --workspace apps/api",
+    "backup:restore-check": "npm run backup:restore-check --workspace apps/api",
+    "monitoring:check": "npm run monitoring:check --workspace apps/api",
+    "data:readiness": "npm run data:readiness --workspace apps/api",
     "menu:clean": "npm run menu:clean --workspace apps/api",
     "sync:pospos": "npx tsx apps/api/run-sync.ts"
   }

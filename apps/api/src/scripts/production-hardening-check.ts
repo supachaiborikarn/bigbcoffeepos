@@ -246,7 +246,42 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "root CI script gates migration and checkout integration",
     file: "package.json",
-    pattern: /ci:verify[\s\S]*db:migrate[\s\S]*checkout:integration/
+    pattern: /ci:verify[\s\S]*db:migrate[\s\S]*checkout:integration[\s\S]*load:concurrency[\s\S]*browser:e2e/
+  },
+  {
+    name: "browser E2E check exists",
+    file: "apps/api/src/scripts/browser-e2e-check.ts",
+    pattern: /chromium\.launch[\s\S]*waitForURL\("\*\*\/pos"[\s\S]*Underpayment should keep cash confirmation disabled/
+  },
+  {
+    name: "CI installs browser runtime",
+    file: ".github/workflows/ci.yml",
+    pattern: /playwright install --with-deps chromium/
+  },
+  {
+    name: "load concurrency check exists",
+    file: "apps/api/src/scripts/load-concurrency-check.ts",
+    pattern: /Promise\.allSettled[\s\S]*Stock went negative[\s\S]*totalSales/
+  },
+  {
+    name: "backup restore drill check exists",
+    file: "apps/api/src/scripts/backup-restore-check.ts",
+    pattern: /RESTORE_DATABASE_URL[\s\S]*rollbackSteps[\s\S]*Report written/
+  },
+  {
+    name: "monitoring policy check exists",
+    file: "apps/api/src/scripts/monitoring-policy-check.ts",
+    pattern: /ALERT_CHANNEL_URL[\s\S]*integration_outbox_attention_required/
+  },
+  {
+    name: "monitoring alert policy exists",
+    file: "docs/MONITORING_ALERTS.md",
+    pattern: /Required Alerts[\s\S]*http_request_slow[\s\S]*integration_outbox_attention_required/
+  },
+  {
+    name: "production data readiness check exists",
+    file: "apps/api/src/scripts/production-data-readiness-check.ts",
+    pattern: /No recipes are configured[\s\S]*dayCloseRehearsalRequired/
   }
 ];
 

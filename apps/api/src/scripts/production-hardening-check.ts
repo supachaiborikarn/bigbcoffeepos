@@ -19,6 +19,11 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     pattern: /stockQty:\s*\{\s*gte:\s*requiredQty\s*\}[\s\S]*decrement:\s*requiredQty/
   },
   {
+    name: "checkout retries transient transaction conflicts",
+    file: "apps/api/src/store/orders.ts",
+    pattern: /CHECKOUT_TX_RETRIES[\s\S]*isRetryableCheckoutError[\s\S]*สต็อกมีการเปลี่ยนแปลง[\s\S]*waitForCheckoutRetry/
+  },
+  {
     name: "cancel/refund restores stock with movement trail",
     file: "apps/api/src/store/orders.ts",
     pattern: /REVERSAL_STATUSES[\s\S]*stockMovement\.create/
@@ -91,7 +96,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "README documents PostgreSQL production mode",
     file: "README.md",
-    pattern: /Runtime database: PostgreSQL/
+    pattern: /Runtime database: PostgreSQL[\s\S]*ถ้าไม่ตั้ง `DATABASE_URL`[\s\S]*API จะไม่ start/
   },
   {
     name: "API env example exists with JWT secret",
@@ -121,17 +126,17 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "API runtime fails fast without PostgreSQL DATABASE_URL",
     file: "apps/api/src/index.ts",
-    pattern: /DATABASE_URL must be a PostgreSQL connection string/
+    pattern: /^(?![\s\S]*better-sqlite3)[\s\S]*DATABASE_URL must be a PostgreSQL connection string/
   },
   {
     name: "order detail endpoint enforces cashier branch scope",
     file: "apps/api/src/index.ts",
-    pattern: /ไม่มีสิทธิ์ดูออเดอร์ของสาขาอื่น/
+    pattern: /\/api\/orders\/:id",\s*requireRole\("admin",\s*"manager",\s*"cashier"\)[\s\S]*ไม่มีสิทธิ์ดูออเดอร์ของสาขาอื่น/
   },
   {
-    name: "production requires JWT_SECRET",
+    name: "non-local runtime requires JWT_SECRET",
     file: "apps/api/src/middleware/auth.ts",
-    pattern: /JWT_SECRET is required when NODE_ENV=production/
+    pattern: /localJwtFallbackModes[\s\S]*JWT_SECRET is required when NODE_ENV is not development\/test\/local/
   },
   {
     name: "payment evidence is persisted",

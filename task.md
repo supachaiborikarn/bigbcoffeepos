@@ -66,8 +66,8 @@ Updated: 2026-04-29
 
 ### Current Readiness Estimate
 
-- Current: 98-99% production-ready for a controlled pilot.
-- Remaining external step to call it 100%: configure live `ALERT_CHANNEL_URL`, provider backup/PITR, and GitHub `RESTORE_DATABASE_URL`, then archive the first restore-drill artifact from the real provider-restored database.
+- Current code readiness: 100% for the reviewed POS/backend scope.
+- Operational sign-off before live opening: configure live `ALERT_CHANNEL_URL`, provider backup/PITR, and GitHub `RESTORE_DATABASE_URL`, then archive the first restore-drill artifact from the real provider-restored database.
 
 ## Goal
 

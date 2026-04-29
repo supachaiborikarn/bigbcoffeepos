@@ -32,6 +32,7 @@ const PAYMENT_METHODS = new Set<PaymentMethod>(["CASH", "QR", "CARD", "EWALLET"]
 const ALLOWED_STATUSES = new Set(["PAID", "READY", "CANCELLED", "REFUNDED"]);
 const REVERSAL_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
 const DRINK_CATEGORIES = ["กาแฟ", "ชา", "เครื่องดื่ม"];
+const checkoutTransactionRetries = Math.max(0, Math.floor(Number(process.env.CHECKOUT_TX_RETRIES || 5)));
 const MODIFIER_CATALOG = {
   Type: new Map([
     ["Hot", { label: "Hot", price: 0 }],
@@ -202,6 +203,17 @@ function normalizePaymentDetails(paymentMethod: PaymentMethod, total: number, de
     changeAmount: null,
     referenceNo
   };
+}
+
+function isRetryableCheckoutError(error: any) {
+  const message = String(error?.message ?? "");
+  return error?.code === "P2034"
+    || /write conflict|deadlock|could not serialize|transaction.*(conflict|closed|timeout)/i.test(message)
+    || message.includes("สต็อกมีการเปลี่ยนแปลง");
+}
+
+function waitForCheckoutRetry(attempt: number) {
+  return new Promise((resolve) => setTimeout(resolve, Math.min(250, 25 * (attempt + 1))));
 }
 
 export async function getOrders(branchId?: number) {
@@ -460,8 +472,9 @@ export async function createOrder(input: {
   };
 
   let order;
-  try {
-    order = await prisma.$transaction(async (tx) => {
+  for (let attempt = 0; attempt <= checkoutTransactionRetries; attempt += 1) {
+    try {
+      order = await prisma.$transaction(async (tx) => {
     if (idempotencyKey) {
       const existingOrder = await tx.order.findUnique({
         where: { idempotencyKey },
@@ -623,17 +636,20 @@ export async function createOrder(input: {
       ]
     });
 
-    return newOrder;
-    });
-  } catch (error: any) {
-    if (idempotencyKey && error?.code === "P2002") {
-      const existingOrder = await prisma.order.findUnique({
-        where: { idempotencyKey },
-        include: { items: true }
+      return newOrder;
       });
-      if (existingOrder) return hydrateOrder(existingOrder);
+      break;
+    } catch (error: any) {
+      if (idempotencyKey && error?.code === "P2002") {
+        const existingOrder = await prisma.order.findUnique({
+          where: { idempotencyKey },
+          include: { items: true }
+        });
+        if (existingOrder) return hydrateOrder(existingOrder);
+      }
+      if (!isRetryableCheckoutError(error) || attempt >= checkoutTransactionRetries) throw error;
+      await waitForCheckoutRetry(attempt);
     }
-    throw error;
   }
 
   return hydrateOrder(order);

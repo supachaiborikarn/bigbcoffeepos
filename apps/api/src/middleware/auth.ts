@@ -1,12 +1,15 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
-if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET is required when NODE_ENV=production");
+const localJwtFallbackModes = new Set(["", "development", "test", "local"]);
+const nodeEnv = process.env.NODE_ENV || "";
+
+if (!localJwtFallbackModes.has(nodeEnv) && !process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET is required when NODE_ENV is not development/test/local");
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || "bb_pos_secret_key_dev";
-if (!process.env.JWT_SECRET) console.warn("[Auth] ⚠️ JWT_SECRET not set — using dev fallback (unsafe for production)");
+if (!process.env.JWT_SECRET) console.warn("[Auth] JWT_SECRET not set - using dev fallback (unsafe outside local/test)");
 
 export interface AuthRequest extends Request {
   user?: {

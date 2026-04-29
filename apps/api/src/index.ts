@@ -379,7 +379,7 @@ app.get("/api/orders", requireBranchAccess((req) => parseId(req.query.branchId a
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   res.json({ items: await getOrders(branchId) });
 });
-app.get("/api/orders/:id", async (req: AuthRequest, res) => {
+app.get("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const order = await getOrder(id);
@@ -567,7 +567,7 @@ app.post("/api/import/orders", requireRole("admin", "manager"), requireBranchAcc
   return res.json({ result });
 });
 
-/* ─── Backups (local mode only) ─── */
+/* ─── Legacy SQLite backup utility is unavailable in the PostgreSQL API runtime. ─── */
 app.get("/api/backups/status", requireAdmin, async (_req, res) => {
   return res.json({ status: { enabled: false, message: "SQLite backups are not available in the PostgreSQL API runtime" } });
 });
@@ -657,7 +657,7 @@ if (Number.isFinite(outboxIntervalMs) && outboxIntervalMs >= 30_000) {
   }, outboxIntervalMs).unref();
 }
 
-// pospos-sync is dynamically imported in local mode only (requires Playwright)
+// pospos-sync is dynamically imported on demand because it requires Playwright.
 
 app.post("/api/migration/sync", async (req, res) => {
   const branchId = parseId(req.body?.branchId);

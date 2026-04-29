@@ -82,7 +82,7 @@ API scripts ที่ตั้งใจให้ใช้ได้:
 ## Environment
 API:
 - `DATABASE_URL`: PostgreSQL connection string สำหรับ production/cloud
-- `JWT_SECRET`: secret สำหรับ sign JWT ห้ามใช้ค่า fallback ใน production
+- `JWT_SECRET`: secret สำหรับ sign JWT; app จะ fail-fast ถ้าไม่มีค่านี้ใน env ที่ไม่ใช่ development/test/local
 - `PORT`: API port ค่าเริ่มต้น `5175`
 - `AUDIT_LOG_FILE`: path สำหรับ audit JSONL ค่าเริ่มต้น `apps/api/data/audit.log` เมื่อรันจาก workspace
 - `SLOW_REQUEST_MS`: threshold สำหรับ log `http_request_slow` ค่าเริ่มต้น `1000`

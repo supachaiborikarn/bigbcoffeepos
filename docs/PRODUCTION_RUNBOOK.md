@@ -6,7 +6,7 @@ Updated: 2026-04-29
 
 API:
 - `DATABASE_URL`: PostgreSQL connection string. SQLite/file URLs are not supported by runtime stores.
-- `JWT_SECRET`: long random secret. Production startup must fail if missing.
+- `JWT_SECRET`: long random secret. Any non-development/test/local startup must fail if missing.
 - `PORT`: optional, defaults to `5175`.
 - `AUDIT_LOG_FILE`: optional JSONL audit file path.
 - `SLOW_REQUEST_MS`: optional slow request threshold, defaults to `1000`.

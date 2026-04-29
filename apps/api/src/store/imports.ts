@@ -1,4 +1,5 @@
 import prisma from "../prisma.js";
+import { classifyMenuItem } from "../utils/menu-data-cleaning.js";
 
 type ImportResult = {
   imported: number;
@@ -62,24 +63,6 @@ function positiveNumber(value: unknown, fallback = 0) {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-function normalizeCategory(raw: string, branchType: string) {
-  const value = raw.trim();
-  const normalized = value.toLowerCase().replace(/\s+/g, "");
-  if (!value || normalized === "uncategory" || normalized === "ไม่ระบุ") return branchType === "oil_service" ? "บริการน้ำมัน" : "อื่นๆ";
-  const rules = [
-    { category: "กาแฟ", keywords: ["กาแฟ", "coffee", "espresso", "americano", "latte", "mocha"] },
-    { category: "ชา", keywords: ["ชา", "tea", "matcha"] },
-    { category: "นม/โกโก้", keywords: ["นม", "โกโก้", "cocoa", "milk"] },
-    { category: "เครื่องดื่มพร้อมขาย", keywords: ["ตู้แช่", "น้ำดื่ม", "เครื่องดื่ม", "c-vitt", "drink"] },
-    { category: "เบเกอรี่/ขนม", keywords: ["ขนม", "เค้ก", "คุกกี้", "bakery", "cookie"] },
-    { category: "ไอติม", keywords: ["ไอติม", "icecream", "ice cream"] },
-    { category: "น้ำมันเครื่อง", keywords: ["น้ำมัน", "oil"] },
-    { category: "อะไหล่/ไส้กรอง", keywords: ["ไส้กรอง", "filter"] },
-    { category: "บริการ", keywords: ["บริการ", "service", "ค่าแรง"] }
-  ];
-  return rules.find((rule) => rule.keywords.some((keyword) => normalized.includes(keyword.toLowerCase().replace(/\s+/g, ""))))?.category ?? value;
-}
-
 function stringifyMetadata(value: ProductImportInput["metadata"]) {
   if (!value) return "{}";
   if (typeof value === "string") return value.trim() || "{}";
@@ -96,7 +79,7 @@ export async function importProducts(input: { branchId: number; items: ProductIm
     const name = cleanString(raw.name);
     const sku = cleanString(raw.sku) || null;
     const barcode = cleanString(raw.barcode) || null;
-    const category = normalizeCategory(cleanString(raw.category) || "Uncategory", branch.branchType);
+    const rawCategory = cleanString(raw.category) || "Uncategory";
     const basePrice = positiveNumber(raw.basePrice, -1);
     const cost = raw.cost === undefined || raw.cost === null ? null : positiveNumber(raw.cost, 0);
     const taxRate = raw.taxRate === undefined || raw.taxRate === null ? null : positiveNumber(raw.taxRate, 0);
@@ -114,11 +97,21 @@ export async function importProducts(input: { branchId: number; items: ProductIm
     ].filter(Boolean) as Array<{ sku?: string; barcode?: string; name?: string; branchType?: string }>;
 
     const existing = await prisma.menuItem.findFirst({ where: { OR: lookup } });
+    const classification = classifyMenuItem({
+      name,
+      category: rawCategory,
+      branchType: branch.branchType,
+      basePrice,
+      active: true,
+      optionGroup: cleanString(raw.optionGroup) || null,
+      optionLabel: cleanString(raw.optionLabel) || null,
+      metadata: stringifyMetadata(raw.metadata)
+    });
     const data = {
       sku,
       barcode,
       name,
-      category,
+      category: classification.category,
       basePrice: roundMoney(basePrice),
       cost,
       imageUrl: cleanString(raw.imageUrl) || null,
@@ -126,11 +119,11 @@ export async function importProducts(input: { branchId: number; items: ProductIm
       taxRate,
       source: cleanString(raw.source) || null,
       sourceId: cleanString(raw.sourceId) || null,
-      optionGroup: cleanString(raw.optionGroup) || null,
-      optionLabel: cleanString(raw.optionLabel) || null,
+      optionGroup: cleanString(raw.optionGroup) || classification.optionGroup,
+      optionLabel: cleanString(raw.optionLabel) || classification.optionLabel,
       metadata: stringifyMetadata(raw.metadata),
       branchType: branch.branchType,
-      active: true
+      active: classification.active
     };
 
     const menuItem = existing

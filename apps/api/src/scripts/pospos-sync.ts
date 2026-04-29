@@ -1,5 +1,6 @@
 import { chromium, type Page } from "playwright";
 import prisma from "../prisma.js";
+import { classifyMenuItem } from "../utils/menu-data-cleaning.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,24 +64,6 @@ function normalizeStaffName(raw: string) {
   return raw.trim().toLowerCase().replace(/\s+/g, "");
 }
 
-function normalizeCategory(raw: string, branchType: string) {
-  const value = raw.trim();
-  const normalized = value.toLowerCase().replace(/\s+/g, "");
-  if (!value || normalized === "ไม่ระบุ") return branchType === "oil_service" ? "บริการน้ำมัน" : "อื่นๆ";
-  const rules = [
-    { category: "กาแฟ", keywords: ["กาแฟ", "coffee", "espresso", "americano", "latte", "mocha"] },
-    { category: "ชา", keywords: ["ชา", "tea", "matcha"] },
-    { category: "นม/โกโก้", keywords: ["นม", "โกโก้", "cocoa", "milk"] },
-    { category: "เครื่องดื่มพร้อมขาย", keywords: ["ตู้แช่", "น้ำดื่ม", "เครื่องดื่ม", "c-vitt", "drink"] },
-    { category: "เบเกอรี่/ขนม", keywords: ["ขนม", "เค้ก", "คุกกี้", "bakery", "cookie"] },
-    { category: "ไอติม", keywords: ["ไอติม", "icecream", "ice cream"] },
-    { category: "น้ำมันเครื่อง", keywords: ["น้ำมัน", "oil"] },
-    { category: "อะไหล่/ไส้กรอง", keywords: ["ไส้กรอง", "filter"] },
-    { category: "บริการ", keywords: ["บริการ", "service", "ค่าแรง"] },
-  ];
-  return rules.find((rule) => rule.keywords.some((keyword) => normalized.includes(keyword.toLowerCase().replace(/\s+/g, ""))))?.category ?? value;
-}
-
 function pickString(input: any, keys: string[]) {
   for (const key of keys) {
     const value = input?.[key];
@@ -94,28 +77,6 @@ function pickString(input: any, keys: string[]) {
 function parseOptionalNumber(value: unknown) {
   const n = Number(String(value ?? "").replace(/[^0-9.]/g, ""));
   return Number.isFinite(n) ? n : null;
-}
-
-function inferVariantInfo(name: string) {
-  const variants = [
-    "ร้อน",
-    "เย็น",
-    "ปั่น",
-    "เล็ก",
-    "กลาง",
-    "ใหญ่",
-    "หวานน้อย",
-    "ไม่หวาน",
-    "เพิ่มช็อต",
-  ];
-  const labels = variants.filter((variant) => name.includes(variant));
-  if (labels.length === 0) return { optionGroup: null, optionLabel: null };
-  const optionLabel = labels.join(" / ");
-  const optionGroup = labels.reduce((current, label) => current.replaceAll(label, ""), name)
-    .replace(/[()（）\-_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return { optionGroup: optionGroup || name, optionLabel };
 }
 
 // ── Branch Mapping ───────────────────────────────────────────────────────────
@@ -222,12 +183,10 @@ export async function syncPosposData(branchId: number) {
         const barcode = p.barcode_code || null;
         const sku = p.code ? String(p.code) : null;
         const rawCategoryName = p.category?.name || "ไม่ระบุ";
-        const categoryName = normalizeCategory(rawCategoryName, branchType);
         const imageUrl = pickString(p, ["image_url", "imageUrl", "image", "photo", "picture", "thumbnail"]);
         const unit = pickString(p, ["unit", "unit_name", "sell_unit", "product_unit", "stock_unit"]);
         const taxRate = parseOptionalNumber(p.tax_rate ?? p.taxRate ?? p.vat_rate ?? p.vat);
         const sourceId = p.id ? String(p.id) : (p.product_id ? String(p.product_id) : sku);
-        const { optionGroup, optionLabel } = inferVariantInfo(name);
         const metadata = JSON.stringify({
           pospos: {
             categoryName: rawCategoryName,
@@ -236,6 +195,14 @@ export async function syncPosposData(branchId: number) {
             unit,
             taxRate,
           },
+        });
+        const classification = classifyMenuItem({
+          name,
+          category: rawCategoryName,
+          branchType,
+          basePrice: price,
+          active: true,
+          metadata
         });
 
         // Upsert into menu_items
@@ -251,20 +218,21 @@ export async function syncPosposData(branchId: number) {
               cost,
               barcode,
               sku,
-              category: categoryName,
+              category: classification.category,
               imageUrl,
               unit,
               taxRate,
               source: "pospos",
               sourceId,
-              optionGroup,
-              optionLabel,
+              optionGroup: classification.optionGroup,
+              optionLabel: classification.optionLabel,
               metadata,
+              active: classification.active,
             },
           });
         } else {
           await prisma.menuItem.create({
-            data: { name, basePrice: price, cost, barcode, sku, category: categoryName, imageUrl, unit, taxRate, source: "pospos", sourceId, optionGroup, optionLabel, metadata, branchType, active: true },
+            data: { name, basePrice: price, cost, barcode, sku, category: classification.category, imageUrl, unit, taxRate, source: "pospos", sourceId, optionGroup: classification.optionGroup, optionLabel: classification.optionLabel, metadata, branchType, active: classification.active },
           });
         }
         results.menuItems++;

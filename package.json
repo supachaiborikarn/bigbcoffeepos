@@ -6,6 +6,7 @@
     "dev": "echo \"Run dev servers:\\n1) npm run dev --workspace apps/api\\n2) npm run dev --workspace apps/web\"",
     "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
     "pos:smoke": "npm run pos:smoke --workspace apps/api",
+    "menu:clean": "npm run menu:clean --workspace apps/api",
     "sync:pospos": "npx tsx apps/api/run-sync.ts"
   }
 }

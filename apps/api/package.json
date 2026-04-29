@@ -12,6 +12,7 @@
     "production-hardening:check": "tsx src/scripts/production-hardening-check.ts",
     "pos:smoke": "node --import tsx src/scripts/pos-workflow-smoke-check.ts",
     "orders:check": "tsx src/scripts/check-orders.ts",
+    "menu:clean": "tsx src/scripts/clean-menu-data.ts",
     "data:export": "tsx src/scripts/export-data.ts",
     "mock-history:generate": "tsx src/scripts/generate-mock-history.ts"
   },

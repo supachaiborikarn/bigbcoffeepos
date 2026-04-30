@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { Settings } from "lucide-react";
+import { ChevronLeft, ChevronRight, Settings } from "lucide-react";
 import { createCustomer, getCustomers, getMenu, getRecipes } from "../api";
 import type { Customer, DiscountRule, MenuItem, PaymentMethod } from "../types";
 import { useAuth } from "../contexts/AuthContext";
@@ -31,6 +31,14 @@ function formatMoney(value: number) {
   return moneyFormatter.format(value);
 }
 
+function getRoleLevel(role?: string | null) {
+  const normalized = (role ?? "").trim().toLowerCase();
+  if (normalized === "admin" || normalized.includes("ผู้ดูแล")) return 3;
+  if (normalized === "manager" || normalized.includes("ผู้จัดการ")) return 2;
+  if (normalized === "cashier" || normalized.includes("แคชเชียร์") || normalized.includes("บาริสต้า")) return 1;
+  return ROLE_LEVEL[normalized] ?? 0;
+}
+
 function makeRuleId() {
   return `DISC-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
@@ -58,7 +66,9 @@ export default function POSPage() {
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
+  const [categoryScrollState, setCategoryScrollState] = useState({ canScrollPrev: false, canScrollNext: false });
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const categoryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const { activeBranch } = useBranch();
   const { activeShift } = useShift();
@@ -141,7 +151,28 @@ export default function POSPage() {
   const maxRedeemablePoints = selectedMember
     ? Math.min(selectedMember.points, Math.floor(Math.max(0, subtotal - discountAmount)))
     : 0;
-  const canManageMenu = (ROLE_LEVEL[user?.role ?? "cashier"] ?? 0) >= 2;
+  const canManageMenu = getRoleLevel(user?.role) >= 2;
+
+  const refreshCategoryScrollState = useCallback(() => {
+    const el = categoryScrollRef.current;
+    if (!el) {
+      setCategoryScrollState({ canScrollPrev: false, canScrollNext: false });
+      return;
+    }
+    const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+    setCategoryScrollState({
+      canScrollPrev: el.scrollLeft > 2,
+      canScrollNext: el.scrollLeft < maxScrollLeft - 2
+    });
+  }, []);
+
+  const scrollCategories = (direction: -1 | 1) => {
+    const el = categoryScrollRef.current;
+    if (!el) return;
+    const amount = Math.max(180, Math.floor(el.clientWidth * 0.75));
+    el.scrollBy({ left: direction * amount, behavior: "smooth" });
+    window.setTimeout(refreshCategoryScrollState, 260);
+  };
 
   const addCartItem = (item: MenuItem, qty: number = 1, modifiers: import("../types").Modifier[] = []) => {
     addItem({
@@ -305,6 +336,12 @@ export default function POSPage() {
     return () => window.removeEventListener("keydown", handler);
   }, [clearCart, handleCheckoutClick]);
 
+  useEffect(() => {
+    refreshCategoryScrollState();
+    window.addEventListener("resize", refreshCategoryScrollState);
+    return () => window.removeEventListener("resize", refreshCategoryScrollState);
+  }, [categories, refreshCategoryScrollState]);
+
   return (
     <main style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
       {/* Center Panel: Products */}
@@ -322,9 +359,9 @@ export default function POSPage() {
                 </span>
               )}
               {canManageMenu && (
-                <Link to="/inventory?tab=products&manage=menu" className="btn btn--ghost">
+                <Link to="/inventory?tab=products&manage=menu" className="btn btn--primary pos-manage-card-header">
                   <Settings size={16} />
-                  จัดการเมนู
+                  จัดการการ์ด
                 </Link>
               )}
             </div>
@@ -363,26 +400,52 @@ export default function POSPage() {
           )}
         </div>
 
-        <div className="pos-category-scroll" style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--pos-bg)", overflowX: "auto", whiteSpace: "nowrap", position: "relative" }}>
-          <div style={{ display: "inline-flex", gap: "8px" }}>
-            {categories.map((item) => (
-              <button key={item} className={`tab ${category === item ? "tab--active" : ""}`} 
-                style={{ 
-                  borderRadius: "20px", 
-                  background: category === item ? "var(--brand)" : "#fff",
-                  color: category === item ? "#fff" : "var(--text-secondary)",
-                  border: `1px solid ${category === item ? "var(--brand)" : "var(--border)"}`,
-                  padding: "8px 16px",
-                  fontWeight: 500,
-                  boxShadow: category === item ? "0 2px 4px rgba(139, 94, 60, 0.2)" : "none",
-                  whiteSpace: "nowrap",
-                  flexShrink: 0
-                }} 
-                onClick={() => setCategory(item)}>
-                {item}
-              </button>
-            ))}
+        <div className="pos-category-strip">
+          <button
+            type="button"
+            className="pos-category-arrow"
+            onClick={() => scrollCategories(-1)}
+            disabled={!categoryScrollState.canScrollPrev}
+            aria-label="เลื่อนหมวดหมู่ไปทางซ้าย"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          {canManageMenu && (
+            <Link to="/inventory?tab=products&manage=menu" className="pos-category-manage">
+              <Settings size={15} />
+              จัดการการ์ด
+            </Link>
+          )}
+          <div ref={categoryScrollRef} className="pos-category-scroll" onScroll={refreshCategoryScrollState}>
+            <div className="pos-category-tabs">
+              {categories.map((item) => (
+                <button key={item} className={`tab ${category === item ? "tab--active" : ""}`}
+                  style={{
+                    borderRadius: "20px",
+                    background: category === item ? "var(--brand)" : "#fff",
+                    color: category === item ? "#fff" : "var(--text-secondary)",
+                    border: `1px solid ${category === item ? "var(--brand)" : "var(--border)"}`,
+                    padding: "8px 16px",
+                    fontWeight: 500,
+                    boxShadow: category === item ? "0 2px 4px rgba(139, 94, 60, 0.2)" : "none",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0
+                  }}
+                  onClick={() => setCategory(item)}>
+                  {item}
+                </button>
+              ))}
+            </div>
           </div>
+          <button
+            type="button"
+            className="pos-category-arrow"
+            onClick={() => scrollCategories(1)}
+            disabled={!categoryScrollState.canScrollNext}
+            aria-label="เลื่อนหมวดหมู่ไปทางขวา"
+          >
+            <ChevronRight size={18} />
+          </button>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", background: "#fff" }}>

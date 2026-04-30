@@ -1168,45 +1168,59 @@ export default function InventoryPage() {
             )}
 
             {selectedProduct && productEditForm && (
-              <form className="inventory-editor" onSubmit={handleProductUpdate}>
-                <div className="inventory-editor__header">
-                  <div>
-                    <h3>แก้ไขตัวเลือก</h3>
-                    <p className="muted">{selectedProduct.name}</p>
+              <div
+                className="modal-backdrop inventory-edit-backdrop"
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget && !isSubmitting) handleProductEditCancel();
+                }}
+              >
+                <form
+                  className="modal inventory-edit-modal"
+                  onSubmit={handleProductUpdate}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="product-edit-title"
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="inventory-editor__header">
+                    <div>
+                      <h3 id="product-edit-title">แก้ไขตัวเลือก</h3>
+                      <p className="muted">{selectedProduct.name}</p>
+                    </div>
+                    <button type="button" className="icon-action" onClick={handleProductEditCancel} aria-label="ปิดฟอร์มแก้ไขสินค้า">
+                      <X size={16} />
+                    </button>
                   </div>
-                  <button type="button" className="icon-action" onClick={handleProductEditCancel} aria-label="ปิดฟอร์มแก้ไขสินค้า">
-                    <X size={16} />
-                  </button>
-                </div>
-                <div className="inventory-form-grid">
-                  <input className="input" value={productEditForm.name} onChange={(e) => setProductEditForm({ ...productEditForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
-                  <input className="input" value={productEditForm.category} onChange={(e) => setProductEditForm({ ...productEditForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
-                  <input className="input" type="number" value={productEditForm.basePrice} onChange={(e) => setProductEditForm({ ...productEditForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
-                  <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
-                  <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
-                  <input className="input" value={productEditForm.barcode} onChange={(e) => setProductEditForm({ ...productEditForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
-                  <input className="input" value={productEditForm.imageUrl} onChange={(e) => setProductEditForm({ ...productEditForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
-                  <input className="input" value={productEditForm.unit} onChange={(e) => setProductEditForm({ ...productEditForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
-                  <input className="input" type="number" value={productEditForm.taxRate} onChange={(e) => setProductEditForm({ ...productEditForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
-                  <input className="input" value={productEditForm.optionGroup} onChange={(e) => setProductEditForm({ ...productEditForm, optionGroup: e.target.value })} placeholder="ชื่อการ์ด เช่น ลาเต้" />
-                  <input className="input" value={productEditForm.optionLabel} onChange={(e) => setProductEditForm({ ...productEditForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
-                  <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
-                    <option value="coffee">ร้านกาแฟ</option>
-                    <option value="oil_service">ศูนย์บริการน้ำมัน</option>
-                  </select>
-                  <label className="toggle-line" style={{ gridColumn: "1 / -1", background: "var(--bg-subtle)", padding: "12px", borderRadius: "8px" }}>
-                    <input type="checkbox" checked={productEditForm.active} onChange={(e) => setProductEditForm({ ...productEditForm, active: e.target.checked })} />
-                    <span style={{ fontWeight: 500 }}>เปิดขายหน้าร้าน</span>
-                  </label>
-                </div>
-                <div className="inventory-editor__actions">
-                  <button type="button" className="btn btn--ghost" onClick={handleProductEditCancel}>ยกเลิก</button>
-                  <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
-                    <Save size={16} />
-                    บันทึกตัวเลือก
-                  </button>
-                </div>
-              </form>
+                  <div className="inventory-form-grid">
+                    <input className="input" value={productEditForm.name} onChange={(e) => setProductEditForm({ ...productEditForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
+                    <input className="input" value={productEditForm.category} onChange={(e) => setProductEditForm({ ...productEditForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
+                    <input className="input" type="number" value={productEditForm.basePrice} onChange={(e) => setProductEditForm({ ...productEditForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
+                    <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
+                    <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
+                    <input className="input" value={productEditForm.barcode} onChange={(e) => setProductEditForm({ ...productEditForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
+                    <input className="input" value={productEditForm.imageUrl} onChange={(e) => setProductEditForm({ ...productEditForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
+                    <input className="input" value={productEditForm.unit} onChange={(e) => setProductEditForm({ ...productEditForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
+                    <input className="input" type="number" value={productEditForm.taxRate} onChange={(e) => setProductEditForm({ ...productEditForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
+                    <input className="input" value={productEditForm.optionGroup} onChange={(e) => setProductEditForm({ ...productEditForm, optionGroup: e.target.value })} placeholder="ชื่อการ์ด เช่น ลาเต้" />
+                    <input className="input" value={productEditForm.optionLabel} onChange={(e) => setProductEditForm({ ...productEditForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
+                    <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
+                      <option value="coffee">ร้านกาแฟ</option>
+                      <option value="oil_service">ศูนย์บริการน้ำมัน</option>
+                    </select>
+                    <label className="toggle-line" style={{ gridColumn: "1 / -1", background: "var(--bg-subtle)", padding: "12px", borderRadius: "8px" }}>
+                      <input type="checkbox" checked={productEditForm.active} onChange={(e) => setProductEditForm({ ...productEditForm, active: e.target.checked })} />
+                      <span style={{ fontWeight: 500 }}>เปิดขายหน้าร้าน</span>
+                    </label>
+                  </div>
+                  <div className="inventory-editor__actions">
+                    <button type="button" className="btn btn--ghost" onClick={handleProductEditCancel}>ยกเลิก</button>
+                    <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
+                      <Save size={16} />
+                      บันทึกตัวเลือก
+                    </button>
+                  </div>
+                </form>
+              </div>
             )}
           </section>
 

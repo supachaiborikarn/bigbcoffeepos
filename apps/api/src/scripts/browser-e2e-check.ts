@@ -228,10 +228,7 @@ async function main() {
 
     await backspaceNumpad(cashModal, 3);
     await enterNumpad(cashModal, "120");
-    const popupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
     await cashModal.getByRole("button", { name: "รับเงินและพิมพ์ใบเสร็จ" }).click();
-    const popup = await popupPromise;
-    await popup?.close();
     await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
 
     const cashOrder = await getLatestOrderByMenuItem(data.latte.id);
@@ -251,12 +248,9 @@ async function main() {
     await addSimpleItem(page, data.cookie.name);
     await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "สแกนจ่าย (QR)" }).click();
-    const qrPopupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน QR/ }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();
-    const qrPopup = await qrPopupPromise;
-    await qrPopup?.close();
     await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
 
     const qrOrder = await getLatestOrderByMenuItem(data.cookie.id);
@@ -268,12 +262,9 @@ async function main() {
     await addSimpleItem(page, data.cookie.name);
     await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "บัตรเครดิต" }).click();
-    const cardPopupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน บัตรเครดิต/ }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();
-    const cardPopup = await cardPopupPromise;
-    await cardPopup?.close();
     await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
 
     const cardOrder = await getLatestOrderByMenuItem(data.cookie.id);

@@ -118,14 +118,50 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
 </head>
 <body>
 ${receiptHtml}
-<script>window.onload = () => { window.print(); window.onafterprint = () => window.close(); }</script>
 </body>
 </html>`;
 
-  const win = targetWindow ?? window.open("", "_blank", "width=360,height=600");
-  if (!win) return false;
-  win.document.write(html);
-  win.document.close();
+  if (targetWindow) {
+    targetWindow.document.write(html);
+    targetWindow.document.close();
+    window.setTimeout(() => {
+      targetWindow.focus();
+      targetWindow.print();
+      targetWindow.onafterprint = () => targetWindow.close();
+    }, 50);
+    return true;
+  }
+
+  const iframe = document.createElement("iframe");
+  iframe.title = "Receipt print frame";
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  document.body.appendChild(iframe);
+
+  const frameWindow = iframe.contentWindow;
+  const frameDocument = iframe.contentDocument ?? frameWindow?.document;
+  if (!frameWindow || !frameDocument) {
+    iframe.remove();
+    return false;
+  }
+
+  const cleanup = () => iframe.remove();
+  frameWindow.onafterprint = cleanup;
+  frameDocument.open();
+  frameDocument.write(html);
+  frameDocument.close();
+  window.setTimeout(() => {
+    frameWindow.focus();
+    frameWindow.print();
+  }, 50);
+  window.setTimeout(cleanup, 60_000);
   return true;
 }
 

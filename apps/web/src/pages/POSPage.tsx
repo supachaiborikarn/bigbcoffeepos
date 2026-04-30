@@ -237,7 +237,6 @@ export default function POSPage() {
     const totalSnapshot = total;
     const pointsSnapshot = Number(pointsToUse) || 0;
     const rulesSnapshot = [...discountRules];
-    const receiptWindow = window.open("", "_blank", "width=360,height=700");
     try {
       const order = await checkout(paymentMethod, selectedMember?.id ?? null, pointsSnapshot, {
         cashReceived,
@@ -258,8 +257,8 @@ export default function POSPage() {
         paymentMethod,
         cashReceived,
         changeAmount: changeAmt
-      }, activeBranch?.name || "Big B Coffee", receiptWindow);
-      if (!printed) toast.error("เปิดหน้าพิมพ์ใบเสร็จไม่สำเร็จ กรุณาอนุญาต popup");
+      }, activeBranch?.name || "Big B Coffee");
+      if (!printed) toast.error("พิมพ์ใบเสร็จไม่สำเร็จ กรุณาตรวจสอบการตั้งค่าปริ้นเตอร์");
       setSelectedMember(null);
       setMemberQuery("");
       setPendingPaymentConfirm(null);
@@ -267,7 +266,7 @@ export default function POSPage() {
         console.warn("[POS] refresh customers after checkout failed", error);
       });
     } catch {
-      receiptWindow?.close();
+      // Checkout errors are already surfaced by the cart context.
     } finally {
       setIsSubmitting(false);
     }

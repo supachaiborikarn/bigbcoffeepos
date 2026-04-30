@@ -218,22 +218,27 @@ export default function InventoryPage() {
     [inventory]
   );
 
+  const branchProducts = useMemo(() => {
+    const branchType = activeBranch?.branchType;
+    return menu.filter((item) => !branchType || item.branchType === branchType);
+  }, [activeBranch?.branchType, menu]);
+
   const categoryOptions = useMemo(() => {
-    const categories = new Set(menu.map((item) => item.category).filter(Boolean));
+    const categories = new Set(branchProducts.map((item) => item.category).filter(Boolean));
     return ["ทั้งหมด", ...Array.from(categories).sort((a, b) => a.localeCompare(b, "th"))];
-  }, [menu]);
+  }, [branchProducts]);
 
   const visibleProducts = useMemo(() => {
     const query = productSearch.trim().toLowerCase();
-    return menu.filter((item) => {
-      const searchable = `${item.name} ${item.category} ${item.sku ?? ""} ${item.barcode ?? ""}`.toLowerCase();
+    return branchProducts.filter((item) => {
+      const searchable = `${item.name} ${item.category} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.sku ?? ""} ${item.barcode ?? ""}`.toLowerCase();
       if (query && !searchable.includes(query)) return false;
       if (productCategory !== "ทั้งหมด" && item.category !== productCategory) return false;
       if (productStatus === "active" && !item.active) return false;
       if (productStatus === "inactive" && item.active) return false;
       return true;
     });
-  }, [menu, productCategory, productSearch, productStatus]);
+  }, [branchProducts, productCategory, productSearch, productStatus]);
 
   const productPageCount = Math.max(1, Math.ceil(visibleProducts.length / PRODUCT_PAGE_SIZE));
   const paginatedProducts = useMemo(() => {
@@ -255,7 +260,7 @@ export default function InventoryPage() {
     return map;
   }, [ingredients]);
 
-  const activeProductCount = useMemo(() => menu.filter((item) => item.active).length, [menu]);
+  const activeProductCount = useMemo(() => branchProducts.filter((item) => item.active).length, [branchProducts]);
 
   const recipeCoverageByMenuId = useMemo(() => {
     const map = new Map<number, RecipeCoverageReport["items"][number]>();
@@ -311,10 +316,12 @@ export default function InventoryPage() {
 
   const refreshInventory = async () => {
     const [menuItems, ingredientItems] = await Promise.all([getMenu(), getIngredients()]);
+    const branchType = activeBranch?.branchType;
+    const matchesActiveBranch = (item: MenuItem) => !branchType || item.branchType === branchType;
     setMenu(menuItems);
     setIngredients(ingredientItems);
-    setSelectedProduct((current) => (current ? menuItems.find((item) => item.id === current.id) ?? null : null));
-    setSelectedRecipeProduct((current) => (current ? menuItems.find((item) => item.id === current.id) ?? null : null));
+    setSelectedProduct((current) => (current ? menuItems.find((item) => item.id === current.id && matchesActiveBranch(item)) ?? null : null));
+    setSelectedRecipeProduct((current) => (current ? menuItems.find((item) => item.id === current.id && matchesActiveBranch(item)) ?? null : null));
 
     if (!activeBranch) {
       setInventory([]);
@@ -795,7 +802,11 @@ export default function InventoryPage() {
                 <tr key={item.id} className={selectedProduct?.id === item.id ? "is-selected" : ""}>
                   <td>
                     <strong>{item.name}</strong>
-                    <span className="muted">#{item.id}</span>
+                    <span className="muted">
+                      #{item.id}
+                      {item.optionGroup ? ` · หน้าร้าน: ${item.optionGroup}` : ""}
+                      {item.optionLabel ? ` · ตัวเลือก: ${item.optionLabel}` : ""}
+                    </span>
                   </td>
                   <td>
                     <span>{item.sku || "-"}</span>
@@ -865,6 +876,7 @@ export default function InventoryPage() {
               <input className="input" value={productEditForm.optionLabel} onChange={(e) => setProductEditForm({ ...productEditForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
               <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
                 <option value="coffee">ร้านกาแฟ</option>
+                <option value="oil_service">ศูนย์บริการน้ำมัน</option>
               </select>
               <label className="toggle-line" style={{ gridColumn: "1 / -1", background: "var(--bg-subtle)", padding: "12px", borderRadius: "8px" }}>
                 <input type="checkbox" checked={productEditForm.active} onChange={(e) => setProductEditForm({ ...productEditForm, active: e.target.checked })} />
@@ -904,6 +916,7 @@ export default function InventoryPage() {
             <input className="input" value={menuForm.optionLabel} onChange={(e) => setMenuForm({ ...menuForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก" />
             <select className="input" value={menuForm.branchType} onChange={(e) => setMenuForm({ ...menuForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
               <option value="coffee">ร้านกาแฟ</option>
+              <option value="oil_service">ศูนย์บริการน้ำมัน</option>
             </select>
           </div>
           <button type="submit" className="btn btn--primary" disabled={isSubmitting} style={{ marginTop: 16, width: "100%" }}>

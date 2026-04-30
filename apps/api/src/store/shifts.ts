@@ -1,6 +1,7 @@
 import prisma from "../prisma.js";
 
 const PAYMENT_METHODS = ["CASH", "QR", "CARD", "EWALLET"] as const;
+const REVERSED_ORDER_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
 type ShiftCloseDetails = { cashCounts?: Record<string, number>; note?: string };
 let closeDetailsTableReady = false;
 
@@ -122,20 +123,21 @@ export async function getShiftSummary(id: number) {
     include: { items: true },
     orderBy: { createdAt: "asc" }
   });
+  const billableOrders = orders.filter((order) => !REVERSED_ORDER_STATUSES.has(order.status));
 
-  const ordersTotal = orders.reduce((sum, order) => sum + order.total, 0);
+  const ordersTotal = billableOrders.reduce((sum, order) => sum + order.total, 0);
   const hasOrderRows = orders.length > 0;
   const totalSales = hasOrderRows ? ordersTotal : shift.totalSales;
-  const totalOrders = hasOrderRows ? orders.length : shift.totalOrders;
-  const subtotal = orders.reduce((sum, order) => sum + order.subtotal, 0);
-  const discountAmount = orders.reduce((sum, order) => sum + order.discountAmount, 0);
-  const loyaltyPointsUsed = orders.reduce((sum, order) => sum + order.loyaltyPointsUsed, 0);
-  const tax = orders.reduce((sum, order) => sum + order.tax, 0);
+  const totalOrders = hasOrderRows ? billableOrders.length : shift.totalOrders;
+  const subtotal = billableOrders.reduce((sum, order) => sum + order.subtotal, 0);
+  const discountAmount = billableOrders.reduce((sum, order) => sum + order.discountAmount, 0);
+  const loyaltyPointsUsed = billableOrders.reduce((sum, order) => sum + order.loyaltyPointsUsed, 0);
+  const tax = billableOrders.reduce((sum, order) => sum + order.tax, 0);
 
   const paymentTotals = new Map<string, { method: string; count: number; total: number }>();
   PAYMENT_METHODS.forEach((method) => paymentTotals.set(method, { method, count: 0, total: 0 }));
 
-  orders.forEach((order) => {
+  billableOrders.forEach((order) => {
     const current = paymentTotals.get(order.paymentMethod) ?? { method: order.paymentMethod, count: 0, total: 0 };
     current.count += 1;
     current.total += order.total;
@@ -160,7 +162,7 @@ export async function getShiftSummary(id: number) {
     : { cashCounts: {}, note: null };
 
   const itemMap = new Map<number, { menuItemId: number; name: string; qty: number; revenue: number }>();
-  orders.forEach((order) => {
+  billableOrders.forEach((order) => {
     order.items.forEach((item) => {
       const current = itemMap.get(item.menuItemId) ?? { menuItemId: item.menuItemId, name: item.name, qty: 0, revenue: 0 };
       current.qty += item.qty;
@@ -209,8 +211,8 @@ export async function getShiftSummary(id: number) {
       tax: Math.round(tax * 100) / 100,
       totalOrders,
       averageTicket: totalOrders ? Math.round((totalSales / totalOrders) * 100) / 100 : 0,
-      paidOrders: orders.filter((order) => order.status === "PAID").length,
-      readyOrders: orders.filter((order) => order.status === "READY").length
+      paidOrders: billableOrders.filter((order) => order.status === "PAID").length,
+      readyOrders: billableOrders.filter((order) => order.status === "READY").length
     },
     cash: {
       openingCash: shift.openingCash,

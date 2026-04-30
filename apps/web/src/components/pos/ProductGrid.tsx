@@ -4,6 +4,11 @@ import ProductCard from "./ProductCard";
 import { isCupVariantMenuItem } from "../../utils/menuRules";
 
 const PRODUCT_RENDER_LIMIT = 120;
+const priceFormatter = new Intl.NumberFormat("th-TH", {
+  style: "currency",
+  currency: "THB",
+  maximumFractionDigits: 0,
+});
 
 interface ProductGridProps {
   menu: MenuItem[];
@@ -39,11 +44,17 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
         return a.basePrice - b.basePrice || aLabel.localeCompare(bLabel, "th");
       });
       const primary = sorted[0];
+      const prices = sorted.map((item) => item.basePrice);
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
       return {
         key: primary.optionGroup ? `group:${primary.optionGroup}:${primary.category}` : `item:${primary.id}`,
         label: primary.optionGroup || primary.name,
         primary: primary.optionGroup ? { ...primary, name: primary.optionGroup } : primary,
-        variants: sorted
+        variants: sorted,
+        priceLabel: sorted.length > 1 && minPrice !== maxPrice
+          ? `${priceFormatter.format(minPrice)}-${priceFormatter.format(maxPrice)}`
+          : priceFormatter.format(primary.basePrice)
       };
     });
   }, [visibleMenu]);
@@ -73,6 +84,7 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
               key={tile.key}
               item={tile.primary}
               variantCount={tile.variants.length}
+              priceLabel={tile.priceLabel}
               onClick={() => {
                 if (tile.variants.length > 1) setVariantGroup({ label: tile.label, variants: tile.variants });
                 else onItemClick(tile.primary);

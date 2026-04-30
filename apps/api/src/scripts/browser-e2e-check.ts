@@ -251,9 +251,10 @@ async function main() {
     await addSimpleItem(page, data.cookie.name);
     await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "สแกนจ่าย (QR)" }).click();
-    page.once("dialog", (dialog) => dialog.accept());
     const qrPopupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
+    await page.getByRole("heading", { name: /ยืนยันชำระเงิน QR/ }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();
     const qrPopup = await qrPopupPromise;
     await qrPopup?.close();
     await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
@@ -267,9 +268,10 @@ async function main() {
     await addSimpleItem(page, data.cookie.name);
     await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "บัตรเครดิต" }).click();
-    page.once("dialog", (dialog) => dialog.accept());
     const cardPopupPromise = page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null);
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
+    await page.getByRole("heading", { name: /ยืนยันชำระเงิน บัตรเครดิต/ }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();
     const cardPopup = await cardPopupPromise;
     await cardPopup?.close();
     await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });

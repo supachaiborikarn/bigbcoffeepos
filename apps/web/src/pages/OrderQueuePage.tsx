@@ -25,7 +25,7 @@ function formatTime(dateStr: string) {
 
 export default function OrderQueuePage() {
   const { activeBranch } = useBranch();
-  const { activeShift } = useShift();
+  const { activeShift, refreshShift } = useShift();
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +77,7 @@ export default function OrderQueuePage() {
       });
       toast.success(`ยกเลิกบิล #${order.id} แล้ว`);
       refresh();
+      void refreshShift().catch(() => {});
     } catch (error) {
       toast.error((error as Error).message);
     }

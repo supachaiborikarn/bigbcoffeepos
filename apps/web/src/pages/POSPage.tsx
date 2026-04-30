@@ -16,6 +16,12 @@ const moneyFormatter = new Intl.NumberFormat("th-TH", {
   currency: "THB",
   maximumFractionDigits: 0
 });
+const paymentLabels: Record<PaymentMethod, string> = {
+  CASH: "เงินสด",
+  QR: "QR",
+  CARD: "บัตรเครดิต",
+  EWALLET: "E-Wallet"
+};
 
 function formatMoney(value: number) {
   return moneyFormatter.format(value);
@@ -44,6 +50,7 @@ export default function POSPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCashDrawer, setShowCashDrawer] = useState(false);
+  const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState<PaymentMethod | null>(null);
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
@@ -255,6 +262,7 @@ export default function POSPage() {
       if (!printed) toast.error("เปิดหน้าพิมพ์ใบเสร็จไม่สำเร็จ กรุณาอนุญาต popup");
       setSelectedMember(null);
       setMemberQuery("");
+      setPendingPaymentConfirm(null);
       void refreshCustomers().catch((error) => {
         console.warn("[POS] refresh customers after checkout failed", error);
       });
@@ -270,9 +278,7 @@ export default function POSPage() {
     if (paymentMethod === "CASH") {
       setShowCashDrawer(true);
     } else {
-      const label = paymentMethod === "QR" ? "QR" : paymentMethod === "CARD" ? "บัตร" : "E-Wallet";
-      if (!window.confirm(`ยืนยันว่าได้รับชำระผ่าน ${label} แล้ว?`)) return;
-      handleCheckout();
+      setPendingPaymentConfirm(paymentMethod);
     }
   };
 
@@ -418,6 +424,26 @@ export default function POSPage() {
           onConfirm={(cashReceived, change) => handleCheckout(cashReceived, change)}
           onCancel={() => setShowCashDrawer(false)}
         />
+      )}
+
+      {pendingPaymentConfirm && (
+        <div className="modal-backdrop" onClick={() => { if (!isSubmitting) setPendingPaymentConfirm(null); }} style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="panel" onClick={(event) => event.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", padding: 24, borderRadius: 12, background: "var(--bg-surface)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
+              <div>
+                <h2 style={{ fontSize: 20 }}>ยืนยันชำระเงิน {paymentLabels[pendingPaymentConfirm]}</h2>
+                <p className="muted" style={{ marginTop: 6 }}>บันทึกบิลหลังตรวจยอดรับชำระแล้ว</p>
+              </div>
+              <strong style={{ fontSize: 24, color: "var(--brand-hover)" }}>{formatMoney(total)}</strong>
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button className="btn btn--ghost" onClick={() => setPendingPaymentConfirm(null)} disabled={isSubmitting}>ยกเลิก</button>
+              <button className="btn btn--primary" onClick={() => handleCheckout()} disabled={isSubmitting}>
+                {isSubmitting ? "กำลังบันทึก..." : "ยืนยันและบันทึก"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {modifierProduct && (

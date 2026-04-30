@@ -335,14 +335,50 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
   ]);
 
   const shiftIds = shifts.map((shift) => shift.id);
-  const detailRows = shiftIds.length
-    ? await prisma.$queryRaw<Array<{ shift_id: number; cash_counts: unknown; note: string | null }>>`
-        SELECT shift_id, cash_counts, note
-        FROM shift_close_details
-        WHERE shift_id IN (${Prisma.join(shiftIds)})
-      `.catch(() => [])
-    : [];
+  const [detailRows, shiftTotalRows, shiftPaymentRows] = shiftIds.length
+    ? await Promise.all([
+        prisma.$queryRaw<Array<{ shift_id: number; cash_counts: unknown; note: string | null }>>`
+          SELECT shift_id, cash_counts, note
+          FROM shift_close_details
+          WHERE shift_id IN (${Prisma.join(shiftIds)})
+        `.catch(() => []),
+        prisma.order.groupBy({
+          by: ["shiftId"],
+          where: {
+            shiftId: { in: shiftIds },
+            status: { notIn: ["CANCELLED", "REFUNDED"] },
+            ...sourceWhere(source)
+          },
+          _count: { _all: true },
+          _sum: { total: true }
+        }),
+        prisma.order.groupBy({
+          by: ["shiftId", "paymentMethod"],
+          where: {
+            shiftId: { in: shiftIds },
+            status: { notIn: ["CANCELLED", "REFUNDED"] },
+            ...sourceWhere(source)
+          },
+          _sum: { total: true }
+        })
+      ])
+    : [[], [], []] as const;
   const detailByShift = new Map(detailRows.map((row) => [row.shift_id, row]));
+  const shiftTotalsById = new Map(
+    shiftTotalRows
+      .filter((row) => row.shiftId !== null)
+      .map((row) => [row.shiftId!, { totalSales: roundMoney(row._sum.total), totalOrders: row._count._all }])
+  );
+  const shiftPaymentsById = new Map<number, { cashSales: number; qrSales: number; cardSales: number }>();
+  shiftPaymentRows.forEach((row) => {
+    if (row.shiftId === null) return;
+    const current = shiftPaymentsById.get(row.shiftId) ?? { cashSales: 0, qrSales: 0, cardSales: 0 };
+    const amount = roundMoney(row._sum.total);
+    if (row.paymentMethod === "CASH") current.cashSales = roundMoney(current.cashSales + amount);
+    if (row.paymentMethod === "QR") current.qrSales = roundMoney(current.qrSales + amount);
+    if (row.paymentMethod === "CARD" || row.paymentMethod === "EWALLET") current.cardSales = roundMoney(current.cardSales + amount);
+    shiftPaymentsById.set(row.shiftId, current);
+  });
 
   const paymentMethods = ["CASH", "QR", "CARD", "EWALLET"];
   const payments = paymentMethods.map((method) => {
@@ -356,8 +392,11 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
 
   const shiftSummaries = shifts.map((shift) => {
     const detail = detailByShift.get(shift.id);
-    const cashSales = roundMoney(shift.cashSales);
-    const expectedCash = roundMoney(shift.expectedCash ?? shift.openingCash + cashSales);
+    const shiftTotals = shiftTotalsById.get(shift.id) ?? { totalSales: 0, totalOrders: 0 };
+    const shiftPayments = shiftPaymentsById.get(shift.id) ?? { cashSales: 0, qrSales: 0, cardSales: 0 };
+    const cashSales = roundMoney(shiftPayments.cashSales);
+    const expectedCash = roundMoney(shift.openingCash + cashSales);
+    const difference = shift.closingCash == null ? null : roundMoney(shift.closingCash - expectedCash);
     return {
       id: shift.id,
       branchName: shift.branch.name,
@@ -367,13 +406,13 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
       closedAt: shift.closedAt?.toISOString() ?? null,
       openingCash: roundMoney(shift.openingCash),
       cashSales,
-      qrSales: roundMoney(shift.qrSales),
-      cardSales: roundMoney(shift.cardSales),
-      totalSales: roundMoney(shift.totalSales),
-      totalOrders: shift.totalOrders,
+      qrSales: roundMoney(shiftPayments.qrSales),
+      cardSales: roundMoney(shiftPayments.cardSales),
+      totalSales: roundMoney(shiftTotals.totalSales),
+      totalOrders: shiftTotals.totalOrders,
       expectedCash,
       closingCash: shift.closingCash == null ? null : roundMoney(shift.closingCash),
-      difference: shift.difference == null ? null : roundMoney(shift.difference),
+      difference,
       cashCounts: detail?.cash_counts ?? {},
       note: detail?.note ?? null
     };

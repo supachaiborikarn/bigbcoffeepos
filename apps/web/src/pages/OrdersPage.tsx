@@ -33,7 +33,7 @@ function isSameLocalDay(value: string, base = new Date()) {
 
 export default function OrdersPage() {
   const { activeBranch } = useBranch();
-  const { activeShift } = useShift();
+  const { activeShift, refreshShift } = useShift();
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [activeTab, setActiveTab] = useState<"ALL" | OrderStatus>("ALL");
@@ -98,6 +98,7 @@ export default function OrdersPage() {
       await updateOrderStatus(order.id, "CANCELLED");
       toast.success(`ยกเลิกบิล #${order.id} แล้ว`);
       await refresh();
+      void refreshShift().catch(() => {});
     } catch (error) {
       toast.error((error as Error).message);
     }

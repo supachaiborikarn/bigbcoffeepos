@@ -1,6 +1,7 @@
 import prisma from "../prisma.js";
-import { getSalesSummary } from "../store/reports.js";
+import { getDailyCloseReport, getSalesSummary } from "../store/reports.js";
 import { createOrder, getOrders, updateOrderStatusWithContext } from "../store/orders.js";
+import { getShiftSummary } from "../store/shifts.js";
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
@@ -185,6 +186,23 @@ async function main() {
     const summary = await getSalesSummary({ branchId, source: "system" });
     assert(summary.totalOrders === 1, `Report should exclude refunded order and include one paid order, got ${summary.totalOrders}`);
     assert(summary.totalRevenue === 100, `Report revenue mismatch: ${summary.totalRevenue}`);
+
+    const shiftSummary = await getShiftSummary(shiftId!);
+    assert(shiftSummary?.totals.totalOrders === 1, `Shift summary should exclude refunded order, got ${shiftSummary?.totals.totalOrders}`);
+    assert(shiftSummary?.totals.totalSales === 100, `Shift summary revenue should be 100, got ${shiftSummary?.totals.totalSales}`);
+
+    const todayBangkok = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Bangkok",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+    const dayClose = await getDailyCloseReport({ date: todayBangkok, branchId, source: "system" });
+    assert(dayClose.totals.totalOrders === 1, `Daily close should exclude refunded order, got ${dayClose.totals.totalOrders}`);
+    assert(dayClose.totals.totalRevenue === 100, `Daily close revenue mismatch: ${dayClose.totals.totalRevenue}`);
+    const dayShift = dayClose.shifts.find((item) => item.id === shiftId);
+    assert(dayShift?.totalOrders === 1, `Daily close shift summary should exclude refunded order, got ${dayShift?.totalOrders}`);
+    assert(dayShift?.totalSales === 100, `Daily close shift revenue mismatch: ${dayShift?.totalSales}`);
 
     console.log("Checkout integration checks passed");
     console.log(`Created/refunded order: #${order.id}`);

@@ -4,6 +4,7 @@ type Props = {
   item: MenuItem;
   onClick: (item: MenuItem) => void;
   variantCount?: number;
+  priceLabel?: string;
 };
 
 const formatter = new Intl.NumberFormat("th-TH", {
@@ -39,7 +40,7 @@ function isTopSeller(item: MenuItem) {
   return TOP_SELLER_LABELS.some((label) => `${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""}`.toLowerCase().includes(label));
 }
 
-export default function ProductCard({ item, onClick, variantCount = 0 }: Props) {
+export default function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
   const topSeller = isTopSeller(item);
   const hasFeaturedPhoto = topSeller && Boolean(item.imageUrl?.trim());
   const metaLabel = variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || item.category;
@@ -123,7 +124,7 @@ export default function ProductCard({ item, onClick, variantCount = 0 }: Props) 
 
       <div style={{ display: "flex", justifyContent: "flex-end", width: "100%", alignItems: "center" }}>
         <span className="menu-card__price" style={{ fontWeight: 800, color: "var(--brand-hover)", fontSize: "16px", letterSpacing: 0 }}>
-          {formatter.format(item.basePrice)}
+          {priceLabel ?? formatter.format(item.basePrice)}
         </span>
       </div>
     </button>

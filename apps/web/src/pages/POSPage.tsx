@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Link } from "react-router-dom";
+import { Settings } from "lucide-react";
 import { createCustomer, getCustomers, getMenu, getRecipes } from "../api";
 import type { Customer, DiscountRule, MenuItem, PaymentMethod } from "../types";
+import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
 import { useCart } from "../contexts/CartContext";
 import { useShift } from "../contexts/ShiftContext";
@@ -22,6 +25,7 @@ const paymentLabels: Record<PaymentMethod, string> = {
   CARD: "บัตรเครดิต",
   EWALLET: "E-Wallet"
 };
+const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
 
 function formatMoney(value: number) {
   return moneyFormatter.format(value);
@@ -58,6 +62,7 @@ export default function POSPage() {
 
   const { activeBranch } = useBranch();
   const { activeShift } = useShift();
+  const { user } = useAuth();
   const toast = useToast();
   const {
     cart,
@@ -136,6 +141,7 @@ export default function POSPage() {
   const maxRedeemablePoints = selectedMember
     ? Math.min(selectedMember.points, Math.floor(Math.max(0, subtotal - discountAmount)))
     : 0;
+  const canManageMenu = (ROLE_LEVEL[user?.role ?? "cashier"] ?? 0) >= 2;
 
   const addCartItem = (item: MenuItem, qty: number = 1, modifiers: import("../types").Modifier[] = []) => {
     addItem({
@@ -309,11 +315,19 @@ export default function POSPage() {
               <h2 style={{ fontSize: "20px", fontWeight: "bold", color: "var(--pos-sidebar)" }}>ขายสินค้า (POS)</h2>
               <p className="muted" style={{ fontSize: "12px" }}>{activeBranch?.name}</p>
             </div>
-            {recipeCount === 0 && (
-              <span className="badge badge--warning" title="ระบบขายได้ แต่ยังไม่มีสูตรสำหรับตัดวัตถุดิบออกจากสต็อกอัตโนมัติ">
-                ยังไม่มีสูตรตัดสต็อก
-              </span>
-            )}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+              {recipeCount === 0 && (
+                <span className="badge badge--warning" title="ระบบขายได้ แต่ยังไม่มีสูตรสำหรับตัดวัตถุดิบออกจากสต็อกอัตโนมัติ">
+                  ยังไม่มีสูตรตัดสต็อก
+                </span>
+              )}
+              {canManageMenu && (
+                <Link to="/inventory?tab=products&manage=menu" className="btn btn--ghost">
+                  <Settings size={16} />
+                  จัดการเมนู
+                </Link>
+              )}
+            </div>
           </div>
           
           <div style={{ display: "flex", gap: "16px" }}>

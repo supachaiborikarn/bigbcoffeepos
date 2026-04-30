@@ -8,6 +8,35 @@ export async function getMenuItem(id: number) {
   return prisma.menuItem.findUnique({ where: { id } });
 }
 
+export async function setMenuGroupActive(input: {
+  optionGroup: string;
+  category: string;
+  branchType: string;
+  active: boolean;
+}) {
+  const optionGroup = input.optionGroup.trim();
+  const category = input.category.trim();
+  if (!optionGroup || !category) return [];
+
+  await prisma.menuItem.updateMany({
+    where: {
+      optionGroup,
+      category,
+      branchType: input.branchType
+    },
+    data: { active: input.active }
+  });
+
+  return prisma.menuItem.findMany({
+    where: {
+      optionGroup,
+      category,
+      branchType: input.branchType
+    },
+    orderBy: { id: "asc" }
+  });
+}
+
 export async function addMenuItem(input: {
   name: string;
   category: string;

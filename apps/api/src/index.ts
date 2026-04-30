@@ -12,7 +12,7 @@ if (!databaseUrl || databaseUrl.startsWith("file:") || databaseUrl.includes("pla
 
 import {
   getBranches, getCustomers, getCustomerInsights, addCustomer, updateCustomer,
-  getMenu, addMenuItem, updateMenuItem,
+  getMenu, addMenuItem, setMenuGroupActive, updateMenuItem,
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
@@ -278,6 +278,35 @@ app.put("/api/menu/:id", requireRole("admin", "manager"), async (req, res) => {
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
   audit("menu.updated", req, { menuItemId: id });
   return res.json({ item });
+});
+app.delete("/api/menu/:id", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const item = await updateMenuItem(id, { active: false });
+  if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
+  audit("menu.deactivated", req, { menuItemId: id });
+  return res.json({ item });
+});
+app.post("/api/menu/:id/restore", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const item = await updateMenuItem(id, { active: true });
+  if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
+  audit("menu.restored", req, { menuItemId: id });
+  return res.json({ item });
+});
+app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req, res) => {
+  const optionGroup = isStr(req.body?.optionGroup) ? req.body.optionGroup.trim() : "";
+  const category = isStr(req.body?.category) ? req.body.category.trim() : "";
+  const branchType = parseBranchType(req.body?.branchType);
+  const active = req.body?.active === true;
+  if (!optionGroup || !category || !branchType || typeof req.body?.active !== "boolean") {
+    return res.status(400).json({ error: "ข้อมูลการ์ดเมนูไม่ครบ" });
+  }
+  const items = await setMenuGroupActive({ optionGroup, category, branchType, active });
+  if (!items.length) return res.status(404).json({ error: "ไม่พบการ์ดเมนู" });
+  audit(active ? "menu.group.restored" : "menu.group.deactivated", req, { optionGroup, category, branchType, count: items.length });
+  return res.json({ items });
 });
 
 /* ─── Ingredients & Inventory ─── */

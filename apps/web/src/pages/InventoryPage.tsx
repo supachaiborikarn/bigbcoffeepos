@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, PackageCheck, Plus, Save, Search, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, EyeOff, PackageCheck, Plus, RotateCcw, Save, Search, X } from "lucide-react";
 import {
   createIngredient,
   createMenuItem,
   createPurchase,
   createStockAdjustment,
+  deactivateMenuItem,
   getIngredients,
   getInventory,
   getMenu,
@@ -12,6 +14,8 @@ import {
   getRecipe,
   getRecipeCoverage,
   getStockMovements,
+  restoreMenuItem,
+  setMenuGroupActive,
   updateInventoryItem,
   updateMenuItem,
   updateRecipe
@@ -113,6 +117,26 @@ type RecipeLineForm = {
   qty: string;
 };
 
+type TabType = "products" | "recipes" | "ingredients" | "movements";
+
+type MenuCardGroup = {
+  key: string;
+  label: string;
+  category: string;
+  branchType: MenuItem["branchType"];
+  items: MenuItem[];
+  hasGroupedVariants: boolean;
+  activeCount: number;
+  inactiveCount: number;
+  minPrice: number;
+  maxPrice: number;
+};
+
+type MenuCardFormState = {
+  label: string;
+  category: string;
+};
+
 function formatMoney(value: number) {
   return moneyFormatter.format(value);
 }
@@ -172,9 +196,62 @@ function normalizeText(value: string) {
   return value.toLowerCase().replace(/\s+/g, "");
 }
 
+function parseInventoryTab(value: string | null): TabType {
+  return value === "recipes" || value === "ingredients" || value === "movements" ? value : "products";
+}
+
+function getMenuCardKey(item: MenuItem) {
+  return item.optionGroup
+    ? `group:${item.branchType}:${item.category}:${item.optionGroup}`
+    : `item:${item.id}`;
+}
+
+function groupMenuCards(items: MenuItem[]) {
+  const groups = new Map<string, MenuItem[]>();
+  items.forEach((item) => {
+    const key = getMenuCardKey(item);
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  });
+
+  return Array.from(groups.entries()).map(([key, variants]) => {
+    const sorted = [...variants].sort((a, b) => {
+      const aLabel = a.optionLabel ?? a.name;
+      const bLabel = b.optionLabel ?? b.name;
+      return a.basePrice - b.basePrice || aLabel.localeCompare(bLabel, "th");
+    });
+    const primary = sorted[0];
+    const prices = sorted.map((item) => item.basePrice);
+    return {
+      key,
+      label: primary.optionGroup || primary.name,
+      category: primary.category,
+      branchType: primary.branchType,
+      items: sorted,
+      hasGroupedVariants: Boolean(primary.optionGroup),
+      activeCount: sorted.filter((item) => item.active).length,
+      inactiveCount: sorted.filter((item) => !item.active).length,
+      minPrice: Math.min(...prices),
+      maxPrice: Math.max(...prices)
+    } satisfies MenuCardGroup;
+  }).sort((a, b) => a.category.localeCompare(b.category, "th") || a.label.localeCompare(b.label, "th"));
+}
+
+function menuCardToForm(group: MenuCardGroup): MenuCardFormState {
+  return {
+    label: group.label,
+    category: group.category
+  };
+}
+
+function formatPriceRange(group: MenuCardGroup) {
+  if (group.minPrice !== group.maxPrice) return `${formatMoney(group.minPrice)}-${formatMoney(group.maxPrice)}`;
+  return formatMoney(group.minPrice);
+}
+
 export default function InventoryPage() {
   const { activeBranch } = useBranch();
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const defaultBranchType = activeBranch?.branchType ?? "coffee";
 
@@ -196,6 +273,9 @@ export default function InventoryPage() {
   const [productCategory, setProductCategory] = useState("ทั้งหมด");
   const [productStatus, setProductStatus] = useState<"all" | "active" | "inactive">("all");
   const [productPage, setProductPage] = useState(1);
+  const [selectedMenuCardKey, setSelectedMenuCardKey] = useState<string | null>(null);
+  const [menuCardEditForm, setMenuCardEditForm] = useState<MenuCardFormState | null>(null);
+  const [variantSourceCardKey, setVariantSourceCardKey] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<MenuItem | null>(null);
   const [productEditForm, setProductEditForm] = useState<ProductFormState | null>(null);
 
@@ -210,8 +290,14 @@ export default function InventoryPage() {
   const [recipeLines, setRecipeLines] = useState<RecipeLineForm[]>([]);
   const [isRecipeLoading, setIsRecipeLoading] = useState(false);
 
-  type TabType = "products" | "recipes" | "ingredients" | "movements";
-  const [activeTab, setActiveTab] = useState<TabType>("products");
+  const [activeTab, setActiveTabState] = useState<TabType>(() => parseInventoryTab(searchParams.get("tab")));
+
+  const setActiveTab = (tab: TabType) => {
+    setActiveTabState(tab);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", tab);
+    setSearchParams(next, { replace: true });
+  };
 
   const lowStockItems = useMemo(
     () => inventory.filter((item) => item.stockQty <= item.reorderLevel),
@@ -228,25 +314,40 @@ export default function InventoryPage() {
     return ["ทั้งหมด", ...Array.from(categories).sort((a, b) => a.localeCompare(b, "th"))];
   }, [branchProducts]);
 
-  const visibleProducts = useMemo(() => {
+  const menuCardGroups = useMemo(() => groupMenuCards(branchProducts), [branchProducts]);
+
+  const visibleMenuCards = useMemo(() => {
     const query = productSearch.trim().toLowerCase();
-    return branchProducts.filter((item) => {
-      const searchable = `${item.name} ${item.category} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.sku ?? ""} ${item.barcode ?? ""}`.toLowerCase();
+    return menuCardGroups.filter((group) => {
+      const searchable = [
+        group.label,
+        group.category,
+        branchTypeLabels[group.branchType],
+        ...group.items.flatMap((item) => [item.name, item.optionLabel ?? "", item.sku ?? "", item.barcode ?? ""])
+      ].join(" ").toLowerCase();
       if (query && !searchable.includes(query)) return false;
-      if (productCategory !== "ทั้งหมด" && item.category !== productCategory) return false;
-      if (productStatus === "active" && !item.active) return false;
-      if (productStatus === "inactive" && item.active) return false;
+      if (productCategory !== "ทั้งหมด" && group.category !== productCategory) return false;
+      if (productStatus === "active" && group.activeCount === 0) return false;
+      if (productStatus === "inactive" && group.inactiveCount === 0) return false;
       return true;
     });
-  }, [branchProducts, productCategory, productSearch, productStatus]);
+  }, [menuCardGroups, productCategory, productSearch, productStatus]);
 
-  const productPageCount = Math.max(1, Math.ceil(visibleProducts.length / PRODUCT_PAGE_SIZE));
-  const paginatedProducts = useMemo(() => {
+  const productPageCount = Math.max(1, Math.ceil(visibleMenuCards.length / PRODUCT_PAGE_SIZE));
+  const paginatedMenuCards = useMemo(() => {
     const start = (productPage - 1) * PRODUCT_PAGE_SIZE;
-    return visibleProducts.slice(start, start + PRODUCT_PAGE_SIZE);
-  }, [productPage, visibleProducts]);
-  const productStartIndex = visibleProducts.length === 0 ? 0 : (productPage - 1) * PRODUCT_PAGE_SIZE + 1;
-  const productEndIndex = Math.min(productPage * PRODUCT_PAGE_SIZE, visibleProducts.length);
+    return visibleMenuCards.slice(start, start + PRODUCT_PAGE_SIZE);
+  }, [productPage, visibleMenuCards]);
+  const productStartIndex = visibleMenuCards.length === 0 ? 0 : (productPage - 1) * PRODUCT_PAGE_SIZE + 1;
+  const productEndIndex = Math.min(productPage * PRODUCT_PAGE_SIZE, visibleMenuCards.length);
+  const selectedMenuCard = useMemo(
+    () => selectedMenuCardKey ? menuCardGroups.find((group) => group.key === selectedMenuCardKey) ?? null : null,
+    [menuCardGroups, selectedMenuCardKey]
+  );
+  const variantSourceCard = useMemo(
+    () => variantSourceCardKey ? menuCardGroups.find((group) => group.key === variantSourceCardKey) ?? null : null,
+    [menuCardGroups, variantSourceCardKey]
+  );
 
   const visibleStock = useMemo(() => {
     const query = stockSearch.trim().toLowerCase();
@@ -261,6 +362,7 @@ export default function InventoryPage() {
   }, [ingredients]);
 
   const activeProductCount = useMemo(() => branchProducts.filter((item) => item.active).length, [branchProducts]);
+  const activeMenuCardCount = useMemo(() => menuCardGroups.filter((group) => group.activeCount > 0).length, [menuCardGroups]);
 
   const recipeCoverageByMenuId = useMemo(() => {
     const map = new Map<number, RecipeCoverageReport["items"][number]>();
@@ -351,12 +453,36 @@ export default function InventoryPage() {
   }, [defaultBranchType]);
 
   useEffect(() => {
+    setActiveTabState(parseInventoryTab(searchParams.get("tab")));
+  }, [searchParams]);
+
+  useEffect(() => {
     setProductPage(1);
   }, [productCategory, productSearch, productStatus]);
 
   useEffect(() => {
     setProductPage((current) => Math.min(current, productPageCount));
   }, [productPageCount]);
+
+  useEffect(() => {
+    if (selectedMenuCardKey && !menuCardGroups.some((group) => group.key === selectedMenuCardKey)) {
+      setSelectedMenuCardKey(null);
+      setMenuCardEditForm(null);
+      return;
+    }
+    if (visibleMenuCards.length === 0) {
+      setSelectedMenuCardKey(null);
+      setMenuCardEditForm(null);
+      return;
+    }
+    if (!selectedMenuCardKey || !visibleMenuCards.some((group) => group.key === selectedMenuCardKey)) {
+      setSelectedMenuCardKey(visibleMenuCards[0].key);
+    }
+  }, [menuCardGroups, selectedMenuCardKey, visibleMenuCards]);
+
+  useEffect(() => {
+    setMenuCardEditForm(selectedMenuCard ? menuCardToForm(selectedMenuCard) : null);
+  }, [selectedMenuCard?.key]);
 
   useEffect(() => {
     refreshInventory().catch(() => {});
@@ -378,7 +504,7 @@ export default function InventoryPage() {
 
     setIsSubmitting(true);
     try {
-      await createMenuItem({
+      const created = await createMenuItem({
         name: menuForm.name.trim(),
         category: menuForm.category.trim(),
         basePrice,
@@ -392,9 +518,25 @@ export default function InventoryPage() {
         optionLabel: menuForm.optionLabel.trim() || undefined,
         branchType: menuForm.branchType
       });
+      const variantSourceGroup = variantSourceCardKey ? menuCardGroups.find((group) => group.key === variantSourceCardKey) : null;
+      if (
+        variantSourceGroup
+        && !variantSourceGroup.hasGroupedVariants
+        && variantSourceGroup.items.length === 1
+        && menuForm.optionGroup.trim()
+      ) {
+        const sourceItem = variantSourceGroup.items[0];
+        await updateMenuItem(sourceItem.id, {
+          category: menuForm.category.trim(),
+          optionGroup: menuForm.optionGroup.trim(),
+          optionLabel: sourceItem.optionLabel || "เดิม"
+        });
+      }
       setMenuForm(createBlankProductForm(defaultBranchType));
+      setVariantSourceCardKey(null);
+      setSelectedMenuCardKey(getMenuCardKey(created));
       await refreshInventory();
-      toast.success("เพิ่มสินค้าสำเร็จ");
+      toast.success("เพิ่มเมนูสำเร็จ");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -403,8 +545,99 @@ export default function InventoryPage() {
   };
 
   const handleProductEditStart = (item: MenuItem) => {
+    setSelectedMenuCardKey(getMenuCardKey(item));
     setSelectedProduct(item);
     setProductEditForm(productToForm(item));
+  };
+
+  const handleMenuCardSelect = (group: MenuCardGroup) => {
+    setSelectedMenuCardKey(group.key);
+    setMenuCardEditForm(menuCardToForm(group));
+    setSelectedProduct(null);
+    setProductEditForm(null);
+  };
+
+  const handlePrepareNewMenu = () => {
+    setVariantSourceCardKey(null);
+    setMenuForm(createBlankProductForm(defaultBranchType));
+  };
+
+  const handlePrepareNewVariant = (group: MenuCardGroup) => {
+    setVariantSourceCardKey(group.key);
+    setMenuForm({
+      ...createBlankProductForm(group.branchType),
+      name: "",
+      category: group.category,
+      optionGroup: group.label,
+      optionLabel: "",
+      branchType: group.branchType,
+      active: true
+    });
+  };
+
+  const handleMenuCardUpdate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedMenuCard || !menuCardEditForm) return;
+    const label = menuCardEditForm.label.trim();
+    const category = menuCardEditForm.category.trim();
+    if (!label || !category) {
+      toast.error("กรอกชื่อการ์ดและหมวดหมู่ให้ครบ");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const updatedItems = await Promise.all(selectedMenuCard.items.map((item) => updateMenuItem(item.id, selectedMenuCard.hasGroupedVariants
+        ? { optionGroup: label, category }
+        : { name: label, category }
+      )));
+      setSelectedMenuCardKey(getMenuCardKey(updatedItems[0]));
+      await refreshInventory();
+      toast.success("บันทึกการ์ดเมนูแล้ว");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSetMenuCardActive = async (group: MenuCardGroup, active: boolean) => {
+    setIsSubmitting(true);
+    try {
+      if (group.hasGroupedVariants) {
+        await setMenuGroupActive({
+          optionGroup: group.label,
+          category: group.category,
+          branchType: group.branchType,
+          active
+        });
+      } else {
+        const item = group.items[0];
+        if (active) await restoreMenuItem(item.id);
+        else await deactivateMenuItem(item.id);
+      }
+      await refreshInventory();
+      toast.success(active ? "กู้คืนการ์ดเมนูแล้ว" : "ปิดขายการ์ดเมนูแล้ว");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSetProductActive = async (item: MenuItem, active: boolean) => {
+    setIsSubmitting(true);
+    try {
+      const updated = active ? await restoreMenuItem(item.id) : await deactivateMenuItem(item.id);
+      setSelectedProduct((current) => current?.id === item.id ? updated : current);
+      setProductEditForm((current) => selectedProduct?.id === item.id && current ? productToForm(updated) : current);
+      await refreshInventory();
+      toast.success(active ? "กู้คืนตัวเลือกแล้ว" : "ปิดขายตัวเลือกแล้ว");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleRecipeProductSelect = async (item: MenuItem) => {
@@ -552,6 +785,7 @@ export default function InventoryPage() {
       });
       setSelectedProduct(updated);
       setProductEditForm(productToForm(updated));
+      setSelectedMenuCardKey(getMenuCardKey(updated));
       await refreshInventory();
       toast.success("บันทึกข้อมูลสินค้าสำเร็จ");
     } catch (err) {
@@ -705,17 +939,17 @@ export default function InventoryPage() {
       <section className="inventory-summary">
         <div>
           <p className="eyebrow">Inventory Control</p>
-          <h1>สต็อกสินค้า</h1>
-          <p className="muted">{activeBranch?.name ?? "ยังไม่ได้เลือกสาขา"} · จัดการสินค้าเปิดขายและสต็อกวัตถุดิบของสาขา</p>
+          <h1>เมนูขาย/สต็อก</h1>
+          <p className="muted">{activeBranch?.name ?? "ยังไม่ได้เลือกสาขา"} · จัดการการ์ดเมนู ตัวเลือก ราคา และสต็อกวัตถุดิบของสาขา</p>
         </div>
         <div className="inventory-kpis" style={{ display: "flex", gap: "16px", marginTop: "16px" }}>
           <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>สินค้าเปิดขาย</span>
-            <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{activeProductCount}</strong>
+            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>การ์ดเมนูเปิดขาย</span>
+            <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{activeMenuCardCount}</strong>
           </div>
           <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>วัตถุดิบ (เมล็ด, นม, แก้ว)</span>
-            <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{inventory.length}</strong>
+            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>ตัวเลือกเปิดขาย</span>
+            <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{activeProductCount}</strong>
           </div>
           <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
             <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>แจ้งเตือนสต็อกต่ำ</span>
@@ -759,172 +993,261 @@ export default function InventoryPage() {
       {/* PRODUCTS TAB */}
       {activeTab === "products" && (
         <section className="inventory-layout" style={{ animation: "slideUp 0.2s ease-out" }}>
-          <section className="panel inventory-product-panel" style={{ flex: 2 }}>
-        <div className="panel__header">
-          <div>
-            <h2>รายการสินค้า</h2>
-            <p className="muted">ดู ค้นหา และแก้ไขสินค้าเดิมที่ใช้ขายหน้าร้าน</p>
-          </div>
-          <span className="badge">{visibleProducts.length} รายการ</span>
-        </div>
+          <section className="panel inventory-product-panel" style={{ flex: 2, minWidth: 0 }}>
+            <div className="panel__header">
+              <div>
+                <h2>การ์ดเมนูขาย</h2>
+                <p className="muted">จัดการการ์ดที่แสดงบนหน้า POS และตัวเลือกภายในแต่ละการ์ด</p>
+              </div>
+              <div className="row-actions" style={{ alignItems: "center", gap: 8 }}>
+                <button type="button" className="btn btn--ghost" onClick={handlePrepareNewMenu}>
+                  <Plus size={16} />
+                  เพิ่มเมนู
+                </button>
+                <span className="badge">{visibleMenuCards.length} การ์ด</span>
+              </div>
+            </div>
 
-        <div className="inventory-toolbar">
-          <label className="inventory-search">
-            <Search size={16} />
-            <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="ค้นหาชื่อ / SKU / บาร์โค้ด" />
-          </label>
-          <select className="input" value={productCategory} onChange={(e) => setProductCategory(e.target.value)}>
-            {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
-          </select>
-          <select className="input" value={productStatus} onChange={(e) => setProductStatus(e.target.value as typeof productStatus)}>
-            <option value="all">ทุกสถานะ</option>
-            <option value="active">เปิดขาย</option>
-            <option value="inactive">ปิดขาย</option>
-          </select>
-        </div>
+            <div className="inventory-toolbar">
+              <label className="inventory-search">
+                <Search size={16} />
+                <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="ค้นหาการ์ด / ตัวเลือก / SKU / บาร์โค้ด" />
+              </label>
+              <select className="input" value={productCategory} onChange={(e) => setProductCategory(e.target.value)}>
+                {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+              </select>
+              <select className="input" value={productStatus} onChange={(e) => setProductStatus(e.target.value as typeof productStatus)}>
+                <option value="all">ทุกสถานะ</option>
+                <option value="active">เปิดขาย</option>
+                <option value="inactive">มีรายการปิดขาย</option>
+              </select>
+            </div>
 
-        <div className="inventory-table-wrap">
-          <table className="inventory-table">
-            <thead>
-              <tr>
-                <th>สินค้า</th>
-                <th>SKU / Barcode</th>
-                <th>หมวด</th>
-                <th>ราคา</th>
-                <th>ต้นทุน</th>
-                <th>สาขา</th>
-                <th>สถานะ</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedProducts.map((item) => (
-                <tr key={item.id} className={selectedProduct?.id === item.id ? "is-selected" : ""}>
-                  <td>
-                    <strong>{item.name}</strong>
-                    <span className="muted">
-                      #{item.id}
-                      {item.optionGroup ? ` · หน้าร้าน: ${item.optionGroup}` : ""}
-                      {item.optionLabel ? ` · ตัวเลือก: ${item.optionLabel}` : ""}
-                    </span>
-                  </td>
-                  <td>
-                    <span>{item.sku || "-"}</span>
-                    <small>{item.barcode || "ไม่มีบาร์โค้ด"}</small>
-                  </td>
-                  <td>{item.category}</td>
-                  <td>{formatMoney(item.basePrice)}</td>
-                  <td>{item.cost === null || item.cost === undefined ? "-" : formatMoney(item.cost)}</td>
-                  <td>{branchTypeLabels[item.branchType]}</td>
-                  <td><span className={`status-badge ${item.active ? "status-badge--active" : "status-badge--inactive"}`}>{item.active ? "เปิดขาย" : "ปิดขาย"}</span></td>
-                  <td>
-                    <div className="row-actions">
-                      <button type="button" className="icon-action" onClick={() => handleProductEditStart(item)} aria-label={`แก้ไข ${item.name}`}>
-                        <Edit2 size={16} />
+            <div className="menu-card-manager">
+              {paginatedMenuCards.map((group) => {
+                const isInactive = group.activeCount === 0;
+                const isSelected = selectedMenuCardKey === group.key;
+                const statusText = isInactive ? "ปิดขาย" : group.inactiveCount > 0 ? "เปิดบางส่วน" : "เปิดขาย";
+                return (
+                  <div key={group.key} className={`menu-manager-card ${isSelected ? "is-selected" : ""} ${isInactive ? "is-inactive" : ""}`}>
+                    <button type="button" className="menu-manager-card__main" onClick={() => handleMenuCardSelect(group)}>
+                      <span className="menu-manager-card__top">
+                        <strong>{group.label}</strong>
+                        <span className={`status-badge ${isInactive ? "status-badge--inactive" : "status-badge--active"}`}>{statusText}</span>
+                      </span>
+                      <small>{group.category} · {branchTypeLabels[group.branchType]} · {group.items.length} ตัวเลือก</small>
+                      <span className="menu-manager-card__price">{formatPriceRange(group)}</span>
+                    </button>
+                    <div className="menu-manager-card__actions">
+                      <button type="button" className="icon-action" onClick={() => handlePrepareNewVariant(group)} aria-label={`เพิ่มตัวเลือก ${group.label}`}>
+                        <Plus size={16} />
                       </button>
-                      <button type="button" className="icon-action" onClick={() => handleRecipeProductSelect(item)} aria-label={`ตั้งสูตร ${item.name}`}>
-                        <PackageCheck size={16} />
+                      <button
+                        type="button"
+                        className="icon-action"
+                        onClick={() => handleSetMenuCardActive(group, isInactive)}
+                        disabled={isSubmitting}
+                        aria-label={isInactive ? `กู้คืน ${group.label}` : `ปิดขาย ${group.label}`}
+                      >
+                        {isInactive ? <RotateCcw size={16} /> : <EyeOff size={16} />}
                       </button>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {visibleProducts.length === 0 && <div className="empty">ไม่พบสินค้า</div>}
-        </div>
-
-        {visibleProducts.length > 0 && (
-          <div className="inventory-pagination">
-            <span>แสดง {productStartIndex}-{productEndIndex} จาก {visibleProducts.length} รายการ</span>
-            <div>
-              <button type="button" className="btn btn--ghost" onClick={() => setProductPage((page) => Math.max(1, page - 1))} disabled={productPage === 1}>
-                <ChevronLeft size={16} />
-                ก่อนหน้า
-              </button>
-              <strong>หน้า {productPage} / {productPageCount}</strong>
-              <button type="button" className="btn btn--ghost" onClick={() => setProductPage((page) => Math.min(productPageCount, page + 1))} disabled={productPage === productPageCount}>
-                ถัดไป
-                <ChevronRight size={16} />
-              </button>
+                  </div>
+                );
+              })}
+              {visibleMenuCards.length === 0 && <div className="empty">ไม่พบการ์ดเมนู</div>}
             </div>
-          </div>
-        )}
 
-        {selectedProduct && productEditForm && (
-          <form className="inventory-editor" onSubmit={handleProductUpdate}>
-            <div className="inventory-editor__header">
-              <div>
-                <h3>แก้ไขสินค้า</h3>
-                <p className="muted">{selectedProduct.name}</p>
+            {visibleMenuCards.length > 0 && (
+              <div className="inventory-pagination">
+                <span>แสดง {productStartIndex}-{productEndIndex} จาก {visibleMenuCards.length} การ์ด</span>
+                <div>
+                  <button type="button" className="btn btn--ghost" onClick={() => setProductPage((page) => Math.max(1, page - 1))} disabled={productPage === 1}>
+                    <ChevronLeft size={16} />
+                    ก่อนหน้า
+                  </button>
+                  <strong>หน้า {productPage} / {productPageCount}</strong>
+                  <button type="button" className="btn btn--ghost" onClick={() => setProductPage((page) => Math.min(productPageCount, page + 1))} disabled={productPage === productPageCount}>
+                    ถัดไป
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
-              <button type="button" className="icon-action" onClick={handleProductEditCancel} aria-label="ปิดฟอร์มแก้ไขสินค้า">
-                <X size={16} />
-              </button>
+            )}
+
+            {selectedMenuCard && menuCardEditForm && (
+              <div className="menu-card-detail">
+                <form className="inventory-editor menu-card-editor" onSubmit={handleMenuCardUpdate}>
+                  <div className="inventory-editor__header">
+                    <div>
+                      <h3>แก้ไขการ์ดเมนู</h3>
+                      <p className="muted">{selectedMenuCard.label} · {selectedMenuCard.items.length} ตัวเลือก</p>
+                    </div>
+                    <button type="button" className="btn btn--ghost" onClick={() => handlePrepareNewVariant(selectedMenuCard)}>
+                      <Plus size={16} />
+                      เพิ่มตัวเลือก
+                    </button>
+                  </div>
+                  <div className="inventory-form-grid">
+                    <input className="input" value={menuCardEditForm.label} onChange={(e) => setMenuCardEditForm({ ...menuCardEditForm, label: e.target.value })} placeholder="ชื่อการ์ดเมนู" />
+                    <input className="input" value={menuCardEditForm.category} onChange={(e) => setMenuCardEditForm({ ...menuCardEditForm, category: e.target.value })} placeholder="หมวดหมู่" />
+                    <div className="menu-card-preview" aria-label="ตัวอย่างการ์ดเมนู">
+                      <span>{selectedMenuCard.items.length} ตัวเลือก</span>
+                      <strong>{menuCardEditForm.label || selectedMenuCard.label}</strong>
+                      <b>{formatPriceRange(selectedMenuCard)}</b>
+                    </div>
+                  </div>
+                  <div className="inventory-editor__actions">
+                    <button
+                      type="button"
+                      className={`btn ${selectedMenuCard.activeCount === 0 ? "btn--ghost" : "btn--danger"}`}
+                      onClick={() => handleSetMenuCardActive(selectedMenuCard, selectedMenuCard.activeCount === 0)}
+                      disabled={isSubmitting}
+                    >
+                      {selectedMenuCard.activeCount === 0 ? <RotateCcw size={16} /> : <EyeOff size={16} />}
+                      {selectedMenuCard.activeCount === 0 ? "กู้คืนการ์ด" : "ปิดขายการ์ด"}
+                    </button>
+                    <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
+                      <Save size={16} />
+                      บันทึกการ์ด
+                    </button>
+                  </div>
+                </form>
+
+                <div className="inventory-table-wrap menu-variant-table">
+                  <table className="inventory-table">
+                    <thead>
+                      <tr>
+                        <th>ตัวเลือก</th>
+                        <th>SKU / Barcode</th>
+                        <th>ราคา</th>
+                        <th>ต้นทุน</th>
+                        <th>สถานะ</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedMenuCard.items.map((item) => (
+                        <tr key={item.id} className={selectedProduct?.id === item.id ? "is-selected" : ""}>
+                          <td>
+                            <strong>{item.optionLabel || item.name}</strong>
+                            <small>#{item.id} · {item.name}</small>
+                          </td>
+                          <td>
+                            <span>{item.sku || "-"}</span>
+                            <small>{item.barcode || "ไม่มีบาร์โค้ด"}</small>
+                          </td>
+                          <td>{formatMoney(item.basePrice)}</td>
+                          <td>{item.cost === null || item.cost === undefined ? "-" : formatMoney(item.cost)}</td>
+                          <td><span className={`status-badge ${item.active ? "status-badge--active" : "status-badge--inactive"}`}>{item.active ? "เปิดขาย" : "ปิดขาย"}</span></td>
+                          <td>
+                            <div className="row-actions">
+                              <button type="button" className="icon-action" onClick={() => handleProductEditStart(item)} aria-label={`แก้ไข ${item.name}`}>
+                                <Edit2 size={16} />
+                              </button>
+                              <button type="button" className="icon-action" onClick={() => { void handleRecipeProductSelect(item); setActiveTab("recipes"); }} aria-label={`ตั้งสูตร ${item.name}`}>
+                                <PackageCheck size={16} />
+                              </button>
+                              <button
+                                type="button"
+                                className="icon-action"
+                                onClick={() => handleSetProductActive(item, !item.active)}
+                                disabled={isSubmitting}
+                                aria-label={item.active ? `ปิดขาย ${item.name}` : `กู้คืน ${item.name}`}
+                              >
+                                {item.active ? <EyeOff size={16} /> : <RotateCcw size={16} />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {selectedProduct && productEditForm && (
+              <form className="inventory-editor" onSubmit={handleProductUpdate}>
+                <div className="inventory-editor__header">
+                  <div>
+                    <h3>แก้ไขตัวเลือก</h3>
+                    <p className="muted">{selectedProduct.name}</p>
+                  </div>
+                  <button type="button" className="icon-action" onClick={handleProductEditCancel} aria-label="ปิดฟอร์มแก้ไขสินค้า">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="inventory-form-grid">
+                  <input className="input" value={productEditForm.name} onChange={(e) => setProductEditForm({ ...productEditForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
+                  <input className="input" value={productEditForm.category} onChange={(e) => setProductEditForm({ ...productEditForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
+                  <input className="input" type="number" value={productEditForm.basePrice} onChange={(e) => setProductEditForm({ ...productEditForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
+                  <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
+                  <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
+                  <input className="input" value={productEditForm.barcode} onChange={(e) => setProductEditForm({ ...productEditForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
+                  <input className="input" value={productEditForm.imageUrl} onChange={(e) => setProductEditForm({ ...productEditForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
+                  <input className="input" value={productEditForm.unit} onChange={(e) => setProductEditForm({ ...productEditForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
+                  <input className="input" type="number" value={productEditForm.taxRate} onChange={(e) => setProductEditForm({ ...productEditForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
+                  <input className="input" value={productEditForm.optionGroup} onChange={(e) => setProductEditForm({ ...productEditForm, optionGroup: e.target.value })} placeholder="ชื่อการ์ด เช่น ลาเต้" />
+                  <input className="input" value={productEditForm.optionLabel} onChange={(e) => setProductEditForm({ ...productEditForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
+                  <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
+                    <option value="coffee">ร้านกาแฟ</option>
+                    <option value="oil_service">ศูนย์บริการน้ำมัน</option>
+                  </select>
+                  <label className="toggle-line" style={{ gridColumn: "1 / -1", background: "var(--bg-subtle)", padding: "12px", borderRadius: "8px" }}>
+                    <input type="checkbox" checked={productEditForm.active} onChange={(e) => setProductEditForm({ ...productEditForm, active: e.target.checked })} />
+                    <span style={{ fontWeight: 500 }}>เปิดขายหน้าร้าน</span>
+                  </label>
+                </div>
+                <div className="inventory-editor__actions">
+                  <button type="button" className="btn btn--ghost" onClick={handleProductEditCancel}>ยกเลิก</button>
+                  <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
+                    <Save size={16} />
+                    บันทึกตัวเลือก
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
+
+          <form onSubmit={handleAddMenu} className="panel" style={{ flex: 1, height: "fit-content" }}>
+            <div className="panel__header">
+              <div>
+                <h2>{variantSourceCard ? "เพิ่มตัวเลือก" : "เพิ่มเมนูใหม่"}</h2>
+                <p className="muted">{variantSourceCard ? `เพิ่มตัวเลือกใน ${variantSourceCard.label}` : "สร้างการ์ดใหม่หรือสินค้าเดี่ยวเพื่อขายในหน้า POS"}</p>
+              </div>
+              <div className="row-actions">
+                {variantSourceCard && (
+                  <button type="button" className="icon-action" onClick={handlePrepareNewMenu} aria-label="กลับไปเพิ่มเมนูใหม่">
+                    <X size={16} />
+                  </button>
+                )}
+                <Plus size={18} />
+              </div>
             </div>
-            <div className="inventory-form-grid">
-              <input className="input" value={productEditForm.name} onChange={(e) => setProductEditForm({ ...productEditForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
-              <input className="input" value={productEditForm.category} onChange={(e) => setProductEditForm({ ...productEditForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
-              <input className="input" type="number" value={productEditForm.basePrice} onChange={(e) => setProductEditForm({ ...productEditForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
-              <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
-              <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
-              <input className="input" value={productEditForm.barcode} onChange={(e) => setProductEditForm({ ...productEditForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
-              <input className="input" value={productEditForm.imageUrl} onChange={(e) => setProductEditForm({ ...productEditForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
-              <input className="input" value={productEditForm.unit} onChange={(e) => setProductEditForm({ ...productEditForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
-              <input className="input" type="number" value={productEditForm.taxRate} onChange={(e) => setProductEditForm({ ...productEditForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
-              <input className="input" value={productEditForm.optionGroup} onChange={(e) => setProductEditForm({ ...productEditForm, optionGroup: e.target.value })} placeholder="กลุ่มตัวเลือก เช่น ลาเต้" />
-              <input className="input" value={productEditForm.optionLabel} onChange={(e) => setProductEditForm({ ...productEditForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
-              <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
+            <div className="inventory-form-grid inventory-form-grid--compact">
+              <input className="input" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
+              <input className="input" value={menuForm.category} onChange={(e) => setMenuForm({ ...menuForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
+              <input className="input" type="number" value={menuForm.basePrice} onChange={(e) => setMenuForm({ ...menuForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
+              <input className="input" type="number" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
+              <input className="input" value={menuForm.optionGroup} onChange={(e) => setMenuForm({ ...menuForm, optionGroup: e.target.value })} placeholder="ชื่อการ์ดเมนู" />
+              <input className="input" value={menuForm.optionLabel} onChange={(e) => setMenuForm({ ...menuForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
+              <input className="input" value={menuForm.sku} onChange={(e) => setMenuForm({ ...menuForm, sku: e.target.value })} placeholder="SKU" />
+              <input className="input" value={menuForm.barcode} onChange={(e) => setMenuForm({ ...menuForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
+              <input className="input" value={menuForm.imageUrl} onChange={(e) => setMenuForm({ ...menuForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
+              <input className="input" value={menuForm.unit} onChange={(e) => setMenuForm({ ...menuForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
+              <input className="input" type="number" value={menuForm.taxRate} onChange={(e) => setMenuForm({ ...menuForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
+              <select className="input" value={menuForm.branchType} onChange={(e) => setMenuForm({ ...menuForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
                 <option value="coffee">ร้านกาแฟ</option>
                 <option value="oil_service">ศูนย์บริการน้ำมัน</option>
               </select>
-              <label className="toggle-line" style={{ gridColumn: "1 / -1", background: "var(--bg-subtle)", padding: "12px", borderRadius: "8px" }}>
-                <input type="checkbox" checked={productEditForm.active} onChange={(e) => setProductEditForm({ ...productEditForm, active: e.target.checked })} />
-                <span style={{ fontWeight: 500 }}>เปิดขายหน้าร้าน</span>
-              </label>
             </div>
-            <div className="inventory-editor__actions">
-              <button type="button" className="btn btn--ghost" onClick={handleProductEditCancel}>ยกเลิก</button>
-              <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
-                <Save size={16} />
-                บันทึกสินค้า
-              </button>
-            </div>
-            </form>
-          )}
+            <button type="submit" className="btn btn--primary" disabled={isSubmitting} style={{ marginTop: 16, width: "100%" }}>
+              <PackageCheck size={16} />
+              บันทึกเมนู
+            </button>
+          </form>
         </section>
-
-        <form onSubmit={handleAddMenu} className="panel" style={{ flex: 1, height: "fit-content" }}>
-          <div className="panel__header">
-            <div>
-              <h2>เพิ่มสินค้าใหม่</h2>
-              <p className="muted">สร้างสินค้าเพื่อขายในหน้า POS</p>
-            </div>
-            <Plus size={18} />
-          </div>
-          <div className="inventory-form-grid inventory-form-grid--compact">
-            <input className="input" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
-            <input className="input" value={menuForm.category} onChange={(e) => setMenuForm({ ...menuForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
-            <input className="input" type="number" value={menuForm.basePrice} onChange={(e) => setMenuForm({ ...menuForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
-            <input className="input" type="number" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
-            <input className="input" value={menuForm.sku} onChange={(e) => setMenuForm({ ...menuForm, sku: e.target.value })} placeholder="SKU" />
-            <input className="input" value={menuForm.barcode} onChange={(e) => setMenuForm({ ...menuForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
-            <input className="input" value={menuForm.imageUrl} onChange={(e) => setMenuForm({ ...menuForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
-            <input className="input" value={menuForm.unit} onChange={(e) => setMenuForm({ ...menuForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
-            <input className="input" type="number" value={menuForm.taxRate} onChange={(e) => setMenuForm({ ...menuForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
-            <input className="input" value={menuForm.optionGroup} onChange={(e) => setMenuForm({ ...menuForm, optionGroup: e.target.value })} placeholder="กลุ่มตัวเลือก" />
-            <input className="input" value={menuForm.optionLabel} onChange={(e) => setMenuForm({ ...menuForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก" />
-            <select className="input" value={menuForm.branchType} onChange={(e) => setMenuForm({ ...menuForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
-              <option value="coffee">ร้านกาแฟ</option>
-              <option value="oil_service">ศูนย์บริการน้ำมัน</option>
-            </select>
-          </div>
-          <button type="submit" className="btn btn--primary" disabled={isSubmitting} style={{ marginTop: 16, width: "100%" }}>
-            <PackageCheck size={16} />
-            บันทึกสินค้า
-          </button>
-        </form>
-      </section>
       )}
 
       {/* RECIPES TAB */}

@@ -175,6 +175,33 @@ export async function updateMenuItem(
   return payload.item;
 }
 
+export async function deactivateMenuItem(id: number) {
+  const payload = await fetchJson<{ item: MenuItem }>(`${API_URL}/menu/${id}`, {
+    method: "DELETE"
+  });
+  return payload.item;
+}
+
+export async function restoreMenuItem(id: number) {
+  const payload = await fetchJson<{ item: MenuItem }>(`${API_URL}/menu/${id}/restore`, {
+    method: "POST"
+  });
+  return payload.item;
+}
+
+export async function setMenuGroupActive(input: {
+  optionGroup: string;
+  category: string;
+  branchType: MenuItem["branchType"];
+  active: boolean;
+}) {
+  const payload = await fetchJson<{ items: MenuItem[] }>(`${API_URL}/menu/groups/status`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+  return payload.items;
+}
+
 export async function getIngredients() {
   const payload = await fetchJson<{ items: Ingredient[] }>(`${API_URL}/ingredients`);
   return payload.items;

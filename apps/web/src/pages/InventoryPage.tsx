@@ -248,6 +248,15 @@ function formatPriceRange(group: MenuCardGroup) {
   return formatMoney(group.minPrice);
 }
 
+function inferOptionLabelFromName(name: string, groupLabel: string, fallback = "") {
+  const normalizedName = name.trim();
+  const normalizedGroup = groupLabel.trim();
+  if (!normalizedName) return fallback || "เดิม";
+  if (!normalizedGroup) return fallback || normalizedName;
+  const withoutGroup = normalizedName.replace(normalizedGroup, "").trim();
+  return withoutGroup || fallback || normalizedName;
+}
+
 export default function InventoryPage() {
   const { activeBranch } = useBranch();
   const toast = useToast();
@@ -278,6 +287,7 @@ export default function InventoryPage() {
   const [variantSourceCardKey, setVariantSourceCardKey] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<MenuItem | null>(null);
   const [productEditForm, setProductEditForm] = useState<ProductFormState | null>(null);
+  const [mergeTargetCardKey, setMergeTargetCardKey] = useState("");
 
   const [stockSearch, setStockSearch] = useState("");
   const [selectedStock, setSelectedStock] = useState<InventoryItem | null>(null);
@@ -348,6 +358,11 @@ export default function InventoryPage() {
     () => variantSourceCardKey ? menuCardGroups.find((group) => group.key === variantSourceCardKey) ?? null : null,
     [menuCardGroups, variantSourceCardKey]
   );
+  const mergeTargetCards = useMemo(() => {
+    if (!selectedProduct || !productEditForm) return [];
+    const currentKey = getMenuCardKey(selectedProduct);
+    return menuCardGroups.filter((group) => group.branchType === productEditForm.branchType && group.key !== currentKey);
+  }, [menuCardGroups, productEditForm, selectedProduct]);
 
   const visibleStock = useMemo(() => {
     const query = stockSearch.trim().toLowerCase();
@@ -488,6 +503,33 @@ export default function InventoryPage() {
     refreshInventory().catch(() => {});
   }, [activeBranch]);
 
+  const findMergeTargetCard = (
+    sourceKey: string,
+    label: string,
+    category: string,
+    branchType: MenuItem["branchType"]
+  ) => {
+    const normalizedLabel = normalizeText(label);
+    const normalizedCategory = normalizeText(category);
+    if (!normalizedLabel || !normalizedCategory) return null;
+    return menuCardGroups.find((group) => (
+      group.key !== sourceKey
+      && group.branchType === branchType
+      && normalizeText(group.label) === normalizedLabel
+      && normalizeText(group.category) === normalizedCategory
+    )) ?? null;
+  };
+
+  const convertSingleCardToGroup = async (group: MenuCardGroup, optionGroup: string, category: string) => {
+    if (group.hasGroupedVariants || group.items.length !== 1) return;
+    const item = group.items[0];
+    await updateMenuItem(item.id, {
+      category,
+      optionGroup,
+      optionLabel: item.optionLabel?.trim() || inferOptionLabelFromName(item.name, optionGroup, "เดิม")
+    });
+  };
+
   const handleAddMenu = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const basePrice = toNumber(menuForm.basePrice);
@@ -548,6 +590,7 @@ export default function InventoryPage() {
     setSelectedMenuCardKey(getMenuCardKey(item));
     setSelectedProduct(item);
     setProductEditForm(productToForm(item));
+    setMergeTargetCardKey("");
   };
 
   const handleMenuCardSelect = (group: MenuCardGroup) => {
@@ -555,14 +598,17 @@ export default function InventoryPage() {
     setMenuCardEditForm(menuCardToForm(group));
     setSelectedProduct(null);
     setProductEditForm(null);
+    setMergeTargetCardKey("");
   };
 
   const handlePrepareNewMenu = () => {
     setVariantSourceCardKey(null);
     setMenuForm(createBlankProductForm(defaultBranchType));
+    setMergeTargetCardKey("");
   };
 
   const handlePrepareNewVariant = (group: MenuCardGroup) => {
+    setMergeTargetCardKey("");
     setVariantSourceCardKey(group.key);
     setMenuForm({
       ...createBlankProductForm(group.branchType),
@@ -587,13 +633,22 @@ export default function InventoryPage() {
 
     setIsSubmitting(true);
     try {
-      const updatedItems = await Promise.all(selectedMenuCard.items.map((item) => updateMenuItem(item.id, selectedMenuCard.hasGroupedVariants
-        ? { optionGroup: label, category }
-        : { name: label, category }
+      const mergeTarget = findMergeTargetCard(selectedMenuCard.key, label, category, selectedMenuCard.branchType);
+      if (mergeTarget) await convertSingleCardToGroup(mergeTarget, label, category);
+
+      const updatedItems = await Promise.all(selectedMenuCard.items.map((item) => updateMenuItem(item.id, mergeTarget
+        ? {
+          category,
+          optionGroup: label,
+          optionLabel: item.optionLabel?.trim() || inferOptionLabelFromName(item.name, label, selectedMenuCard.hasGroupedVariants ? item.name : "เดิม")
+        }
+        : selectedMenuCard.hasGroupedVariants
+          ? { optionGroup: label, category }
+          : { name: label, category }
       )));
-      setSelectedMenuCardKey(getMenuCardKey(updatedItems[0]));
+      setSelectedMenuCardKey(mergeTarget ? `group:${selectedMenuCard.branchType}:${category}:${label}` : getMenuCardKey(updatedItems[0]));
       await refreshInventory();
-      toast.success("บันทึกการ์ดเมนูแล้ว");
+      toast.success(mergeTarget ? `รวมเข้าการ์ด ${label} แล้ว` : "บันทึกการ์ดเมนูแล้ว");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -748,6 +803,20 @@ export default function InventoryPage() {
   const handleProductEditCancel = () => {
     setSelectedProduct(null);
     setProductEditForm(null);
+    setMergeTargetCardKey("");
+  };
+
+  const handleMergeTargetChange = (targetKey: string) => {
+    setMergeTargetCardKey(targetKey);
+    const target = menuCardGroups.find((group) => group.key === targetKey);
+    if (!target) return;
+    setProductEditForm((current) => current ? {
+      ...current,
+      category: target.category,
+      optionGroup: target.label,
+      optionLabel: current.optionLabel.trim() || inferOptionLabelFromName(current.name, target.label, current.name.trim()),
+      branchType: target.branchType
+    } : current);
   };
 
   const handleProductUpdate = async (event: FormEvent<HTMLFormElement>) => {
@@ -768,9 +837,26 @@ export default function InventoryPage() {
 
     setIsSubmitting(true);
     try {
+      const name = productEditForm.name.trim();
+      const category = productEditForm.category.trim();
+      const requestedOptionGroup = productEditForm.optionGroup.trim();
+      const selectedProductKey = getMenuCardKey(selectedProduct);
+      const explicitMergeTarget = mergeTargetCardKey ? menuCardGroups.find((group) => group.key === mergeTargetCardKey) ?? null : null;
+      const manualMergeTarget = requestedOptionGroup
+        ? findMergeTargetCard(selectedProductKey, requestedOptionGroup, category, productEditForm.branchType)
+        : null;
+      const mergeTarget = explicitMergeTarget ?? manualMergeTarget;
+      const nextCategory = mergeTarget?.category ?? category;
+      const nextOptionGroup = mergeTarget?.label ?? (requestedOptionGroup || null);
+      const nextOptionLabel = nextOptionGroup
+        ? productEditForm.optionLabel.trim() || inferOptionLabelFromName(name, nextOptionGroup, name)
+        : productEditForm.optionLabel.trim() || null;
+
+      if (mergeTarget && nextOptionGroup) await convertSingleCardToGroup(mergeTarget, nextOptionGroup, nextCategory);
+
       const updated = await updateMenuItem(selectedProduct.id, {
-        name: productEditForm.name.trim(),
-        category: productEditForm.category.trim(),
+        name,
+        category: nextCategory,
         basePrice,
         cost,
         sku: productEditForm.sku.trim(),
@@ -778,16 +864,17 @@ export default function InventoryPage() {
         imageUrl: productEditForm.imageUrl.trim() || null,
         unit: productEditForm.unit.trim() || null,
         taxRate,
-        optionGroup: productEditForm.optionGroup.trim() || null,
-        optionLabel: productEditForm.optionLabel.trim() || null,
+        optionGroup: nextOptionGroup,
+        optionLabel: nextOptionLabel,
         branchType: productEditForm.branchType,
         active: productEditForm.active
       });
-      setSelectedProduct(updated);
-      setProductEditForm(productToForm(updated));
       setSelectedMenuCardKey(getMenuCardKey(updated));
       await refreshInventory();
-      toast.success("บันทึกข้อมูลสินค้าสำเร็จ");
+      setSelectedProduct(null);
+      setProductEditForm(null);
+      setMergeTargetCardKey("");
+      toast.success(mergeTarget ? `รวมเข้าการ์ด ${nextOptionGroup} แล้ว` : "บันทึกข้อมูลสินค้าสำเร็จ");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -851,7 +938,7 @@ export default function InventoryPage() {
 
     setIsSubmitting(true);
     try {
-      const updated = await updateInventoryItem(selectedStock.ingredientId, {
+      await updateInventoryItem(selectedStock.ingredientId, {
         branchId: activeBranch.id,
         name: stockEditForm.name.trim(),
         unit: stockEditForm.unit.trim(),
@@ -860,8 +947,8 @@ export default function InventoryPage() {
         reorderLevel
       });
       await refreshInventory();
-      setSelectedStock(updated);
-      setStockEditForm(stockToForm(updated));
+      setSelectedStock(null);
+      setStockEditForm(null);
       toast.success("บันทึกข้อมูลสต็อกสำเร็จ");
     } catch (err) {
       toast.error((err as Error).message);
@@ -1193,7 +1280,7 @@ export default function InventoryPage() {
                   </div>
                   <div className="inventory-form-grid">
                     <input className="input" value={productEditForm.name} onChange={(e) => setProductEditForm({ ...productEditForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
-                    <input className="input" value={productEditForm.category} onChange={(e) => setProductEditForm({ ...productEditForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
+                    <input className="input" value={productEditForm.category} onChange={(e) => { setMergeTargetCardKey(""); setProductEditForm({ ...productEditForm, category: e.target.value }); }} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
                     <input className="input" type="number" value={productEditForm.basePrice} onChange={(e) => setProductEditForm({ ...productEditForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
                     <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
                     <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
@@ -1201,7 +1288,21 @@ export default function InventoryPage() {
                     <input className="input" value={productEditForm.imageUrl} onChange={(e) => setProductEditForm({ ...productEditForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
                     <input className="input" value={productEditForm.unit} onChange={(e) => setProductEditForm({ ...productEditForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
                     <input className="input" type="number" value={productEditForm.taxRate} onChange={(e) => setProductEditForm({ ...productEditForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
-                    <input className="input" value={productEditForm.optionGroup} onChange={(e) => setProductEditForm({ ...productEditForm, optionGroup: e.target.value })} placeholder="ชื่อการ์ด เช่น ลาเต้" />
+                    <select
+                      className="input"
+                      value={mergeTargetCardKey}
+                      onChange={(e) => handleMergeTargetChange(e.target.value)}
+                      style={{ gridColumn: "1 / -1" }}
+                      disabled={mergeTargetCards.length === 0}
+                    >
+                      <option value="">{mergeTargetCards.length === 0 ? "ไม่มีการ์ดอื่นให้รวม" : "รวมเข้าการ์ดเมนูอื่น"}</option>
+                      {mergeTargetCards.map((group) => (
+                        <option key={group.key} value={group.key}>
+                          {group.category} · {group.label} · {group.items.length} ตัวเลือก{group.activeCount === 0 ? " · ปิดขาย" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <input className="input" value={productEditForm.optionGroup} onChange={(e) => { setMergeTargetCardKey(""); setProductEditForm({ ...productEditForm, optionGroup: e.target.value }); }} placeholder="ชื่อการ์ด เช่น ลาเต้" />
                     <input className="input" value={productEditForm.optionLabel} onChange={(e) => setProductEditForm({ ...productEditForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
                     <select className="input" value={productEditForm.branchType} onChange={(e) => setProductEditForm({ ...productEditForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
                       <option value="coffee">ร้านกาแฟ</option>
@@ -1216,7 +1317,7 @@ export default function InventoryPage() {
                     <button type="button" className="btn btn--ghost" onClick={handleProductEditCancel}>ยกเลิก</button>
                     <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
                       <Save size={16} />
-                      บันทึกตัวเลือก
+                      {isSubmitting ? "กำลังบันทึก..." : "บันทึกตัวเลือก"}
                     </button>
                   </div>
                 </form>

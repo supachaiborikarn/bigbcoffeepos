@@ -1,5 +1,6 @@
 import prisma from "../prisma.js";
 import { getCustomer } from "./customers.js";
+import { getCupStockRequirements } from "./cupStockSettings.js";
 
 type Modifier = { name: string; value: string; price: number };
 type PaymentDetails = { cashReceived?: number; changeAmount?: number; paymentConfirmed?: boolean; referenceNo?: string };
@@ -33,12 +34,6 @@ const ALLOWED_STATUSES = new Set(["PAID", "READY", "CANCELLED", "REFUNDED"]);
 const REVERSAL_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
 const DRINK_CATEGORIES = ["กาแฟ", "ชา", "นม/โกโก้", "เครื่องดื่ม", "เครื่องดื่มชง", "COLD", "FRAPPE", "Hot"];
 const checkoutTransactionRetries = Math.max(0, Math.floor(Number(process.env.CHECKOUT_TX_RETRIES || 5)));
-const CUP_STOCK_INGREDIENTS: Record<string, string[]> = {
-  "แก้วเย็น": ["แก้วพลาสติก 16oz", "แก้วกาแฟป่าว"],
-  "แก้วเดินทาง": ["แก้วร้อนแยก"],
-  "แก้วทานร้าน": [],
-  "แก้วมาเอง": []
-};
 const MODIFIER_CATALOG = {
   Type: new Map([
     ["Hot", { label: "Hot", price: 0 }],
@@ -239,34 +234,63 @@ function addRequiredStock(requiredStock: Map<number, number>, ingredientId: numb
   requiredStock.set(ingredientId, roundMoney((requiredStock.get(ingredientId) ?? 0) + qty));
 }
 
-async function resolveIngredientByNames(tx: any, names: string[], branchId: number) {
-  let firstMatch: { id: number; name: string } | null = null;
-  for (const name of names) {
-    const ingredient = await tx.ingredient.findFirst({ where: { name }, select: { id: true, name: true } });
-    if (!ingredient) continue;
-    firstMatch ??= ingredient;
-    const branchStock = await tx.ingredientStock.findUnique({
-      where: {
-        branchId_ingredientId: {
-          branchId,
-          ingredientId: ingredient.id
-        }
-      },
-      select: { ingredientId: true }
-    });
-    if (branchStock) return ingredient;
-  }
-  return firstMatch;
-}
-
 async function addModifierStockRequirements(tx: any, requiredStock: Map<number, number>, modifiers: Modifier[], qty: number, branchId: number) {
   for (const modifier of modifiers) {
     if (modifier.name !== "Cup") continue;
-    const ingredientNames = CUP_STOCK_INGREDIENTS[modifier.value] ?? [];
-    if (ingredientNames.length === 0) continue;
-    const ingredient = await resolveIngredientByNames(tx, ingredientNames, branchId);
-    if (!ingredient) throw new Error(`ไม่พบวัตถุดิบสำหรับตัวเลือกแก้ว: ${modifier.value}`);
-    addRequiredStock(requiredStock, ingredient.id, qty);
+    const requirements = await getCupStockRequirements(tx, branchId, modifier.value);
+    for (const requirement of requirements) {
+      addRequiredStock(requiredStock, requirement.ingredientId, requirement.qty * qty);
+    }
+  }
+}
+
+async function applyStrictStockDecrements(tx: any, branchId: number, stock: Map<number, number>, orderId: number) {
+  for (const [ingredientId, requiredQty] of stock) {
+    const decrementResult = await tx.ingredientStock.updateMany({
+      where: {
+        branchId,
+        ingredientId,
+        stockQty: { gte: requiredQty }
+      },
+      data: { stockQty: { decrement: requiredQty } }
+    });
+    if (decrementResult.count !== 1) throw new Error("สต็อกมีการเปลี่ยนแปลง กรุณาลองชำระเงินใหม่");
+    await tx.stockMovement.create({
+      data: {
+        branchId,
+        ingredientId,
+        qty: -requiredQty,
+        reason: `SALE-${orderId}`
+      }
+    });
+  }
+}
+
+async function applyFlexibleStockDecrements(tx: any, branchId: number, stock: Map<number, number>, orderId: number) {
+  for (const [ingredientId, requiredQty] of stock) {
+    await tx.ingredientStock.upsert({
+      where: {
+        branchId_ingredientId: {
+          branchId,
+          ingredientId
+        }
+      },
+      update: { stockQty: { decrement: requiredQty } },
+      create: {
+        branchId,
+        ingredientId,
+        stockQty: -requiredQty,
+        reorderLevel: 0
+      }
+    });
+    await tx.stockMovement.create({
+      data: {
+        branchId,
+        ingredientId,
+        qty: -requiredQty,
+        reason: `SALE-${orderId}`
+      }
+    });
   }
 }
 
@@ -320,40 +344,55 @@ export async function updateOrderStatusWithContext(id: number, input: {
         } : null
       };
 
-      for (const item of current.items) {
-        const stockToRestore = new Map<number, number>();
-        const recipes = await tx.recipe.findMany({ where: { menuItemId: item.menuItemId } });
-        for (const recipe of recipes) {
-          const restoreQty = recipe.qty * item.qty;
-          addRequiredStock(stockToRestore, recipe.ingredientId, restoreQty);
+      const saleMovements = await tx.stockMovement.findMany({
+        where: {
+          branchId: current.branchId,
+          reason: `SALE-${current.id}`,
+          qty: { lt: 0 }
         }
-        await addModifierStockRequirements(tx, stockToRestore, parseStoredModifiers(item.modifiers), item.qty, current.branchId);
-        for (const [ingredientId, restoreQty] of stockToRestore) {
-          reversalPayload.stockRestored.push({ ingredientId, qty: restoreQty });
-          await tx.ingredientStock.upsert({
-            where: {
-              branchId_ingredientId: {
-                branchId: current.branchId,
-                ingredientId
-              }
-            },
-            update: { stockQty: { increment: restoreQty } },
-            create: {
-              branchId: current.branchId,
-              ingredientId,
-              stockQty: restoreQty,
-              reorderLevel: 0
-            }
-          });
-          await tx.stockMovement.create({
-            data: {
-              branchId: current.branchId,
-              ingredientId,
-              qty: restoreQty,
-              reason: `${status}-${current.id}`
-            }
-          });
+      });
+      const stockToRestore = new Map<number, number>();
+
+      if (saleMovements.length > 0) {
+        for (const movement of saleMovements) {
+          addRequiredStock(stockToRestore, movement.ingredientId, Math.abs(movement.qty));
         }
+      } else {
+        for (const item of current.items) {
+          const recipes = await tx.recipe.findMany({ where: { menuItemId: item.menuItemId } });
+          for (const recipe of recipes) {
+            const restoreQty = recipe.qty * item.qty;
+            addRequiredStock(stockToRestore, recipe.ingredientId, restoreQty);
+          }
+          await addModifierStockRequirements(tx, stockToRestore, parseStoredModifiers(item.modifiers), item.qty, current.branchId);
+        }
+      }
+
+      for (const [ingredientId, restoreQty] of stockToRestore) {
+        reversalPayload.stockRestored.push({ ingredientId, qty: restoreQty });
+        await tx.ingredientStock.upsert({
+          where: {
+            branchId_ingredientId: {
+              branchId: current.branchId,
+              ingredientId
+            }
+          },
+          update: { stockQty: { increment: restoreQty } },
+          create: {
+            branchId: current.branchId,
+            ingredientId,
+            stockQty: restoreQty,
+            reorderLevel: 0
+          }
+        });
+        await tx.stockMovement.create({
+          data: {
+            branchId: current.branchId,
+            ingredientId,
+            qty: restoreQty,
+            reason: `${status}-${current.id}`
+          }
+        });
       }
 
       if (current.customerId) {
@@ -543,12 +582,13 @@ export async function createOrder(input: {
     }
 
     const requiredStock = new Map<number, number>();
+    const flexibleStock = new Map<number, number>();
     for (const i of orderItems) {
       const recipes = await tx.recipe.findMany({ where: { menuItemId: i.menuItemId } });
       for (const recipe of recipes) {
         addRequiredStock(requiredStock, recipe.ingredientId, recipe.qty * i.qty);
       }
-      await addModifierStockRequirements(tx, requiredStock, i.modifiers, i.qty, input.branchId);
+      await addModifierStockRequirements(tx, flexibleStock, i.modifiers, i.qty, input.branchId);
     }
 
     for (const [ingredientId, requiredQty] of requiredStock) {
@@ -651,25 +691,8 @@ export async function createOrder(input: {
       });
     }
 
-    for (const [ingredientId, requiredQty] of requiredStock) {
-      const decrementResult = await tx.ingredientStock.updateMany({
-        where: {
-          branchId: input.branchId,
-          ingredientId,
-          stockQty: { gte: requiredQty }
-        },
-        data: { stockQty: { decrement: requiredQty } }
-      });
-      if (decrementResult.count !== 1) throw new Error("สต็อกมีการเปลี่ยนแปลง กรุณาลองชำระเงินใหม่");
-      await tx.stockMovement.create({
-        data: {
-          branchId: input.branchId,
-          ingredientId,
-          qty: -requiredQty,
-          reason: `SALE-${newOrder.id}`
-        }
-      });
-    }
+    await applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id);
+    await applyFlexibleStockDecrements(tx, input.branchId, flexibleStock, newOrder.id);
 
     if (input.shiftId) {
       const cashAdd = paymentMethod === "CASH" ? total : 0;

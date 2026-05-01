@@ -455,6 +455,22 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 
 /* Recipe Builder */
 .recipe-builder-panel { border-radius: var(--radius-md); }
+.cup-stock-settings { border-top: 1px solid var(--border); padding: 20px 24px 24px; }
+.cup-stock-settings .inventory-editor__header { margin-bottom: 14px; }
+.cup-stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.cup-stock-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cup-stock-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.cup-stock-card__header strong, .cup-stock-card__header small { display: block; }
+.cup-stock-card__header strong { color: var(--text-primary); font-size: 15px; }
+.cup-stock-card__header small { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.cup-stock-lines { display: flex; flex-direction: column; gap: 8px; }
+.cup-stock-line { display: grid; grid-template-columns: minmax(0, 1fr) 76px auto 32px; gap: 8px; align-items: center; padding: 8px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-subtle); }
+.cup-stock-line span { min-width: 0; }
+.cup-stock-line span strong, .cup-stock-line span small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cup-stock-line span strong { font-size: 13px; color: var(--text-primary); }
+.cup-stock-line span small, .cup-stock-line > small { color: var(--text-muted); font-size: 11px; }
+.cup-stock-line .input { min-width: 0; padding: 8px; }
+.cup-stock-disabled { border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 18px; color: var(--text-muted); text-align: center; background: var(--bg-subtle); font-size: 13px; }
 .recipe-builder { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 0 24px 24px; }
 .recipe-products { display: flex; flex-direction: column; gap: 8px; }
 .recipe-product-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }

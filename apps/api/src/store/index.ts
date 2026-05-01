@@ -2,6 +2,7 @@ export { getBranches, getBranch } from "./branches.js";
 export { getCustomers, getCustomer, getCustomerInsights, addCustomer, updateCustomer, updateCustomerPoints } from "./customers.js";
 export { getMenu, getMenuItem, setMenuGroupActive, addMenuItem, updateMenuItem } from "./menu.js";
 export { getIngredients, addIngredient, updateIngredient, getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, getRecipes, getRecipeCoverage, getRecipe, setRecipe } from "./inventory.js";
+export { CUP_OPTIONS, getCupStockSettings, setCupStockSettings } from "./cupStockSettings.js";
 export { getOrders, getOrder, updateOrderStatus, updateOrderStatusWithContext, createOrder } from "./orders.js";
 export { openShift, closeShift, getCurrentShift, getShift, getShifts, getShiftSummary, getShiftCloseDetails } from "./shifts.js";
 export { authenticatePin, getUsers, getUser, addUser, updateUser, deleteUser } from "./users.js";

@@ -71,7 +71,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "cup modifiers decrement stock",
     file: "apps/api/src/store/orders.ts",
-    pattern: /CUP_STOCK_INGREDIENTS[\s\S]*แก้วพลาสติก 16oz[\s\S]*addModifierStockRequirements[\s\S]*modifier\.name !== "Cup"/
+    pattern: /getCupStockRequirements[\s\S]*addModifierStockRequirements[\s\S]*modifier\.name !== "Cup"/
   },
   {
     name: "cup variant menu cards are hidden from POS grid",

@@ -19,6 +19,7 @@ model Branch {
   orders          Order[]
   shifts          Shift[]
   ingredientStocks IngredientStock[]
+  cupStockSettings CupStockSetting[]
   stockMovements  StockMovement[]
   purchases       Purchase[]
   users           User[]
@@ -91,6 +92,7 @@ model Ingredient {
 
   stocks         IngredientStock[]
   recipes        Recipe[]
+  cupStockSettingItems CupStockSettingItem[]
   stockMovements StockMovement[]
 
   @@map("ingredients")
@@ -121,6 +123,36 @@ model Recipe {
 
   @@unique([menuItemId, ingredientId])
   @@map("recipes")
+}
+
+model CupStockSetting {
+  id          Int      @id @default(autoincrement())
+  branchId    Int      @map("branch_id")
+  cupOption   String   @map("cup_option")
+  deductStock Boolean  @default(false) @map("deduct_stock")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  items  CupStockSettingItem[]
+
+  @@unique([branchId, cupOption])
+  @@index([branchId])
+  @@map("cup_stock_settings")
+}
+
+model CupStockSettingItem {
+  id           Int   @id @default(autoincrement())
+  settingId    Int   @map("setting_id")
+  ingredientId Int   @map("ingredient_id")
+  qty          Float @default(1)
+
+  setting    CupStockSetting @relation(fields: [settingId], references: [id], onDelete: Cascade)
+  ingredient Ingredient      @relation(fields: [ingredientId], references: [id])
+
+  @@unique([settingId, ingredientId])
+  @@index([ingredientId])
+  @@map("cup_stock_setting_items")
 }
 
 model StockMovement {

@@ -7,6 +7,7 @@ import {
   createPurchase,
   createStockAdjustment,
   deactivateMenuItem,
+  getCupStockSettings,
   getIngredients,
   getInventory,
   getMenu,
@@ -16,11 +17,12 @@ import {
   getStockMovements,
   restoreMenuItem,
   setMenuGroupActive,
+  updateCupStockSettings,
   updateInventoryItem,
   updateMenuItem,
   updateRecipe
 } from "../api";
-import type { Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient, StockMovement } from "../types";
+import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient, StockMovement } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 
@@ -299,6 +301,7 @@ export default function InventoryPage() {
   const [selectedRecipeProduct, setSelectedRecipeProduct] = useState<MenuItem | null>(null);
   const [recipeLines, setRecipeLines] = useState<RecipeLineForm[]>([]);
   const [isRecipeLoading, setIsRecipeLoading] = useState(false);
+  const [cupStockDrafts, setCupStockDrafts] = useState<CupStockSetting[]>([]);
 
   const [activeTab, setActiveTabState] = useState<TabType>(() => parseInventoryTab(searchParams.get("tab")));
 
@@ -445,19 +448,22 @@ export default function InventoryPage() {
       setMovements([]);
       setPurchases([]);
       setRecipeCoverage(null);
+      setCupStockDrafts([]);
       return;
     }
 
-    const [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport] = await Promise.all([
+    const [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport, cupSettings] = await Promise.all([
       getInventory(activeBranch.id),
       getStockMovements(activeBranch.id),
       getPurchases(activeBranch.id),
-      getRecipeCoverage({ branchId: activeBranch.id })
+      getRecipeCoverage({ branchId: activeBranch.id }),
+      getCupStockSettings(activeBranch.id)
     ]);
     setInventory(inventoryItems);
     setMovements(movementItems.slice(0, 20));
     setPurchases(purchaseItemsFromApi);
     setRecipeCoverage(coverageReport);
+    setCupStockDrafts(cupSettings);
     setSelectedStock((current) => (
       current ? inventoryItems.find((item) => item.ingredientId === current.ingredientId) ?? null : null
     ));
@@ -793,6 +799,80 @@ export default function InventoryPage() {
       })));
       await refreshInventory();
       toast.success("บันทึกสูตรตัดสต็อกแล้ว");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const updateCupStockDraft = (
+    cupOption: CupStockSetting["cupOption"],
+    updater: (setting: CupStockSetting) => CupStockSetting
+  ) => {
+    setCupStockDrafts((current) => current.map((setting) => (
+      setting.cupOption === cupOption ? updater(setting) : setting
+    )));
+  };
+
+  const handleAddCupStockItem = (cupOption: CupStockSetting["cupOption"], ingredientIdValue: string) => {
+    const ingredientId = Number(ingredientIdValue);
+    if (!ingredientId) return;
+    const stockItem = inventory.find((item) => item.ingredientId === ingredientId);
+    if (!stockItem) return;
+    updateCupStockDraft(cupOption, (setting) => {
+      if (setting.items.some((item) => item.ingredientId === ingredientId)) return setting;
+      return {
+        ...setting,
+        deductStock: true,
+        items: [
+          ...setting.items,
+          {
+            ingredientId,
+            ingredientName: stockItem.name,
+            unit: stockItem.unit,
+            stockQty: stockItem.stockQty,
+            reorderLevel: stockItem.reorderLevel,
+            qty: 1
+          }
+        ]
+      };
+    });
+  };
+
+  const handleCupStockQtyChange = (cupOption: CupStockSetting["cupOption"], ingredientId: number, qty: string) => {
+    updateCupStockDraft(cupOption, (setting) => ({
+      ...setting,
+      items: setting.items.map((item) => item.ingredientId === ingredientId ? { ...item, qty: Number(qty) } : item)
+    }));
+  };
+
+  const handleRemoveCupStockItem = (cupOption: CupStockSetting["cupOption"], ingredientId: number) => {
+    updateCupStockDraft(cupOption, (setting) => ({
+      ...setting,
+      items: setting.items.filter((item) => item.ingredientId !== ingredientId)
+    }));
+  };
+
+  const handleSaveCupStockSettings = async () => {
+    if (!activeBranch) return toast.error("เลือกสาขาก่อน");
+    const invalidSetting = cupStockDrafts.find((setting) => (
+      setting.deductStock && (
+        setting.items.length === 0 ||
+        setting.items.some((item) => !Number.isFinite(item.qty) || item.qty <= 0)
+      )
+    ));
+    if (invalidSetting) {
+      toast.error(`ตรวจวัตถุดิบและจำนวนของ ${invalidSetting.cupOption}`);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const updated = await updateCupStockSettings(activeBranch.id, cupStockDrafts);
+      setCupStockDrafts(updated);
+      await refreshInventory();
+      toast.success("บันทึกการตัดสต็อกแก้วแล้ว");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -1426,6 +1506,82 @@ export default function InventoryPage() {
             )}
           </div>
         )}
+
+        <section className="cup-stock-settings">
+          <div className="inventory-editor__header">
+            <div>
+              <h3>ตัดสต็อกตามตัวเลือกแก้ว</h3>
+              <p className="muted">{activeBranch?.name ?? "ยังไม่ได้เลือกสาขา"} · ตั้งวัตถุดิบที่จะตัดเมื่อเลือกแก้วในหน้า POS</p>
+            </div>
+            <button type="button" className="btn btn--primary" onClick={handleSaveCupStockSettings} disabled={isSubmitting || cupStockDrafts.length === 0}>
+              <Save size={16} />
+              {isSubmitting ? "กำลังบันทึก..." : "บันทึกแก้ว"}
+            </button>
+          </div>
+          <div className="cup-stock-grid">
+            {cupStockDrafts.map((setting) => (
+              <article key={setting.cupOption} className="cup-stock-card">
+                <div className="cup-stock-card__header">
+                  <div>
+                    <strong>{setting.cupOption}</strong>
+                    <small>{setting.configured ? "ตั้งค่าแล้ว" : "ค่าเริ่มต้น"}</small>
+                  </div>
+                  <label className="toggle-line">
+                    <input
+                      type="checkbox"
+                      checked={setting.deductStock}
+                      onChange={(e) => updateCupStockDraft(setting.cupOption, (current) => ({ ...current, deductStock: e.target.checked }))}
+                    />
+                    <span>ตัดสต็อก</span>
+                  </label>
+                </div>
+
+                {setting.deductStock ? (
+                  <>
+                    <select
+                      className="input"
+                      value=""
+                      onChange={(e) => handleAddCupStockItem(setting.cupOption, e.target.value)}
+                      disabled={inventory.length === 0}
+                    >
+                      <option value="">{inventory.length === 0 ? "ยังไม่มีวัตถุดิบ" : "+ เพิ่มวัตถุดิบ"}</option>
+                      {inventory.map((item) => (
+                        <option key={item.ingredientId} value={item.ingredientId}>
+                          {item.name} · คงเหลือ {item.stockQty} {item.unit}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="cup-stock-lines">
+                      {setting.items.map((item) => (
+                        <div key={item.ingredientId} className="cup-stock-line">
+                          <span>
+                            <strong>{item.ingredientName}</strong>
+                            <small>คงเหลือ {item.stockQty} {item.unit}</small>
+                          </span>
+                          <input
+                            className="input"
+                            type="number"
+                            min="0.001"
+                            step="0.001"
+                            value={Number.isFinite(item.qty) ? item.qty : ""}
+                            onChange={(e) => handleCupStockQtyChange(setting.cupOption, item.ingredientId, e.target.value)}
+                          />
+                          <small>{item.unit}/แก้ว</small>
+                          <button type="button" className="icon-action" onClick={() => handleRemoveCupStockItem(setting.cupOption, item.ingredientId)} aria-label={`ลบ ${item.ingredientName}`}>
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ))}
+                      {setting.items.length === 0 && <div className="empty">ยังไม่ได้เลือกวัตถุดิบ</div>}
+                    </div>
+                  </>
+                ) : (
+                  <div className="cup-stock-disabled">ไม่ตัดสต็อกสำหรับตัวเลือกนี้</div>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
 
         <div className="recipe-builder">
           <div className="recipe-products">

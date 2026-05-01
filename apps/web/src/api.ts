@@ -3,6 +3,7 @@ import type {
   CartItem,
   Customer,
   CustomerInsights,
+  CupStockSetting,
   CustomerImportInput,
   DailyCloseReport,
   Ingredient,
@@ -308,6 +309,33 @@ export async function updateRecipe(menuItemId: number, ingredients: Recipe["ingr
     body: JSON.stringify({ ingredients })
   });
   return payload.recipe;
+}
+
+export async function getCupStockSettings(branchId: number) {
+  const payload = await fetchJson<{ settings: CupStockSetting[] }>(
+    `${API_URL}/cup-stock-settings?branchId=${branchId}`
+  );
+  return payload.settings;
+}
+
+export async function updateCupStockSettings(branchId: number, settings: Pick<CupStockSetting, "cupOption" | "deductStock" | "items">[]) {
+  const payload = await fetchJson<{ settings: CupStockSetting[] }>(
+    `${API_URL}/cup-stock-settings?branchId=${branchId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        settings: settings.map((setting) => ({
+          cupOption: setting.cupOption,
+          deductStock: setting.deductStock,
+          items: setting.items.map((item) => ({
+            ingredientId: item.ingredientId,
+            qty: item.qty
+          }))
+        }))
+      })
+    }
+  );
+  return payload.settings;
 }
 
 export async function getOrders(branchId: number) {

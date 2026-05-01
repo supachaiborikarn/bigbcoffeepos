@@ -16,6 +16,7 @@ async function main() {
   let menuItemId: number | null = null;
   let ingredientId: number | null = null;
   let cupIngredientId: number | null = null;
+  let lidIngredientId: number | null = null;
   let createdCupIngredientId: number | null = null;
   let customerId: number | null = null;
   let shiftId: number | null = null;
@@ -64,6 +65,26 @@ async function main() {
       where: { branchId_ingredientId: { branchId, ingredientId: cupIngredientId } },
       update: { stockQty: 5, reorderLevel: 1 },
       create: { branchId, ingredientId: cupIngredientId, stockQty: 5, reorderLevel: 1 }
+    });
+    const lidIngredient = await prisma.ingredient.create({
+      data: { name: `${tag}_lid`, unit: "ชิ้น", costPerUnit: 0.5 }
+    });
+    lidIngredientId = lidIngredient.id;
+    await prisma.ingredientStock.create({
+      data: { branchId, ingredientId: lidIngredientId, stockQty: 0, reorderLevel: 1 }
+    });
+    await prisma.cupStockSetting.create({
+      data: {
+        branchId,
+        cupOption: "แก้วเย็น",
+        deductStock: true,
+        items: {
+          create: [
+            { ingredientId: cupIngredientId, qty: 1 },
+            { ingredientId: lidIngredientId, qty: 1 }
+          ]
+        }
+      }
     });
 
     const shift = await prisma.shift.create({
@@ -130,6 +151,10 @@ async function main() {
       where: { branchId_ingredientId: { branchId, ingredientId: cupIngredientId! } }
     });
     assert(cupStockAfterSale?.stockQty === 4, `Cup stock decrement mismatch: ${cupStockAfterSale?.stockQty}`);
+    const lidStockAfterSale = await prisma.ingredientStock.findUnique({
+      where: { branchId_ingredientId: { branchId, ingredientId: lidIngredientId! } }
+    });
+    assert(lidStockAfterSale?.stockQty === -1, `Cup setting should allow negative lid stock: ${lidStockAfterSale?.stockQty}`);
 
     const payment = await prisma.payment.findFirst({ where: { orderId: order.id } });
     assert(payment?.amountReceived === 60 && payment.referenceNo === tag, "Payment evidence was not persisted");
@@ -143,6 +168,10 @@ async function main() {
       where: { branchId_ingredientId: { branchId, ingredientId: cupIngredientId! } }
     });
     assert(cupStockAfterRefund?.stockQty === 5, `Refund did not restore cup stock: ${cupStockAfterRefund?.stockQty}`);
+    const lidStockAfterRefund = await prisma.ingredientStock.findUnique({
+      where: { branchId_ingredientId: { branchId, ingredientId: lidIngredientId! } }
+    });
+    assert(lidStockAfterRefund?.stockQty === 0, `Refund did not restore configured cup stock: ${lidStockAfterRefund?.stockQty}`);
 
     const refundEvent = await prisma.orderEvent.findFirst({ where: { orderId: order.id, eventType: "ORDER_REFUNDED" } });
     assert(refundEvent?.reason === "integration check", "Refund event history missing");
@@ -220,9 +249,11 @@ async function main() {
     }
     if (shiftId) await prisma.shift.deleteMany({ where: { id: shiftId } });
     if (menuItemId && ingredientId) await prisma.recipe.deleteMany({ where: { menuItemId, ingredientId } });
-    if (branchId) await prisma.ingredientStock.deleteMany({ where: { branchId, ingredientId: { in: [ingredientId, cupIngredientId].filter((id): id is number => Boolean(id)) } } });
+    if (branchId) await prisma.cupStockSetting.deleteMany({ where: { branchId } });
+    if (branchId) await prisma.ingredientStock.deleteMany({ where: { branchId, ingredientId: { in: [ingredientId, cupIngredientId, lidIngredientId].filter((id): id is number => Boolean(id)) } } });
     if (menuItemId) await prisma.menuItem.deleteMany({ where: { id: menuItemId } });
     if (createdCupIngredientId) await prisma.ingredient.deleteMany({ where: { id: createdCupIngredientId } });
+    if (lidIngredientId) await prisma.ingredient.deleteMany({ where: { id: lidIngredientId } });
     if (ingredientId) await prisma.ingredient.deleteMany({ where: { id: ingredientId } });
     if (customerId) await prisma.customer.deleteMany({ where: { id: customerId } });
     if (userId) await prisma.user.deleteMany({ where: { id: userId } });

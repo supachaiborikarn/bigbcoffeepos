@@ -16,6 +16,7 @@ import {
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
+  getCupStockSettings, setCupStockSettings,
   getOrders, getOrder, createOrder, updateOrderStatusWithContext,
   openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
   authenticatePin, getUsers, addUser, updateUser, deleteUser,
@@ -379,6 +380,34 @@ app.post("/api/stock-adjustments", requireRole("admin", "manager"), requireBranc
 app.get("/api/stock-movements", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   res.json({ items: await getStockMovements(branchId) });
+});
+
+/* ─── Cup Stock Settings ─── */
+app.get("/api/cup-stock-settings", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string);
+  if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
+  return res.json({ settings: await getCupStockSettings(branchId) });
+});
+app.put("/api/cup-stock-settings", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string);
+  if (branchId === null || !Array.isArray(req.body?.settings)) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+  const settings = req.body.settings.map((setting: any) => ({
+    cupOption: String(setting?.cupOption ?? "").trim(),
+    deductStock: setting?.deductStock === true,
+    items: Array.isArray(setting?.items)
+      ? setting.items.map((item: any) => ({
+        ingredientId: parseId(item?.ingredientId) ?? 0,
+        qty: parseNonNegativeNumber(item?.qty) ?? 0
+      }))
+      : []
+  }));
+  try {
+    const updated = await setCupStockSettings(branchId, settings);
+    audit("cup_stock_settings.updated", req, { branchId, settingCount: updated.length });
+    return res.json({ settings: updated });
+  } catch (e) {
+    return res.status(400).json({ error: (e as Error).message });
+  }
 });
 
 /* ─── Recipes ─── */

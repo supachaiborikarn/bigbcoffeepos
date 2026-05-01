@@ -185,6 +185,25 @@ export type Recipe = {
   ingredients: RecipeIngredient[];
 };
 
+export type CupOption = "แก้วเย็น" | "แก้วเดินทาง" | "แก้วทานร้าน" | "แก้วมาเอง";
+
+export type CupStockSettingItem = {
+  ingredientId: number;
+  ingredientName: string;
+  unit: string;
+  stockQty: number;
+  reorderLevel: number;
+  qty: number;
+};
+
+export type CupStockSetting = {
+  branchId: number;
+  cupOption: CupOption;
+  deductStock: boolean;
+  configured: boolean;
+  items: CupStockSettingItem[];
+};
+
 export type RecipeCoverageStatus = "has_recipe" | "missing_recipe" | "not_stock_tracked";
 
 export type RecipeCoverageItem = {

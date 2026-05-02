@@ -1,6 +1,7 @@
 import prisma from "../prisma.js";
 import { getCustomer } from "./customers.js";
-import { getCupStockRequirements } from "./cupStockSettings.js";
+import { getCupStockRequirements, getCupStockRequirementsByOption } from "./cupStockSettings.js";
+import { log } from "../logger.js";
 
 type Modifier = { name: string; value: string; price: number };
 type PaymentDetails = { cashReceived?: number; changeAmount?: number; paymentConfirmed?: boolean; referenceNo?: string };
@@ -240,6 +241,25 @@ async function addModifierStockRequirements(tx: any, requiredStock: Map<number, 
     const requirements = await getCupStockRequirements(tx, branchId, modifier.value);
     for (const requirement of requirements) {
       addRequiredStock(requiredStock, requirement.ingredientId, requirement.qty * qty);
+    }
+  }
+}
+
+async function addModifierStockRequirementsForItems(tx: any, requiredStock: Map<number, number>, items: OrderItemDraft[], branchId: number) {
+  const cupQtyByOption = new Map<string, number>();
+  for (const item of items) {
+    for (const modifier of item.modifiers) {
+      if (modifier.name !== "Cup") continue;
+      cupQtyByOption.set(modifier.value, roundMoney((cupQtyByOption.get(modifier.value) ?? 0) + item.qty));
+    }
+  }
+  if (cupQtyByOption.size === 0) return;
+
+  const requirementsByOption = await getCupStockRequirementsByOption(tx, branchId, Array.from(cupQtyByOption.keys()));
+  for (const [cupOption, cupQty] of cupQtyByOption) {
+    const requirements = requirementsByOption.get(cupOption as any) ?? [];
+    for (const requirement of requirements) {
+      addRequiredStock(requiredStock, requirement.ingredientId, requirement.qty * cupQty);
     }
   }
 }
@@ -484,6 +504,12 @@ export async function createOrder(input: {
   paymentDetails?: PaymentDetails;
   idempotencyKey?: string | null;
 }) {
+  const checkoutStartedAt = Date.now();
+  let preflightMs = 0;
+  let transactionMs = 0;
+  let attempts = 0;
+  let strictStockItems = 0;
+  let flexibleStockItems = 0;
   const paymentMethod = normalizePaymentMethod(input.paymentMethod);
   const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
     ? input.idempotencyKey.trim().slice(0, 120)
@@ -496,19 +522,31 @@ export async function createOrder(input: {
     if (existingOrder) return hydrateOrder(existingOrder);
   }
 
-  const branch = await prisma.branch.findFirst({ where: { id: input.branchId, active: true } });
+  const [branch, customer] = await Promise.all([
+    prisma.branch.findFirst({ where: { id: input.branchId, active: true } }),
+    input.customerId ? getCustomer(input.customerId) : Promise.resolve(null)
+  ]);
   if (!branch) throw new Error("ไม่พบสาขาที่ระบุ");
-
-  const customer = input.customerId ? await getCustomer(input.customerId) : null;
   if (input.customerId && !customer) throw new Error("ไม่พบสมาชิกที่ระบุ");
-
-  const orderItems: OrderItemDraft[] = [];
 
   for (const item of input.items) {
     if (!Number.isFinite(item.menuItemId) || !Number.isFinite(item.qty) || item.qty <= 0 || item.qty > 999) {
       throw new Error("รายการสินค้าไม่ถูกต้อง");
     }
-    const mi = await prisma.menuItem.findFirst({ where: { id: item.menuItemId, active: true } });
+  }
+
+  const menuIds = Array.from(new Set(input.items.map((item) => item.menuItemId)));
+  const menuItems = await prisma.menuItem.findMany({
+    where: {
+      id: { in: menuIds },
+      active: true
+    }
+  });
+  const menuById = new Map(menuItems.map((item) => [item.id, item]));
+  const orderItems: OrderItemDraft[] = [];
+
+  for (const item of input.items) {
+    const mi = menuById.get(item.menuItemId);
     if (!mi) throw new Error(`ไม่พบสินค้า ID ${item.menuItemId}`);
     if (mi.branchType !== branch.branchType) throw new Error(`สินค้า ${mi.name} ไม่ตรงกับประเภทสาขา`);
 
@@ -526,6 +564,11 @@ export async function createOrder(input: {
       note: item.note
     });
   }
+  preflightMs = Date.now() - checkoutStartedAt;
+  const qtyByMenuItemId = new Map<number, number>();
+  orderItems.forEach((item) => {
+    qtyByMenuItemId.set(item.menuItemId, roundMoney((qtyByMenuItemId.get(item.menuItemId) ?? 0) + item.qty));
+  });
 
   const subtotal = roundMoney(orderItems.reduce((s, i) => s + i.lineTotal, 0));
   const requestedRules = Array.isArray(input.discounts)
@@ -571,6 +614,8 @@ export async function createOrder(input: {
 
   let order;
   for (let attempt = 0; attempt <= checkoutTransactionRetries; attempt += 1) {
+    attempts = attempt + 1;
+    const transactionStartedAt = Date.now();
     try {
       order = await prisma.$transaction(async (tx) => {
     if (idempotencyKey) {
@@ -583,24 +628,28 @@ export async function createOrder(input: {
 
     const requiredStock = new Map<number, number>();
     const flexibleStock = new Map<number, number>();
-    for (const i of orderItems) {
-      const recipes = await tx.recipe.findMany({ where: { menuItemId: i.menuItemId } });
-      for (const recipe of recipes) {
-        addRequiredStock(requiredStock, recipe.ingredientId, recipe.qty * i.qty);
-      }
-      await addModifierStockRequirements(tx, flexibleStock, i.modifiers, i.qty, input.branchId);
+    const recipes = await tx.recipe.findMany({
+      where: { menuItemId: { in: Array.from(qtyByMenuItemId.keys()) } }
+    });
+    for (const recipe of recipes) {
+      addRequiredStock(requiredStock, recipe.ingredientId, recipe.qty * (qtyByMenuItemId.get(recipe.menuItemId) ?? 0));
     }
+    await addModifierStockRequirementsForItems(tx, flexibleStock, orderItems, input.branchId);
+    strictStockItems = requiredStock.size;
+    flexibleStockItems = flexibleStock.size;
 
-    for (const [ingredientId, requiredQty] of requiredStock) {
-      const stock = await tx.ingredientStock.findUnique({
+    const stockRows = requiredStock.size > 0
+      ? await tx.ingredientStock.findMany({
         where: {
-          branchId_ingredientId: {
-            branchId: input.branchId,
-            ingredientId
-          }
+          branchId: input.branchId,
+          ingredientId: { in: Array.from(requiredStock.keys()) }
         },
         include: { ingredient: { select: { name: true } } }
-      });
+      })
+      : [];
+    const stockByIngredientId = new Map(stockRows.map((stock: any) => [stock.ingredientId, stock]));
+    for (const [ingredientId, requiredQty] of requiredStock) {
+      const stock = stockByIngredientId.get(ingredientId);
       if (!stock || stock.stockQty < requiredQty) {
         const name = stock?.ingredient.name ?? `วัตถุดิบ #${ingredientId}`;
         const available = stock?.stockQty ?? 0;
@@ -665,8 +714,7 @@ export async function createOrder(input: {
         confirmedByUserId: input.userId ?? null
       }
     });
-    await tx.orderEvent.create({
-      data: {
+    const orderEvents = [{
         orderId: newOrder.id,
         eventType: "ORDER_CREATED",
         actorId: input.userId ?? null,
@@ -678,18 +726,16 @@ export async function createOrder(input: {
           paymentStatus: paymentDetails.status,
           idempotencyKey
         })
-      }
-    });
+      }];
     if (idempotencyKey) {
-      await tx.orderEvent.create({
-        data: {
+      orderEvents.push({
           orderId: newOrder.id,
           eventType: `${IDEMPOTENCY_EVENT_PREFIX}${idempotencyKey}`,
           actorId: input.userId ?? null,
           payload: JSON.stringify({ idempotencyKey })
-        }
       });
     }
+    await tx.orderEvent.createMany({ data: orderEvents });
 
     await applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id);
     await applyFlexibleStockDecrements(tx, input.branchId, flexibleStock, newOrder.id);
@@ -721,8 +767,10 @@ export async function createOrder(input: {
 
       return newOrder;
       });
+      transactionMs += Date.now() - transactionStartedAt;
       break;
     } catch (error: any) {
+      transactionMs += Date.now() - transactionStartedAt;
       if (idempotencyKey && error?.code === "P2002") {
         const existingOrder = await prisma.order.findUnique({
           where: { idempotencyKey },
@@ -735,5 +783,18 @@ export async function createOrder(input: {
     }
   }
 
+  log("info", "checkout_performance", {
+    durationMs: Date.now() - checkoutStartedAt,
+    preflightMs,
+    transactionMs,
+    attempts,
+    branchId: input.branchId,
+    itemCount: orderItems.length,
+    uniqueMenuItems: qtyByMenuItemId.size,
+    strictStockItems,
+    flexibleStockItems,
+    paymentMethod,
+    orderId: order?.id ?? null
+  });
   return hydrateOrder(order);
 }

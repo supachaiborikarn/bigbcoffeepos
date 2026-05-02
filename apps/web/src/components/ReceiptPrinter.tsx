@@ -36,8 +36,12 @@ function padLeft(s: string, len: number) {
   return s.length >= len ? s : " ".repeat(len - s.length) + s;
 }
 
+function fitLine(s: string, len: number) {
+  return s.length <= len ? s : s.slice(0, len);
+}
+
 export function printReceipt(data: ReceiptData, branchName: string, targetWindow?: Window | null) {
-  const W = 32; // 80mm thermal ≈ 32 chars
+  const W = 30; // 58mm card-slip width at small thermal text
   const LINE = "─".repeat(W);
   const DLINE = "═".repeat(W);
 
@@ -48,11 +52,12 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
   const lines: string[] = [];
   const add = (s: string) => lines.push(s);
   const center = (s: string) => {
-    const pad = Math.max(0, Math.floor((W - s.length) / 2));
-    add(" ".repeat(pad) + s);
+    const text = fitLine(s, W);
+    const pad = Math.max(0, Math.floor((W - text.length) / 2));
+    add(" ".repeat(pad) + text);
   };
 
-  center("☕ Big B Coffee");
+  center("Big B Coffee");
   center(branchName);
   add(LINE);
   add(`บิล #${data.order.id}`);
@@ -90,7 +95,7 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
   }
 
   add(LINE);
-  center("ขอบคุณที่อุดหนุนค่ะ 🙏");
+  center("ขอบคุณที่อุดหนุนค่ะ");
   center("Big B Coffee");
   add("");
 
@@ -103,16 +108,17 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
   <meta charset="utf-8" />
   <title>Receipt #${data.order.id}</title>
   <style>
-    @page { margin: 0; size: 80mm auto; }
+    @page { margin: 0; size: 58mm auto; }
     body {
-      margin: 0; padding: 8px;
+      box-sizing: border-box;
+      margin: 0; padding: 3mm 2mm;
       font-family: 'Courier New', monospace;
-      font-size: 12px; line-height: 1.4;
-      width: 80mm;
+      font-size: 10.5px; line-height: 1.35;
+      width: 58mm;
     }
     div { white-space: pre; }
     @media screen {
-      body { max-width: 320px; margin: 20px auto; border: 1px dashed #ccc; padding: 16px; background: #fff; }
+      body { max-width: 220px; margin: 20px auto; border: 1px dashed #ccc; padding: 12px; background: #fff; }
     }
   </style>
 </head>

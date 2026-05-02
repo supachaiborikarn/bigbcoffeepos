@@ -17,6 +17,8 @@ type CupStockSettingInput = {
   items: Array<{ ingredientId: number; qty: number }>;
 };
 
+type CupStockRequirement = { ingredientId: number; qty: number };
+
 export function isCupOption(value: string): value is CupOption {
   return CUP_OPTION_SET.has(value);
 }
@@ -201,15 +203,22 @@ async function resolveIngredientByNames(tx: any, names: string[], branchId: numb
 }
 
 export async function getCupStockRequirements(tx: any, branchId: number, cupOption: string) {
-  if (!isCupOption(cupOption)) return [];
-  let setting: any = null;
+  const requirementsByOption = await getCupStockRequirementsByOption(tx, branchId, [cupOption]);
+  return isCupOption(cupOption) ? requirementsByOption.get(cupOption) ?? [] : [];
+}
+
+export async function getCupStockRequirementsByOption(tx: any, branchId: number, cupOptions: string[]) {
+  const validOptions = Array.from(new Set(cupOptions.filter(isCupOption)));
+  const result = new Map<CupOption, CupStockRequirement[]>();
+  validOptions.forEach((cupOption) => result.set(cupOption, []));
+  if (validOptions.length === 0) return result;
+
+  let settings: any[] = [];
   try {
-    setting = await tx.cupStockSetting.findUnique({
+    settings = await tx.cupStockSetting.findMany({
       where: {
-        branchId_cupOption: {
-          branchId,
-          cupOption
-        }
+        branchId,
+        cupOption: { in: validOptions }
       },
       include: { items: true }
     });
@@ -217,16 +226,28 @@ export async function getCupStockRequirements(tx: any, branchId: number, cupOpti
     if (!isMissingCupStockTableError(error)) throw error;
   }
 
-  if (setting) {
-    if (!setting.deductStock) return [];
-    return setting.items
-      .filter((item: any) => item.qty > 0)
-      .map((item: any) => ({ ingredientId: item.ingredientId, qty: item.qty }));
+  const configuredOptions = new Set<CupOption>();
+  for (const setting of settings) {
+    if (!isCupOption(setting.cupOption)) continue;
+    configuredOptions.add(setting.cupOption);
+    result.set(
+      setting.cupOption,
+      setting.deductStock
+        ? setting.items
+          .filter((item: any) => item.qty > 0)
+          .map((item: any) => ({ ingredientId: item.ingredientId, qty: item.qty }))
+        : []
+    );
   }
 
-  const ingredientNames = DEFAULT_CUP_STOCK_INGREDIENTS[cupOption];
-  if (ingredientNames.length === 0) return [];
-  const ingredient = await resolveIngredientByNames(tx, ingredientNames, branchId);
-  if (!ingredient) throw new Error(`ไม่พบวัตถุดิบสำหรับตัวเลือกแก้ว: ${cupOption}`);
-  return [{ ingredientId: ingredient.id, qty: 1 }];
+  for (const cupOption of validOptions) {
+    if (configuredOptions.has(cupOption)) continue;
+    const ingredientNames = DEFAULT_CUP_STOCK_INGREDIENTS[cupOption];
+    if (ingredientNames.length === 0) continue;
+    const ingredient = await resolveIngredientByNames(tx, ingredientNames, branchId);
+    if (!ingredient) throw new Error(`ไม่พบวัตถุดิบสำหรับตัวเลือกแก้ว: ${cupOption}`);
+    result.set(cupOption, [{ ingredientId: ingredient.id, qty: 1 }]);
+  }
+
+  return result;
 }

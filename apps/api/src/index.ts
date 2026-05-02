@@ -17,7 +17,7 @@ import {
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
   getCupStockSettings, setCupStockSettings,
-  getOrders, getOrder, createOrder, updateOrderStatusWithContext,
+  getOrders, getOrder, getOrderByIdempotencyKey, createOrder, updateOrderStatusWithContext,
   openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
   authenticatePin, getUsers, addUser, updateUser, deleteUser,
   getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows, getDailyCloseReport,
@@ -436,6 +436,16 @@ app.put("/api/recipes/:menuItemId", requireRole("admin", "manager"), async (req,
 app.get("/api/orders", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   res.json({ items: await getOrders(branchId) });
+});
+app.get("/api/orders/idempotency/:key", requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
+  const key = String(req.params.key ?? "").trim();
+  if (!key) return res.status(400).json({ error: "Invalid idempotency key" });
+  const order = await getOrderByIdempotencyKey(key);
+  if (!order) return res.status(404).json({ error: "ยังไม่พบบิลนี้" });
+  if (req.user?.role === "cashier" && req.user.branchId !== order.branchId) {
+    return res.status(403).json({ error: "ไม่มีสิทธิ์ดูออเดอร์ของสาขาอื่น" });
+  }
+  return res.json({ order });
 });
 app.get("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);

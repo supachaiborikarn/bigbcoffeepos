@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CartItem, DiscountRule, DiscountType, Order, PaymentMethod } from "../types";
-import { createOrder } from "../api";
+import { createOrder, getOrderByIdempotencyKey } from "../api";
 import { useBranch } from "./BranchContext";
 import { useAuth } from "./AuthContext";
 import { useToast } from "./ToastContext";
@@ -40,6 +40,26 @@ function makeId() {
 
 function makeCheckoutKey() {
   return `checkout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isCheckoutTimeout(error: unknown) {
+  return String((error as Error).message).includes("บันทึกออเดอร์นานเกินไป");
+}
+
+async function recoverTimedOutCheckout(idempotencyKey: string) {
+  const startedAt = Date.now();
+  let lastError: unknown = null;
+  while (Date.now() - startedAt < 18_000) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    try {
+      return await getOrderByIdempotencyKey(idempotencyKey);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("บันทึกออเดอร์นานเกินไป กรุณาตรวจสอบหน้ารายการออเดอร์ก่อนกดซ้ำ");
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
@@ -187,12 +207,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
         idempotencyKey,
       };
       let order: Order;
+      const checkoutStartedAt = performance.now();
       try {
         order = await createOrder(orderInput);
       } catch (error) {
-        if (!String((error as Error).message).includes("บันทึกออเดอร์นานเกินไป")) throw error;
-        await new Promise((resolve) => window.setTimeout(resolve, 800));
-        order = await createOrder(orderInput);
+        if (!isCheckoutTimeout(error)) throw error;
+        console.warn("[POS] checkout timed out, polling existing order", { idempotencyKey });
+        order = await recoverTimedOutCheckout(idempotencyKey);
+      } finally {
+        const durationMs = Math.round(performance.now() - checkoutStartedAt);
+        if (durationMs > 3_000) console.warn("[POS] checkout duration", { durationMs, idempotencyKey });
       }
       clearCart();
       void refreshShift().catch((error) => {

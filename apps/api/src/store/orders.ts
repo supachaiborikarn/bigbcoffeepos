@@ -368,6 +368,16 @@ export async function getOrder(id: number) {
   return hydrateOrder(order);
 }
 
+export async function getOrderByIdempotencyKey(idempotencyKey: string) {
+  const key = idempotencyKey.trim().slice(0, 120);
+  if (!key) return null;
+  const order = await prisma.order.findUnique({
+    where: { idempotencyKey: key },
+    include: { items: true }
+  });
+  return hydrateOrder(order);
+}
+
 export async function updateOrderStatus(id: number, status: string) {
   return updateOrderStatusWithContext(id, { status });
 }

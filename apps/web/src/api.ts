@@ -343,6 +343,14 @@ export async function getOrders(branchId: number) {
   return payload.items;
 }
 
+export async function getOrderByIdempotencyKey(idempotencyKey: string) {
+  const payload = await fetchJson<{ order: Order }>(
+    `${API_URL}/orders/idempotency/${encodeURIComponent(idempotencyKey)}`,
+    { timeoutMs: 5_000 }
+  );
+  return payload.order;
+}
+
 export async function createOrder(input: {
   items: CartItem[];
   paymentMethod: PaymentMethod;

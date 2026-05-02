@@ -265,6 +265,8 @@ async function addModifierStockRequirementsForItems(tx: any, requiredStock: Map<
 }
 
 async function applyStrictStockDecrements(tx: any, branchId: number, stock: Map<number, number>, orderId: number) {
+  if (stock.size === 0) return;
+
   for (const [ingredientId, requiredQty] of stock) {
     const decrementResult = await tx.ingredientStock.updateMany({
       where: {
@@ -274,19 +276,29 @@ async function applyStrictStockDecrements(tx: any, branchId: number, stock: Map<
       },
       data: { stockQty: { decrement: requiredQty } }
     });
-    if (decrementResult.count !== 1) throw new Error("สต็อกมีการเปลี่ยนแปลง กรุณาลองชำระเงินใหม่");
-    await tx.stockMovement.create({
-      data: {
-        branchId,
-        ingredientId,
-        qty: -requiredQty,
-        reason: `SALE-${orderId}`
+    if (decrementResult.count !== 1) {
+      const stockRow = await tx.ingredientStock.findUnique({
+        where: {
+          branchId_ingredientId: {
+            branchId,
+            ingredientId
+          }
+        },
+        include: { ingredient: { select: { name: true } } }
+      });
+      if (!stockRow || stockRow.stockQty < requiredQty) {
+        const name = stockRow?.ingredient.name ?? `วัตถุดิบ #${ingredientId}`;
+        const available = stockRow?.stockQty ?? 0;
+        throw new Error(`สต็อกไม่พอ: ${name} คงเหลือ ${available}, ต้องใช้ ${requiredQty}`);
       }
-    });
+      throw new Error("สต็อกมีการเปลี่ยนแปลง กรุณาลองชำระเงินใหม่");
+    }
   }
 }
 
-async function applyFlexibleStockDecrements(tx: any, branchId: number, stock: Map<number, number>, orderId: number) {
+async function applyFlexibleStockDecrements(tx: any, branchId: number, stock: Map<number, number>) {
+  if (stock.size === 0) return;
+
   for (const [ingredientId, requiredQty] of stock) {
     await tx.ingredientStock.upsert({
       where: {
@@ -303,15 +315,40 @@ async function applyFlexibleStockDecrements(tx: any, branchId: number, stock: Ma
         reorderLevel: 0
       }
     });
-    await tx.stockMovement.create({
-      data: {
-        branchId,
-        ingredientId,
-        qty: -requiredQty,
-        reason: `SALE-${orderId}`
-      }
-    });
   }
+}
+
+async function createSaleStockMovements(tx: any, branchId: number, orderId: number, ...stocks: Map<number, number>[]) {
+  const rows = stocks.flatMap((stock) => Array.from(stock.entries()))
+    .filter(([, qty]) => qty > 0)
+    .map(([ingredientId, qty]) => ({
+      branchId,
+      ingredientId,
+      qty: -qty,
+      reason: `SALE-${orderId}`
+    }));
+  if (rows.length > 0) await tx.stockMovement.createMany({ data: rows });
+}
+
+async function writeIntegrationOutbox(outboxPayload: Record<string, unknown>) {
+  await prisma.integrationOutbox.createMany({
+    data: [
+      { provider: "rd_tax", eventType: "ORDER_TAX_RECEIPT_READY", entityType: "order", entityId: Number(outboxPayload.orderId), payload: JSON.stringify(outboxPayload) },
+      { provider: "line_oa", eventType: "ORDER_RECEIPT_MESSAGE_READY", entityType: "order", entityId: Number(outboxPayload.orderId), payload: JSON.stringify(outboxPayload) },
+      { provider: "lineman", eventType: "ORDER_SYNC_READY", entityType: "order", entityId: Number(outboxPayload.orderId), payload: JSON.stringify(outboxPayload) }
+    ]
+  });
+}
+
+function scheduleIntegrationOutbox(outboxPayload: Record<string, unknown>) {
+  setTimeout(() => {
+    void writeIntegrationOutbox(outboxPayload).catch((error) => {
+      log("warn", "checkout_outbox_write_failed", {
+        orderId: outboxPayload.orderId ?? null,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, 0);
 }
 
 export async function getOrders(branchId?: number) {
@@ -514,21 +551,6 @@ export async function createOrder(input: {
   const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
     ? input.idempotencyKey.trim().slice(0, 120)
     : null;
-  if (idempotencyKey) {
-    const existingOrder = await prisma.order.findUnique({
-      where: { idempotencyKey },
-      include: { items: true }
-    });
-    if (existingOrder) return hydrateOrder(existingOrder);
-  }
-
-  const [branch, customer] = await Promise.all([
-    prisma.branch.findFirst({ where: { id: input.branchId, active: true } }),
-    input.customerId ? getCustomer(input.customerId) : Promise.resolve(null)
-  ]);
-  if (!branch) throw new Error("ไม่พบสาขาที่ระบุ");
-  if (input.customerId && !customer) throw new Error("ไม่พบสมาชิกที่ระบุ");
-
   for (const item of input.items) {
     if (!Number.isFinite(item.menuItemId) || !Number.isFinite(item.qty) || item.qty <= 0 || item.qty > 999) {
       throw new Error("รายการสินค้าไม่ถูกต้อง");
@@ -536,12 +558,19 @@ export async function createOrder(input: {
   }
 
   const menuIds = Array.from(new Set(input.items.map((item) => item.menuItemId)));
-  const menuItems = await prisma.menuItem.findMany({
-    where: {
-      id: { in: menuIds },
-      active: true
-    }
-  });
+  const [branch, customer, menuItems] = await Promise.all([
+    prisma.branch.findFirst({ where: { id: input.branchId, active: true } }),
+    input.customerId ? getCustomer(input.customerId) : Promise.resolve(null),
+    prisma.menuItem.findMany({
+      where: {
+        id: { in: menuIds },
+        active: true
+      }
+    })
+  ]);
+  if (!branch) throw new Error("ไม่พบสาขาที่ระบุ");
+  if (input.customerId && !customer) throw new Error("ไม่พบสมาชิกที่ระบุ");
+
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
   const orderItems: OrderItemDraft[] = [];
 
@@ -618,14 +647,6 @@ export async function createOrder(input: {
     const transactionStartedAt = Date.now();
     try {
       order = await prisma.$transaction(async (tx) => {
-    if (idempotencyKey) {
-      const existingOrder = await tx.order.findUnique({
-        where: { idempotencyKey },
-        include: { items: true }
-      });
-      if (existingOrder) return existingOrder;
-    }
-
     const requiredStock = new Map<number, number>();
     const flexibleStock = new Map<number, number>();
     const recipes = await tx.recipe.findMany({
@@ -637,38 +658,6 @@ export async function createOrder(input: {
     await addModifierStockRequirementsForItems(tx, flexibleStock, orderItems, input.branchId);
     strictStockItems = requiredStock.size;
     flexibleStockItems = flexibleStock.size;
-
-    const stockRows = requiredStock.size > 0
-      ? await tx.ingredientStock.findMany({
-        where: {
-          branchId: input.branchId,
-          ingredientId: { in: Array.from(requiredStock.keys()) }
-        },
-        include: { ingredient: { select: { name: true } } }
-      })
-      : [];
-    const stockByIngredientId = new Map(stockRows.map((stock: any) => [stock.ingredientId, stock]));
-    for (const [ingredientId, requiredQty] of requiredStock) {
-      const stock = stockByIngredientId.get(ingredientId);
-      if (!stock || stock.stockQty < requiredQty) {
-        const name = stock?.ingredient.name ?? `วัตถุดิบ #${ingredientId}`;
-        const available = stock?.stockQty ?? 0;
-        throw new Error(`สต็อกไม่พอ: ${name} คงเหลือ ${available}, ต้องใช้ ${requiredQty}`);
-      }
-    }
-
-    if (customer && pointsToUse > 0) {
-      const pointsResult = await tx.customer.updateMany({
-        where: { id: input.customerId!, points: { gte: pointsToUse } },
-        data: { points: { increment: -pointsToUse + pointsEarned } }
-      });
-      if (pointsResult.count !== 1) throw new Error("แต้มสมาชิกไม่พอ กรุณารีเฟรชข้อมูลสมาชิก");
-    } else if (customer && pointsEarned > 0) {
-      await tx.customer.update({
-        where: { id: input.customerId! },
-        data: { points: { increment: pointsEarned } }
-      });
-    }
 
     const newOrder = await tx.order.create({
       data: {
@@ -737,8 +726,22 @@ export async function createOrder(input: {
     }
     await tx.orderEvent.createMany({ data: orderEvents });
 
+    if (customer && pointsToUse > 0) {
+      const pointsResult = await tx.customer.updateMany({
+        where: { id: input.customerId!, points: { gte: pointsToUse } },
+        data: { points: { increment: -pointsToUse + pointsEarned } }
+      });
+      if (pointsResult.count !== 1) throw new Error("แต้มสมาชิกไม่พอ กรุณารีเฟรชข้อมูลสมาชิก");
+    } else if (customer && pointsEarned > 0) {
+      await tx.customer.update({
+        where: { id: input.customerId! },
+        data: { points: { increment: pointsEarned } }
+      });
+    }
+
     await applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id);
-    await applyFlexibleStockDecrements(tx, input.branchId, flexibleStock, newOrder.id);
+    await applyFlexibleStockDecrements(tx, input.branchId, flexibleStock);
+    await createSaleStockMovements(tx, input.branchId, newOrder.id, requiredStock, flexibleStock);
 
     if (input.shiftId) {
       const cashAdd = paymentMethod === "CASH" ? total : 0;
@@ -755,15 +758,6 @@ export async function createOrder(input: {
         }
       });
     }
-
-    const outboxPayload = { ...integrationPayload, orderId: newOrder.id };
-    await tx.integrationOutbox.createMany({
-      data: [
-        { provider: "rd_tax", eventType: "ORDER_TAX_RECEIPT_READY", entityType: "order", entityId: newOrder.id, payload: JSON.stringify(outboxPayload) },
-        { provider: "line_oa", eventType: "ORDER_RECEIPT_MESSAGE_READY", entityType: "order", entityId: newOrder.id, payload: JSON.stringify(outboxPayload) },
-        { provider: "lineman", eventType: "ORDER_SYNC_READY", entityType: "order", entityId: newOrder.id, payload: JSON.stringify(outboxPayload) }
-      ]
-    });
 
       return newOrder;
       });
@@ -783,18 +777,25 @@ export async function createOrder(input: {
     }
   }
 
-  log("info", "checkout_performance", {
-    durationMs: Date.now() - checkoutStartedAt,
-    preflightMs,
-    transactionMs,
-    attempts,
-    branchId: input.branchId,
-    itemCount: orderItems.length,
-    uniqueMenuItems: qtyByMenuItemId.size,
-    strictStockItems,
-    flexibleStockItems,
-    paymentMethod,
-    orderId: order?.id ?? null
-  });
+  if (process.env.CHECKOUT_PERF_LOG === "1") {
+    log("info", "checkout_performance", {
+      durationMs: Date.now() - checkoutStartedAt,
+      preflightMs,
+      transactionMs,
+      attempts,
+      branchId: input.branchId,
+      itemCount: orderItems.length,
+      uniqueMenuItems: qtyByMenuItemId.size,
+      strictStockItems,
+      flexibleStockItems,
+      paymentMethod,
+      orderId: order?.id ?? null
+    });
+  }
+  if (order?.id) {
+    const outboxPayload = { ...integrationPayload, orderId: order.id };
+    if (process.env.CHECKOUT_SYNC_OUTBOX === "1") await writeIntegrationOutbox(outboxPayload);
+    else scheduleIntegrationOutbox(outboxPayload);
+  }
   return hydrateOrder(order);
 }

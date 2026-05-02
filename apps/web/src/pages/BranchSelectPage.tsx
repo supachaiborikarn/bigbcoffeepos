@@ -2,6 +2,7 @@ import { Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
 import { Coffee, Store, ChevronRight, LogOut } from "lucide-react";
+import BrandLogo from "../components/BrandLogo";
 
 const ROLE_LABELS: Record<string, string> = { admin: "ผู้ดูแลระบบ", manager: "ผู้จัดการ", cashier: "แคชเชียร์" };
 
@@ -16,14 +17,7 @@ export default function BranchSelectPage() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "var(--bg-page)", padding: 20 }}>
       <div style={{ maxWidth: 480, width: "100%", animation: "slideUp 200ms cubic-bezier(0.16, 1, 0.3, 1)" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: 16,
-            background: "linear-gradient(135deg, var(--brand), var(--brand-hover))",
-            color: "white", display: "flex", alignItems: "center", justifyContent: "center",
-            margin: "0 auto 20px", boxShadow: "0 4px 12px rgba(139,94,60,0.3)"
-          }}>
-            <Coffee size={24} />
-          </div>
+          <BrandLogo style={{ width: 92, height: 92, objectFit: "contain", margin: "0 auto 16px", display: "block" }} />
           <h1 style={{ marginBottom: 6, fontSize: 22 }}>เลือกสาขา</h1>
           <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
             สวัสดี <strong>{user.name}</strong> ({ROLE_LABELS[user.role]}) — วันนี้เข้าสาขาไหน?

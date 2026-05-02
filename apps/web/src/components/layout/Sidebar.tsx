@@ -9,10 +9,10 @@ import {
   BarChart3,
   Settings,
   LogOut,
-  Coffee,
   UserCircle,
   ShoppingBag,
 } from "lucide-react";
+import BrandLogo from "../BrandLogo";
 
 const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
 
@@ -37,9 +37,7 @@ export default function Sidebar() {
     <aside className="sidebar">
       {/* Brand */}
       <div className="sidebar__brand">
-        <div className="sidebar__brand-icon">
-          <Coffee size={18} />
-        </div>
+        <BrandLogo className="sidebar__brand-logo" />
         <div className="sidebar__brand-text">
           <span className="sidebar__brand-name">Big B Coffee</span>
           <span className="sidebar__brand-sub">POS Platform</span>

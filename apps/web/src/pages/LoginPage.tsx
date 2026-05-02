@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
-import { Coffee } from "lucide-react";
+import BrandLogo from "../components/BrandLogo";
 
 export default function LoginPage() {
   const { user, login, error } = useAuth();
@@ -37,14 +37,7 @@ export default function LoginPage() {
         animation: "scaleIn 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
         border: "1px solid var(--border)",
       }}>
-        <div style={{
-          width: 56, height: 56, borderRadius: 16,
-          background: "linear-gradient(135deg, var(--brand), var(--brand-hover))",
-          color: "white", display: "flex", alignItems: "center", justifyContent: "center",
-          margin: "0 auto 20px", boxShadow: "0 4px 12px rgba(139,94,60,0.3)"
-        }}>
-          <Coffee size={24} />
-        </div>
+        <BrandLogo style={{ width: 88, height: 88, objectFit: "contain", margin: "0 auto 16px", display: "block" }} />
 
         <h1 style={{ fontSize: 24, marginBottom: 4, fontWeight: 700, letterSpacing: "-0.02em" }}>Big B Coffee</h1>
         <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 32 }}>กรุณาใส่ PIN เพื่อเข้าสู่ระบบ</p>

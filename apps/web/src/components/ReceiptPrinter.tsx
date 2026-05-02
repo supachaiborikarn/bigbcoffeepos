@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { CartItem, DiscountRule, Order } from "../types";
 import Numpad from "./ui/Numpad";
+import { logoUrl } from "./BrandLogo";
 
 type ReceiptData = {
   order: Order;
@@ -38,6 +39,36 @@ function padLeft(s: string, len: number) {
 
 function fitLine(s: string, len: number) {
   return s.length <= len ? s : s.slice(0, len);
+}
+
+function printWhenReady(printWindow: Window, printDocument: Document) {
+  const images = Array.from(printDocument.images);
+  let printed = false;
+  const doPrint = () => {
+    if (printed) return;
+    printed = true;
+    window.setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+    }, 50);
+  };
+
+  const pending = images.filter((image) => !image.complete);
+  if (pending.length === 0) {
+    doPrint();
+    return;
+  }
+
+  let remaining = pending.length;
+  const markDone = () => {
+    remaining -= 1;
+    if (remaining <= 0) doPrint();
+  };
+  pending.forEach((image) => {
+    image.addEventListener("load", markDone, { once: true });
+    image.addEventListener("error", markDone, { once: true });
+  });
+  window.setTimeout(doPrint, 700);
 }
 
 export function printReceipt(data: ReceiptData, branchName: string, targetWindow?: Window | null) {
@@ -101,6 +132,7 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
 
   // Build print HTML
   const receiptHtml = lines.map(l => `<div>${l ? escapeHtml(l) : "&nbsp;"}</div>`).join("\n");
+  const safeLogoUrl = escapeHtml(logoUrl);
 
   const html = `<!DOCTYPE html>
 <html lang="th">
@@ -116,6 +148,15 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
       font-size: 10.5px; line-height: 1.35;
       width: 58mm;
     }
+    .receipt-logo {
+      display: block;
+      width: 22mm;
+      height: auto;
+      margin: 0 auto 1.5mm;
+      image-rendering: auto;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
+    }
     div { white-space: pre; }
     @media screen {
       body { max-width: 220px; margin: 20px auto; border: 1px dashed #ccc; padding: 12px; background: #fff; }
@@ -123,6 +164,7 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
   </style>
 </head>
 <body>
+<img class="receipt-logo" src="${safeLogoUrl}" alt="Big B Coffee" />
 ${receiptHtml}
 </body>
 </html>`;
@@ -130,11 +172,8 @@ ${receiptHtml}
   if (targetWindow) {
     targetWindow.document.write(html);
     targetWindow.document.close();
-    window.setTimeout(() => {
-      targetWindow.focus();
-      targetWindow.print();
-      targetWindow.onafterprint = () => targetWindow.close();
-    }, 50);
+    printWhenReady(targetWindow, targetWindow.document);
+    targetWindow.onafterprint = () => targetWindow.close();
     return true;
   }
 
@@ -163,10 +202,7 @@ ${receiptHtml}
   frameDocument.open();
   frameDocument.write(html);
   frameDocument.close();
-  window.setTimeout(() => {
-    frameWindow.focus();
-    frameWindow.print();
-  }, 50);
+  printWhenReady(frameWindow, frameDocument);
   window.setTimeout(cleanup, 60_000);
   return true;
 }

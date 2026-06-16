@@ -113,6 +113,15 @@ export type Customer = {
   name: string;
   phone: string;
   points: number;
+  tier?: string;
+  memberCode?: string | null;
+  birthday?: string | null;
+  notes?: string;
+  totalSpend?: number;
+  creditBalance?: number;
+  tags?: string;
+  lineUserId?: string | null;
+  metadata?: string;
   createdAt: string;
 };
 
@@ -289,14 +298,69 @@ export type PurchaseOrder = {
   supplier: string;
   note: string;
   totalCost: number;
-  status: "RECEIVED";
+  status: "RECEIVED" | "APPROVED";
   receivedAt: string;
   createdAt: string;
   itemCount?: number;
   items?: PurchaseOrderItem[];
 };
 
-export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman";
+export type TaxInvoice = {
+  id: number;
+  branchId: number;
+  orderId: number;
+  customerId: number | null;
+  invoiceNo: string;
+  buyerName: string;
+  buyerTaxId: string;
+  buyerAddress: string;
+  buyerBranch: string;
+  subtotal: number;
+  discountAmount: number;
+  tax: number;
+  total: number;
+  status: string;
+  eTaxStatus: string;
+  createdAt: string;
+};
+
+export type StockCount = {
+  id: number;
+  branchId: number;
+  status: string;
+  note: string;
+  createdAt: string;
+  postedAt: string | null;
+  items?: Array<{ id: number; ingredientId: number; expectedQty: number; countedQty: number; differenceQty: number; ingredient?: Ingredient }>;
+};
+
+export type StockTransfer = {
+  id: number;
+  fromBranchId: number;
+  toBranchId: number;
+  status: string;
+  note: string;
+  createdAt: string;
+  approvedAt: string | null;
+  receivedAt: string | null;
+  items?: Array<{ id: number; ingredientId: number; qty: number; ingredient?: Ingredient }>;
+};
+
+export type ProductUnit = { id: number; menuItemId: number; unitName: string; factor: number; price: number | null; barcode: string | null; active: boolean };
+export type PriceRule = { id: number; menuItemId: number | null; customerTier: string; minQty: number; price: number; active: boolean; createdAt: string };
+export type InventoryLot = { id: number; branchId: number; ingredientId: number; lotNo: string; qty: number; expiryDate: string | null; createdAt: string; ingredient?: Ingredient };
+export type ProductVariant = { id: number; menuItemId: number; sku: string | null; barcode: string | null; optionName: string; optionValue: string; priceDelta: number; active: boolean };
+export type Promotion = { id: number; name: string; type: DiscountRuleType; value: number; category: string; startAt: string | null; endAt: string | null; active: boolean; createdAt: string };
+export type Coupon = { id: number; code: string; type: DiscountRuleType; value: number; maxUses: number | null; usedCount: number; expiresAt: string | null; active: boolean; createdAt: string };
+export type BusinessDocument = { id: number; branchId: number; type: string; documentNo: string; customerName: string; total: number; status: string; payload: string; createdAt: string };
+export type MarketplaceConnection = { id: number; branchId: number; provider: string; shopName: string; status: string; config: Record<string, unknown>; updatedAt: string };
+export type CompareReport = {
+  a: { orders: number; revenue: number; averageTicket: number };
+  b: { orders: number; revenue: number; averageTicket: number };
+  diff: { orders: number; revenue: number };
+};
+
+export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman" | "email";
 
 export type IntegrationStatus = {
   provider: IntegrationProvider;
@@ -331,9 +395,28 @@ export type IntegrationOutboxSummary = {
   newestFailed: IntegrationEvent | null;
 };
 
+export type VatMode = "INCLUSIVE" | "EXCLUSIVE" | "NONE";
+
+export type StoreSetting = {
+  branchId: number;
+  shopName: string;
+  taxId: string;
+  branchLabel: string;
+  addressLine: string;
+  phone: string;
+  receiptHeader: string;
+  receiptFooter: string;
+  vatMode: VatMode;
+  vatRate: number;
+  paymentMethods: PaymentMethod[];
+};
+
 export type CartItem = {
   id: string;
   menuItemId: number;
+  productUnitId?: number | null;
+  unitLabel?: string;
+  unitFactor?: number;
   name: string;
   category: string;
   basePrice: number;
@@ -437,6 +520,8 @@ export type CustomerImportInput = {
 export type HistoricalOrderImportInput = {
   receiptNo?: string;
   createdAt?: string;
+  customerName?: string;
+  customerPhone?: string;
   productName: string;
   qty?: number;
   unitPrice?: number;

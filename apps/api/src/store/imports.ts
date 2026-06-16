@@ -36,6 +36,8 @@ type CustomerImportInput = {
 type HistoricalOrderImportInput = {
   receiptNo?: string;
   createdAt?: string;
+  customerName?: string;
+  customerPhone?: string;
   productName?: string;
   qty?: number;
   unitPrice?: number;
@@ -217,6 +219,15 @@ export async function importHistoricalOrders(input: { branchId: number; items: H
     const createdAt = raw.createdAt && !Number.isNaN(new Date(raw.createdAt).getTime())
       ? new Date(raw.createdAt)
       : new Date();
+    const customerPhone = cleanString(raw.customerPhone);
+    const customerName = cleanString(raw.customerName) || customerPhone;
+    const customer = customerPhone
+      ? await prisma.customer.upsert({
+          where: { phone: customerPhone },
+          update: { name: customerName || customerPhone },
+          create: { name: customerName || customerPhone, phone: customerPhone }
+        })
+      : null;
 
     const menuItem = await prisma.menuItem.findFirst({
       where: { name: productName, branchType: branch.branchType }
@@ -233,7 +244,7 @@ export async function importHistoricalOrders(input: { branchId: number; items: H
     await prisma.order.create({
       data: {
         branchId: input.branchId,
-        customerId: null,
+        customerId: customer?.id ?? null,
         userId: null,
         shiftId: null,
         status: "READY",

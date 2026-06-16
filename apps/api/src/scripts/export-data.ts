@@ -1,5 +1,4 @@
 import { PrismaClient } from '@prisma/client';
-import * as xlsx from 'xlsx';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -20,6 +19,17 @@ function getBranchFilter() {
 function safeSheetValue(value: unknown) {
   if (typeof value !== "string") return value;
   return /^[=+\-@]/.test(value) ? `'${value}` : value;
+}
+
+function csvEscape(value: unknown) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+function writeCsv(filePath: string, rows: Record<string, unknown>[]) {
+  const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const header = columns.map(csvEscape).join(",");
+  const body = rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")).join("\n");
+  fs.writeFileSync(filePath, `\uFEFF${header}\n${body}`);
 }
 
 async function exportData() {
@@ -63,7 +73,7 @@ async function exportData() {
       orderBy: { createdAt: 'desc' }
     });
 
-    // Flatten order items for Excel
+    // Flatten order items for CSV export.
     const salesData: any[] = [];
     for (const order of orders) {
       if (order.items.length === 0) {
@@ -104,25 +114,17 @@ async function exportData() {
       }
     }
 
-    // Create a workbook for this branch
-    const wb = xlsx.utils.book_new();
-
-    const wsStocks = xlsx.utils.json_to_sheet(stockData);
-    xlsx.utils.book_append_sheet(wb, wsStocks, "สต็อกวัตถุดิบ");
-
-    const wsSales = xlsx.utils.json_to_sheet(salesData);
-    xlsx.utils.book_append_sheet(wb, wsSales, "รายการขาย");
-
     const outDir = getOutputDir();
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-    // Save File
     const safeBranchName = branch.name.replace(/[^a-z0-9ก-๙]/gi, '_');
-    const fileName = `Export_BigBCoffee_${safeBranchName}.xlsx`;
-    const outPath = path.join(outDir, fileName);
-    
-    xlsx.writeFile(wb, outPath);
-    console.log(`Saved: ${outPath}`);
+    const stockPath = path.join(outDir, `Export_BigBCoffee_${safeBranchName}_stocks.csv`);
+    const salesPath = path.join(outDir, `Export_BigBCoffee_${safeBranchName}_sales.csv`);
+
+    writeCsv(stockPath, stockData);
+    writeCsv(salesPath, salesData);
+    console.log(`Saved: ${stockPath}`);
+    console.log(`Saved: ${salesPath}`);
   }
 
   console.log("\nExtraction Complete!");

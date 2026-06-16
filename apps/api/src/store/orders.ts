@@ -69,6 +69,32 @@ function roundMoney(v: number) {
   return Math.round(v * 100) / 100;
 }
 
+function parsePaymentMethods(raw: unknown): PaymentMethod[] {
+  try {
+    const parsed = JSON.parse(String(raw ?? "[]"));
+    if (Array.isArray(parsed)) {
+      const methods = parsed.filter((item): item is PaymentMethod => PAYMENT_METHODS.has(item as PaymentMethod));
+      if (methods.length) return methods;
+    }
+  } catch {
+    // Keep checkout available if old settings are malformed.
+  }
+  return ["CASH", "QR", "CARD"];
+}
+
+function computeVatTotal(amountBeforeTax: number, vatMode: string | undefined, vatRate: number | undefined) {
+  const rate = Number.isFinite(vatRate) && Number(vatRate) > 0 ? Number(vatRate) : 0;
+  if (!rate || vatMode === "NONE") {
+    return { tax: 0, total: roundMoney(amountBeforeTax) };
+  }
+  if (vatMode === "EXCLUSIVE") {
+    const tax = roundMoney(amountBeforeTax * rate / 100);
+    return { tax, total: roundMoney(amountBeforeTax + tax) };
+  }
+  const tax = roundMoney(amountBeforeTax * rate / (100 + rate));
+  return { tax, total: roundMoney(amountBeforeTax) };
+}
+
 function hydrateOrder(row: any) {
   if (!row) return null;
   return {
@@ -130,6 +156,16 @@ function legacyDiscountRule(discountType: DiscountType, discountValue: number): 
   if (discountType === "PERCENT" && discountValue > 0) return normalizeRule({ type: "ORDER_PERCENT", value: discountValue });
   if (discountType === "FIXED" && discountValue > 0) return normalizeRule({ type: "ORDER_FIXED", value: discountValue });
   return null;
+}
+
+function promotionToDiscountRule(promotion: any): DiscountRule | null {
+  return normalizeRule({
+    id: `PROMO-${promotion.id}`,
+    label: promotion.name,
+    type: promotion.type,
+    value: Number(promotion.value) || 0,
+    category: promotion.category || undefined
+  });
 }
 
 function computeDiscount(rules: DiscountRule[], subtotal: number, orderItems: OrderItemDraft[]) {
@@ -540,7 +576,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
 export async function createOrder(input: {
   branchId: number;
   customerId: number | null;
-  items: { menuItemId: number; qty: number; modifiers: Modifier[]; note?: string }[];
+  items: { menuItemId: number; productUnitId?: number | null; qty: number; modifiers: Modifier[]; note?: string }[];
   paymentMethod: PaymentMethod;
   discountType: DiscountType;
   discountValue: number;
@@ -554,9 +590,19 @@ export async function createOrder(input: {
   const checkoutStartedAt = Date.now();
   let preflightMs = 0;
   let transactionMs = 0;
+  const checkoutStepMs: Record<string, number> = {};
   let attempts = 0;
   let strictStockItems = 0;
   let flexibleStockItems = 0;
+  const measureCheckoutStep = async <T>(name: string, fn: () => Promise<T>) => {
+    if (process.env.CHECKOUT_PERF_LOG !== "1") return fn();
+    const startedAt = Date.now();
+    try {
+      return await fn();
+    } finally {
+      checkoutStepMs[name] = (checkoutStepMs[name] ?? 0) + Date.now() - startedAt;
+    }
+  };
   const paymentMethod = normalizePaymentMethod(input.paymentMethod);
   const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
     ? input.idempotencyKey.trim().slice(0, 120)
@@ -568,7 +614,8 @@ export async function createOrder(input: {
   }
 
   const menuIds = Array.from(new Set(input.items.map((item) => item.menuItemId)));
-  const [branch, customer, menuItems] = await Promise.all([
+  const productUnitIds = Array.from(new Set(input.items.map((item) => Number(item.productUnitId)).filter((id) => Number.isFinite(id) && id > 0)));
+  const [branch, customer, menuItems, productUnits, priceRules, storeSetting] = await Promise.all([
     prisma.branch.findFirst({ where: { id: input.branchId, active: true } }),
     input.customerId ? getCustomer(input.customerId) : Promise.resolve(null),
     prisma.menuItem.findMany({
@@ -576,28 +623,54 @@ export async function createOrder(input: {
         id: { in: menuIds },
         active: true
       }
-    })
+    }),
+    productUnitIds.length
+      ? (prisma as any).productUnit.findMany({ where: { id: { in: productUnitIds }, active: true } })
+      : Promise.resolve([]),
+    (prisma as any).priceRule.findMany({
+      where: {
+        active: true,
+        OR: [{ menuItemId: { in: menuIds } }, { menuItemId: null }]
+      },
+      orderBy: [{ minQty: "desc" }, { id: "desc" }]
+    }).catch(() => []),
+    prisma.storeSetting.findUnique({ where: { branchId: input.branchId } })
   ]);
   if (!branch) throw new Error("ไม่พบสาขาที่ระบุ");
   if (input.customerId && !customer) throw new Error("ไม่พบสมาชิกที่ระบุ");
+  if (storeSetting && !parsePaymentMethods(storeSetting.paymentMethods).includes(paymentMethod)) {
+    throw new Error("วิธีชำระเงินนี้ถูกปิดไว้");
+  }
 
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
+  const productUnitById = new Map<number, any>(productUnits.map((item: any) => [item.id, item]));
   const orderItems: OrderItemDraft[] = [];
 
   for (const item of input.items) {
     const mi = menuById.get(item.menuItemId);
     if (!mi) throw new Error(`ไม่พบสินค้า ID ${item.menuItemId}`);
     if (mi.branchType !== branch.branchType) throw new Error(`สินค้า ${mi.name} ไม่ตรงกับประเภทสาขา`);
+    const productUnit = item.productUnitId ? productUnitById.get(item.productUnitId) : null;
+    if (item.productUnitId && (!productUnit || productUnit.menuItemId !== mi.id)) throw new Error("หน่วยสินค้าไม่ถูกต้อง");
 
     const modifiers = normalizeModifiers(item.modifiers, mi.category);
     const modTotal = modifiers.reduce((s, m) => s + m.price, 0);
-    const lineTotal = roundMoney((mi.basePrice + modTotal) * item.qty);
+    const unitFactor = productUnit ? Number(productUnit.factor || 1) : 1;
+    const customerTier = String((customer as any)?.tier ?? "").trim();
+    const matchedPriceRule = priceRules.find((rule: any) => {
+      const tierMatches = !rule.customerTier || rule.customerTier === customerTier;
+      const itemMatches = rule.menuItemId === null || rule.menuItemId === mi.id;
+      return tierMatches && itemMatches && item.qty >= Number(rule.minQty || 1);
+    });
+    const normalUnitPrice = productUnit?.price != null ? Number(productUnit.price) : mi.basePrice * unitFactor;
+    const unitBasePrice = matchedPriceRule ? Number(matchedPriceRule.price) : normalUnitPrice;
+    const lineTotal = roundMoney((unitBasePrice + modTotal) * item.qty);
     orderItems.push({
       menuItemId: mi.id,
-      name: mi.name,
+      name: productUnit ? `${mi.name} (${productUnit.unitName})` : mi.name,
       category: mi.category,
-      qty: item.qty,
-      basePrice: mi.basePrice,
+      qty: roundMoney(item.qty * unitFactor),
+      basePrice: unitBasePrice,
       modifiers,
       lineTotal,
       note: item.note
@@ -610,18 +683,40 @@ export async function createOrder(input: {
   });
 
   const subtotal = roundMoney(orderItems.reduce((s, i) => s + i.lineTotal, 0));
+  const activePromotions: any[] = await (prisma as any).promotion.findMany({
+    where: {
+      active: true,
+      OR: [
+        { startAt: null },
+        { startAt: { lte: new Date() } }
+      ],
+      AND: [
+        {
+          OR: [
+            { endAt: null },
+            { endAt: { gte: new Date() } }
+          ]
+        }
+      ]
+    },
+    orderBy: { id: "asc" }
+  }).catch(() => []);
   const requestedRules = Array.isArray(input.discounts)
     ? input.discounts.map(normalizeRule).filter((rule): rule is DiscountRule => Boolean(rule))
     : [];
+  const promotionRules = activePromotions.map(promotionToDiscountRule).filter((rule: DiscountRule | null): rule is DiscountRule => Boolean(rule));
   const fallbackRule = legacyDiscountRule(input.discountType, input.discountValue);
-  const discountRules = requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []);
+  const discountRules = [...promotionRules, ...(requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []))];
   const { discountAmount, applied: appliedDiscounts } = computeDiscount(discountRules, subtotal, orderItems);
 
   const discountable = Math.max(0, subtotal - discountAmount);
   const availablePoints = customer ? customer.points : 0;
   const requestedPoints = Math.max(0, Math.floor(input.loyaltyPointsToUse));
   const pointsToUse = Math.min(requestedPoints, availablePoints, Math.floor(discountable));
-  const total = roundMoney(discountable - pointsToUse);
+  const amountAfterPointsBeforeTax = roundMoney(discountable - pointsToUse);
+  const vatResult = computeVatTotal(amountAfterPointsBeforeTax, storeSetting?.vatMode, storeSetting?.vatRate);
+  const tax = vatResult.tax;
+  const total = vatResult.total;
 
   const drinkCount = customer ? orderItems.reduce((sum, oi) => sum + (DRINK_CATEGORIES.includes(oi.category) ? oi.qty : 0), 0) : 0;
   const pointsEarned = Math.floor(drinkCount);
@@ -638,6 +733,7 @@ export async function createOrder(input: {
     discounts: appliedDiscounts,
     loyaltyPointsUsed: pointsToUse,
     loyaltyPointsEarned: pointsEarned,
+    tax,
     total,
     paymentStatus: paymentDetails.status,
     cashReceived: paymentDetails.cashReceived,
@@ -659,17 +755,17 @@ export async function createOrder(input: {
       order = await prisma.$transaction(async (tx) => {
     const requiredStock = new Map<number, number>();
     const flexibleStock = new Map<number, number>();
-    const recipes = await tx.recipe.findMany({
+    const recipes = await measureCheckoutStep("recipes", () => tx.recipe.findMany({
       where: { menuItemId: { in: Array.from(qtyByMenuItemId.keys()) } }
-    });
+    }));
     for (const recipe of recipes) {
       addRequiredStock(requiredStock, recipe.ingredientId, recipe.qty * (qtyByMenuItemId.get(recipe.menuItemId) ?? 0));
     }
-    await addModifierStockRequirementsForItems(tx, flexibleStock, orderItems, input.branchId);
+    await measureCheckoutStep("modifierStock", () => addModifierStockRequirementsForItems(tx, flexibleStock, orderItems, input.branchId));
     strictStockItems = requiredStock.size;
     flexibleStockItems = flexibleStock.size;
 
-    const newOrder = await tx.order.create({
+    const newOrder = await measureCheckoutStep("orderCreate", () => tx.order.create({
       data: {
         branchId: input.branchId,
         customerId: input.customerId,
@@ -682,7 +778,7 @@ export async function createOrder(input: {
         discountAmount,
         loyaltyPointsUsed: pointsToUse,
         loyaltyPointsEarned: pointsEarned,
-        tax: 0,
+        tax,
         total,
         paymentMethod,
         idempotencyKey,
@@ -699,9 +795,9 @@ export async function createOrder(input: {
         }
       },
       include: { items: true }
-    });
+    }));
 
-    await tx.payment.create({
+    await measureCheckoutStep("paymentCreate", () => tx.payment.create({
       data: {
         orderId: newOrder.id,
         method: paymentMethod,
@@ -712,7 +808,7 @@ export async function createOrder(input: {
         referenceNo: paymentDetails.referenceNo,
         confirmedByUserId: input.userId ?? null
       }
-    });
+    }));
     const orderEvents = [{
         orderId: newOrder.id,
         eventType: "ORDER_CREATED",
@@ -720,6 +816,7 @@ export async function createOrder(input: {
         payload: JSON.stringify({
           subtotal,
           discountAmount,
+          tax,
           total,
           paymentMethod,
           paymentStatus: paymentDetails.status,
@@ -734,30 +831,30 @@ export async function createOrder(input: {
           payload: JSON.stringify({ idempotencyKey })
       });
     }
-    await tx.orderEvent.createMany({ data: orderEvents });
+    await measureCheckoutStep("orderEventCreateMany", () => tx.orderEvent.createMany({ data: orderEvents }));
 
     if (customer && pointsToUse > 0) {
-      const pointsResult = await tx.customer.updateMany({
+      const pointsResult = await measureCheckoutStep("customerPointsUpdate", () => tx.customer.updateMany({
         where: { id: input.customerId!, points: { gte: pointsToUse } },
         data: { points: { increment: -pointsToUse + pointsEarned } }
-      });
+      }));
       if (pointsResult.count !== 1) throw new Error("แต้มสมาชิกไม่พอ กรุณารีเฟรชข้อมูลสมาชิก");
     } else if (customer && pointsEarned > 0) {
-      await tx.customer.update({
+      await measureCheckoutStep("customerPointsUpdate", () => tx.customer.update({
         where: { id: input.customerId! },
         data: { points: { increment: pointsEarned } }
-      });
+      }));
     }
 
-    await applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id);
-    await applyFlexibleStockDecrements(tx, input.branchId, flexibleStock);
-    await createSaleStockMovements(tx, input.branchId, newOrder.id, requiredStock, flexibleStock);
+    await measureCheckoutStep("strictStock", () => applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id));
+    await measureCheckoutStep("flexibleStock", () => applyFlexibleStockDecrements(tx, input.branchId, flexibleStock));
+    await measureCheckoutStep("stockMovements", () => createSaleStockMovements(tx, input.branchId, newOrder.id, requiredStock, flexibleStock));
 
     if (input.shiftId) {
       const cashAdd = paymentMethod === "CASH" ? total : 0;
       const qrAdd = paymentMethod === "QR" ? total : 0;
       const cardAdd = paymentMethod === "CARD" || paymentMethod === "EWALLET" ? total : 0;
-      await tx.shift.update({
+      await measureCheckoutStep("shiftUpdate", () => tx.shift.update({
         where: { id: input.shiftId },
         data: {
           totalSales: { increment: total },
@@ -766,7 +863,7 @@ export async function createOrder(input: {
           qrSales: { increment: qrAdd },
           cardSales: { increment: cardAdd }
         }
-      });
+      }));
     }
 
       return newOrder;
@@ -799,7 +896,8 @@ export async function createOrder(input: {
       strictStockItems,
       flexibleStockItems,
       paymentMethod,
-      orderId: order?.id ?? null
+      orderId: order?.id ?? null,
+      stepMs: checkoutStepMs
     });
   }
   if (order?.id) {

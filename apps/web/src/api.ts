@@ -1,6 +1,9 @@
 import type {
   Branch,
+  BusinessDocument,
   CartItem,
+  CompareReport,
+  Coupon,
   Customer,
   CustomerInsights,
   CupStockSetting,
@@ -12,12 +15,18 @@ import type {
   IntegrationOutboxSummary,
   IntegrationStatus,
   ImportResult,
+  InventoryLot,
   InventoryItem,
+  MarketplaceConnection,
   MenuItem,
   Order,
   OrderStatus,
   PaymentMethod,
+  PriceRule,
   ProductImportInput,
+  ProductUnit,
+  ProductVariant,
+  Promotion,
   PurchaseOrder,
   PurchaseOrderItem,
   Recipe,
@@ -28,12 +37,108 @@ import type {
   ShiftCloseResult,
   ShiftSummary,
   StockMovement,
+  StockCount,
+  StockTransfer,
+  StoreSetting,
+  TaxInvoice,
   User,
   DiscountRule,
   DiscountType
 } from "./types";
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:5175/api";
+const OFFLINE_ORDER_QUEUE_KEY = "bb_pos_offline_orders";
+
+type CreateOrderInput = {
+  items: CartItem[];
+  paymentMethod: PaymentMethod;
+  paymentDetails?: {
+    cashReceived?: number;
+    paymentConfirmed?: boolean;
+    referenceNo?: string;
+  };
+  idempotencyKey?: string;
+  discountType: DiscountType;
+  discountValue: number;
+  discounts?: DiscountRule[];
+  branchId: number;
+  customerId: number | null;
+  loyaltyPointsToUse: number;
+  userId?: number;
+  shiftId?: number;
+};
+type OfflineOrderInput = CreateOrderInput;
+
+function getOfflineQueue(): OfflineOrderInput[] {
+  try {
+    const raw = localStorage.getItem(OFFLINE_ORDER_QUEUE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setOfflineQueue(items: OfflineOrderInput[]) {
+  localStorage.setItem(OFFLINE_ORDER_QUEUE_KEY, JSON.stringify(items));
+}
+
+function isOfflineCheckoutError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return navigator.onLine === false || /Failed to fetch|NetworkError|Load failed|internet|อินเทอร์เน็ต/i.test(message);
+}
+
+function queueOfflineOrder(input: OfflineOrderInput): Order {
+  const queue = getOfflineQueue();
+  queue.push(input);
+  setOfflineQueue(queue);
+  const now = new Date().toISOString();
+  return {
+    id: -Date.now(),
+    branchId: input.branchId,
+    customerId: input.customerId,
+    userId: input.userId ?? null,
+    shiftId: input.shiftId ?? null,
+    createdAt: now,
+    status: "PAID",
+    subtotal: input.items.reduce((sum, item) => sum + ((item.basePrice + item.modifiers.reduce((s, mod) => s + mod.price, 0)) * item.qty), 0),
+    discountType: input.discountType,
+    discountValue: input.discountValue,
+    discountAmount: 0,
+    loyaltyPointsUsed: input.loyaltyPointsToUse,
+    loyaltyPointsEarned: 0,
+    tax: 0,
+    total: input.items.reduce((sum, item) => sum + ((item.basePrice + item.modifiers.reduce((s, mod) => s + mod.price, 0)) * item.qty), 0),
+    paymentMethod: input.paymentMethod,
+    items: input.items.map((item, index) => ({
+      id: index + 1,
+      menuItemId: item.menuItemId,
+      name: item.name,
+      qty: item.qty,
+      basePrice: item.basePrice,
+      modifiers: item.modifiers,
+      lineTotal: (item.basePrice + item.modifiers.reduce((sum, mod) => sum + mod.price, 0)) * item.qty,
+      note: item.note
+    }))
+  };
+}
+
+export async function flushOfflineOrders() {
+  const queue = getOfflineQueue();
+  if (!queue.length) return { sent: 0, remaining: 0 };
+  const remaining: OfflineOrderInput[] = [];
+  let sent = 0;
+  for (const item of queue) {
+    try {
+      await createOrderOnline(item);
+      sent += 1;
+    } catch {
+      remaining.push(item);
+    }
+  }
+  setOfflineQueue(remaining);
+  return { sent, remaining: remaining.length };
+}
 
 type FetchJsonInit = RequestInit & { timeoutMs?: number };
 
@@ -118,6 +223,14 @@ export async function getCustomerInsights(params: { inactiveDays?: number; limit
 export async function createCustomer(input: { name: string; phone: string }) {
   const payload = await fetchJson<{ customer: Customer }>(`${API_URL}/customers`, {
     method: "POST",
+    body: JSON.stringify(input)
+  });
+  return payload.customer;
+}
+
+export async function updateCustomer(id: number, input: Omit<Partial<Customer>, "tags" | "metadata"> & { tags?: string[]; metadata?: Record<string, unknown> }) {
+  const payload = await fetchJson<{ customer: Customer }>(`${API_URL}/customers/${id}`, {
+    method: "PUT",
     body: JSON.stringify(input)
   });
   return payload.customer;
@@ -351,30 +464,14 @@ export async function getOrderByIdempotencyKey(idempotencyKey: string) {
   return payload.order;
 }
 
-export async function createOrder(input: {
-  items: CartItem[];
-  paymentMethod: PaymentMethod;
-  paymentDetails?: {
-    cashReceived?: number;
-    paymentConfirmed?: boolean;
-    referenceNo?: string;
-  };
-  idempotencyKey?: string;
-  discountType: DiscountType;
-  discountValue: number;
-  discounts?: DiscountRule[];
-  branchId: number;
-  customerId: number | null;
-  loyaltyPointsToUse: number;
-  userId?: number;
-  shiftId?: number;
-}) {
+async function createOrderOnline(input: CreateOrderInput) {
   const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders`, {
     method: "POST",
     timeoutMs: 15_000,
     body: JSON.stringify({
       items: input.items.map((item) => ({
         menuItemId: item.menuItemId,
+        productUnitId: item.productUnitId,
         qty: item.qty,
         modifiers: item.modifiers,
         note: item.note
@@ -393,6 +490,15 @@ export async function createOrder(input: {
     })
   });
   return payload.order;
+}
+
+export async function createOrder(input: OfflineOrderInput) {
+  try {
+    return await createOrderOnline(input);
+  } catch (error) {
+    if (!isOfflineCheckoutError(error)) throw error;
+    return queueOfflineOrder(input);
+  }
 }
 
 export async function updateOrderStatus(id: number, status: OrderStatus) {
@@ -523,6 +629,217 @@ export async function createPurchase(input: {
     body: JSON.stringify(input)
   });
   return payload.purchase;
+}
+
+export async function approvePurchase(id: number) {
+  const payload = await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases/${id}/approve`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  return payload.purchase;
+}
+
+export async function getTaxInvoices(branchId?: number) {
+  const query = new URLSearchParams();
+  if (branchId) query.set("branchId", String(branchId));
+  const payload = await fetchJson<{ items: TaxInvoice[] }>(`${API_URL}/tax-invoices?${query.toString()}`);
+  return payload.items;
+}
+
+export async function createTaxInvoice(input: { orderId: number; buyerName: string; buyerTaxId?: string; buyerAddress?: string; buyerBranch?: string }) {
+  const payload = await fetchJson<{ invoice: TaxInvoice }>(`${API_URL}/tax-invoices`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  return payload.invoice;
+}
+
+export async function getStockCounts(branchId?: number) {
+  const query = new URLSearchParams();
+  if (branchId) query.set("branchId", String(branchId));
+  const payload = await fetchJson<{ items: StockCount[] }>(`${API_URL}/stock-counts?${query.toString()}`);
+  return payload.items;
+}
+
+export async function createStockCount(input: { branchId: number; note?: string; items: { ingredientId: number; countedQty: number }[] }) {
+  const payload = await fetchJson<{ stockCount: StockCount }>(`${API_URL}/stock-counts`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  return payload.stockCount;
+}
+
+export async function postStockCount(id: number) {
+  const payload = await fetchJson<{ stockCount: StockCount }>(`${API_URL}/stock-counts/${id}/post`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  return payload.stockCount;
+}
+
+export async function getStockTransfers(branchId?: number) {
+  const query = new URLSearchParams();
+  if (branchId) query.set("branchId", String(branchId));
+  const payload = await fetchJson<{ items: StockTransfer[] }>(`${API_URL}/stock-transfers?${query.toString()}`);
+  return payload.items;
+}
+
+export async function createStockTransfer(input: { fromBranchId: number; toBranchId: number; note?: string; items: { ingredientId: number; qty: number }[] }) {
+  const payload = await fetchJson<{ transfer: StockTransfer }>(`${API_URL}/stock-transfers`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  return payload.transfer;
+}
+
+export async function receiveStockTransfer(id: number) {
+  const payload = await fetchJson<{ transfer: StockTransfer }>(`${API_URL}/stock-transfers/${id}/receive`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  return payload.transfer;
+}
+
+export async function getProductUnits(menuItemId?: number) {
+  const query = new URLSearchParams();
+  if (menuItemId) query.set("menuItemId", String(menuItemId));
+  const payload = await fetchJson<{ items: ProductUnit[] }>(`${API_URL}/product-units?${query.toString()}`);
+  return payload.items;
+}
+
+export async function createProductUnit(input: { menuItemId: number; unitName: string; factor: number; price?: number | null; barcode?: string }) {
+  const payload = await fetchJson<{ item: ProductUnit }>(`${API_URL}/product-units`, { method: "POST", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function getPriceRules() {
+  const payload = await fetchJson<{ items: PriceRule[] }>(`${API_URL}/price-rules`);
+  return payload.items;
+}
+
+export async function createPriceRule(input: { menuItemId?: number | null; customerTier?: string; minQty?: number; price: number }) {
+  const payload = await fetchJson<{ item: PriceRule }>(`${API_URL}/price-rules`, { method: "POST", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function getInventoryLots(branchId?: number, days = 30) {
+  const query = new URLSearchParams();
+  if (branchId) query.set("branchId", String(branchId));
+  query.set("days", String(days));
+  const payload = await fetchJson<{ items: InventoryLot[] }>(`${API_URL}/inventory-lots?${query.toString()}`);
+  return payload.items;
+}
+
+export async function createInventoryLot(input: { branchId: number; ingredientId: number; lotNo?: string; qty: number; expiryDate?: string }) {
+  const payload = await fetchJson<{ item: InventoryLot }>(`${API_URL}/inventory-lots`, { method: "POST", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function getProductVariants(menuItemId?: number) {
+  const query = new URLSearchParams();
+  if (menuItemId) query.set("menuItemId", String(menuItemId));
+  const payload = await fetchJson<{ items: ProductVariant[] }>(`${API_URL}/product-variants?${query.toString()}`);
+  return payload.items;
+}
+
+export async function createProductVariant(input: { menuItemId: number; optionName: string; optionValue: string; priceDelta?: number; sku?: string; barcode?: string }) {
+  const payload = await fetchJson<{ item: ProductVariant }>(`${API_URL}/product-variants`, { method: "POST", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function getPromotions() {
+  const payload = await fetchJson<{ items: Promotion[] }>(`${API_URL}/promotions`);
+  return payload.items;
+}
+
+export async function createPromotion(input: { name: string; type: string; value: number; category?: string; startAt?: string; endAt?: string; active?: boolean }) {
+  const payload = await fetchJson<{ item: Promotion }>(`${API_URL}/promotions`, { method: "POST", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function getCoupons() {
+  const payload = await fetchJson<{ items: Coupon[] }>(`${API_URL}/coupons`);
+  return payload.items;
+}
+
+export async function createCoupon(input: { code: string; type: string; value: number; maxUses?: number | null; expiresAt?: string; active?: boolean }) {
+  const payload = await fetchJson<{ item: Coupon }>(`${API_URL}/coupons`, { method: "POST", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function getBusinessDocuments(branchId?: number) {
+  const query = new URLSearchParams();
+  if (branchId) query.set("branchId", String(branchId));
+  const payload = await fetchJson<{ items: BusinessDocument[] }>(`${API_URL}/business-documents?${query.toString()}`);
+  return payload.items;
+}
+
+export async function createBusinessDocument(input: { branchId: number; type: string; customerName?: string; total?: number; payload?: Record<string, unknown> }) {
+  const payload = await fetchJson<{ item: BusinessDocument }>(`${API_URL}/business-documents`, { method: "POST", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export function getTaxExportUrl(params: { from?: string; to?: string; branchId?: number }) {
+  const query = new URLSearchParams();
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.branchId) query.set("branchId", String(params.branchId));
+  return `${API_URL}/reports/tax-export.xls?${query.toString()}`;
+}
+
+export async function getCompareReport(params: { fromA: string; toA: string; fromB: string; toB: string; branchIdA?: number; branchIdB?: number }) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined) query.set(key, String(value));
+  });
+  const payload = await fetchJson<{ report: CompareReport }>(`${API_URL}/reports/compare?${query.toString()}`);
+  return payload.report;
+}
+
+export async function saveDailyEmailSetting(input: { branchId?: number | null; recipients: string; sendTime?: string; enabled?: boolean }) {
+  const payload = await fetchJson<{ setting: unknown }>(`${API_URL}/daily-email-setting`, { method: "PUT", body: JSON.stringify(input) });
+  return payload.setting;
+}
+
+export async function enqueueDailySummaryEmail(input: { date: string; branchId?: number }) {
+  const payload = await fetchJson<{ event: IntegrationEvent }>(`${API_URL}/daily-email/enqueue`, { method: "POST", body: JSON.stringify(input) });
+  return payload.event;
+}
+
+export async function getCustomerDisplay(branchId: number) {
+  const payload = await fetchJson<{ display: { orderId: number; total: number; status: string; items: Array<{ name: string; qty: number; lineTotal: number }>; createdAt: string } | null }>(`${API_URL}/customer-display?branchId=${branchId}`);
+  return payload.display;
+}
+
+export async function getMarketplaces(branchId?: number) {
+  const query = new URLSearchParams();
+  if (branchId) query.set("branchId", String(branchId));
+  const payload = await fetchJson<{ items: MarketplaceConnection[] }>(`${API_URL}/marketplaces?${query.toString()}`);
+  return payload.items;
+}
+
+export async function saveMarketplace(input: { branchId: number; provider: string; shopName?: string; config?: Record<string, unknown> }) {
+  const payload = await fetchJson<{ item: MarketplaceConnection }>(`${API_URL}/marketplaces`, { method: "PUT", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function syncMarketplace(id: number) {
+  const payload = await fetchJson<{ event: IntegrationEvent }>(`${API_URL}/marketplaces/${id}/sync`, { method: "POST", body: JSON.stringify({}) });
+  return payload.event;
+}
+
+/* ─── Store Settings ─── */
+export async function getStoreSetting(branchId: number) {
+  const payload = await fetchJson<{ settings: StoreSetting }>(`${API_URL}/settings/store?branchId=${branchId}`);
+  return payload.settings;
+}
+
+export async function updateStoreSetting(branchId: number, input: Partial<Omit<StoreSetting, "branchId">>) {
+  const payload = await fetchJson<{ settings: StoreSetting }>(`${API_URL}/settings/store`, {
+    method: "PUT",
+    body: JSON.stringify({ branchId, ...input })
+  });
+  return payload.settings;
 }
 
 /* ─── Integrations ─── */

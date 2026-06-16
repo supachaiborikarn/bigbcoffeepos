@@ -156,6 +156,8 @@ export type CustomerImportInput = {
 export type HistoricalOrderImportInput = {
   receiptNo?: string;
   createdAt?: string;
+  customerName?: string;
+  customerPhone?: string;
   productName: string;
   qty?: number;
   unitPrice?: number;

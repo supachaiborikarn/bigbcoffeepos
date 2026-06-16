@@ -276,7 +276,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "browser E2E check exists",
     file: "apps/api/src/scripts/browser-e2e-check.ts",
-    pattern: /(?=[\s\S]*chromium\.launch)(?=[\s\S]*addModifiedLatte)(?=[\s\S]*แก้วเย็น)(?=[\s\S]*Underpayment should keep cash confirmation disabled)(?=[\s\S]*สแกนจ่าย \(QR\))(?=[\s\S]*บัตรเครดิต)(?=[\s\S]*ORDER_CANCELLED)/
+    pattern: /(?=[\s\S]*chromium\.launch)(?=[\s\S]*addModifiedLatte)(?=[\s\S]*แก้วเย็น)(?=[\s\S]*Underpayment should keep cash confirmation disabled)(?=[\s\S]*ยืนยันชำระเงิน QR)(?=[\s\S]*บัตรเครดิต)(?=[\s\S]*ORDER_CANCELLED)/
   },
   {
     name: "CI installs browser runtime",

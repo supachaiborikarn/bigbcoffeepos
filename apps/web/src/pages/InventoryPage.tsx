@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, EyeOff, PackageCheck, Plus, RotateCcw, Save, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, EyeOff, PackageCheck, Plus, Printer, RotateCcw, Save, Search, X } from "lucide-react";
 import {
   createIngredient,
   createMenuItem,
@@ -25,6 +25,7 @@ import {
 import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient, StockMovement } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
+import { printBarcodeLabels } from "../utils/barcode";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -1440,6 +1441,26 @@ export default function InventoryPage() {
             <button type="submit" className="btn btn--primary" disabled={isSubmitting} style={{ marginTop: 16, width: "100%" }}>
               <PackageCheck size={16} />
               บันทึกเมนู
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              style={{ marginTop: 8, width: "100%" }}
+              onClick={() => {
+                const code = (menuForm.barcode.trim() || menuForm.sku.trim());
+                if (!code) {
+                  toast.error("กรอกบาร์โค้ดหรือ SKU ก่อนพิมพ์ป้าย");
+                  return;
+                }
+                const price = toNumber(menuForm.basePrice);
+                const ok = printBarcodeLabels([
+                  { name: menuForm.name.trim() || code, code, price: price ?? undefined }
+                ]);
+                if (!ok) toast.error("เปิดหน้าต่างพิมพ์ไม่ได้ กรุณาอนุญาต pop-up");
+              }}
+            >
+              <Printer size={16} />
+              พิมพ์สติ๊กเกอร์บาร์โค้ด
             </button>
           </form>
         </section>

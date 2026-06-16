@@ -1,6 +1,6 @@
 import prisma from "../prisma.js";
 
-export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman";
+export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman" | "email";
 
 type IntegrationDefinition = {
   provider: IntegrationProvider;
@@ -27,6 +27,12 @@ const DEFINITIONS: IntegrationDefinition[] = [
     label: "Lineman",
     description: "คิวซิงก์ออเดอร์/เมนูสำหรับเดลิเวอรี",
     requiredEnv: ["LINEMAN_API_ENDPOINT", "LINEMAN_API_KEY"]
+  },
+  {
+    provider: "email",
+    label: "Daily Email",
+    description: "ส่งอีเมลสรุปยอดขายรายวันผ่าน webhook หรือ email service",
+    requiredEnv: ["EMAIL_WEBHOOK_URL"]
   }
 ];
 
@@ -224,7 +230,7 @@ export async function processOutboxQueue() {
             "X-Client-ID": process.env.RD_TAX_CLIENT_ID!,
             "X-Client-Secret": process.env.RD_TAX_CLIENT_SECRET!
           },
-          body: JSON.stringify({ ...payload, vat: 7 })
+          body: JSON.stringify(payload)
         });
         await assertProviderResponseOk(response, event.provider);
       } else if (event.provider === "line_oa") {
@@ -248,6 +254,13 @@ export async function processOutboxQueue() {
             "Content-Type": "application/json",
             "X-API-Key": process.env.LINEMAN_API_KEY!
           },
+          body: JSON.stringify(payload)
+        });
+        await assertProviderResponseOk(response, event.provider);
+      } else if (event.provider === "email") {
+        const response = await fetch(process.env.EMAIL_WEBHOOK_URL!, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
         await assertProviderResponseOk(response, event.provider);

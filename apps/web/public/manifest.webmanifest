@@ -1,0 +1,9 @@
+{
+  "name": "Big B Coffee POS",
+  "short_name": "BigB POS",
+  "start_url": "/pos",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#8b5e3c",
+  "icons": []
+}

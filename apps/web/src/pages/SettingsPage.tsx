@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getIntegrationEvents, getIntegrationOutboxSummary, getIntegrationStatus, processIntegrationOutbox, retryIntegrationEvent } from "../api";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import StoreSettingsPanel from "../components/settings/StoreSettingsPanel";
 import type { IntegrationEvent, IntegrationOutboxSummary, IntegrationProvider, IntegrationStatus } from "../types";
 
 const providerLabel: Record<IntegrationProvider, string> = {
   rd_tax: "RD / e-Tax",
   line_oa: "Line OA",
-  lineman: "Lineman"
+  lineman: "Lineman",
+  email: "Daily Email"
 };
 
 function formatDateTime(value: string) {
@@ -121,6 +123,8 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+
+      <StoreSettingsPanel />
 
       <section
         style={{

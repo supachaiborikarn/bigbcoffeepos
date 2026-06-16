@@ -10,3 +10,22 @@ export { getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows
 export { createPurchase, getPurchases, getPurchase } from "./purchases.js";
 export { getIntegrationStatus, getIntegrationOutboxSummary, getIntegrationEvents, retryIntegrationEvent, processOutboxQueue } from "./integrations.js";
 export { importProducts, importCustomers, importHistoricalOrders } from "./imports.js";
+export { getStoreSetting, updateStoreSetting } from "./settings.js";
+export type { StoreSettingDTO, StoreSettingInput, VatMode } from "./settings.js";
+export {
+  listTaxInvoices, createTaxInvoice,
+  listStockCounts, createStockCount, postStockCount,
+  listStockTransfers, createStockTransfer, receiveStockTransfer,
+  approvePurchase,
+  listProductUnits, saveProductUnit,
+  listPriceRules, savePriceRule,
+  listInventoryLots, saveInventoryLot,
+  listProductVariants, saveProductVariant,
+  listPromotions, savePromotion,
+  listCoupons, saveCoupon,
+  listBusinessDocuments, createBusinessDocument,
+  getTaxExportRows, compareSales,
+  getDailyEmailSetting, saveDailyEmailSetting, enqueueDailySummaryEmail,
+  getCustomerDisplay,
+  listMarketplaceConnections, saveMarketplaceConnection, enqueueMarketplaceSync
+} from "./parity.js";

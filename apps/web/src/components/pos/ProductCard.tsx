@@ -55,19 +55,20 @@ export default function ProductCard({ item, onClick, variantCount = 0, priceLabe
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
-        padding: "12px",
-        gap: "10px",
+        padding: "10px",
+        gap: "6px",
         position: "relative",
-        minHeight: hasFeaturedPhoto ? 220 : 160
+        minHeight: hasFeaturedPhoto ? 200 : 115,
+        height: "100%"
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", minWidth: 0 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px", minWidth: 0 }}>
         <span className="menu-card__category" style={{
           background: "var(--brand-subtle)",
           color: "var(--brand)",
-          padding: "3px 7px",
+          padding: "2px 6px",
           borderRadius: "4px",
-          fontSize: "11px",
+          fontSize: "10px",
           lineHeight: 1.2,
           whiteSpace: "nowrap",
           maxWidth: "100%",
@@ -80,9 +81,9 @@ export default function ProductCard({ item, onClick, variantCount = 0, priceLabe
           <span style={{
             background: "var(--warning)",
             color: "white",
-            fontSize: "10px",
+            fontSize: "9px",
             fontWeight: 700,
-            padding: "3px 7px",
+            padding: "2px 6px",
             borderRadius: "4px",
             lineHeight: 1.2,
             flexShrink: 0
@@ -97,23 +98,23 @@ export default function ProductCard({ item, onClick, variantCount = 0, priceLabe
           width: "100%",
           aspectRatio: "4/3",
           backgroundColor: "var(--bg-muted)",
-          borderRadius: "8px",
+          borderRadius: "6px",
           overflow: "hidden"
         }}>
           <img src={item.imageUrl ?? ""} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} loading="lazy" />
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", width: "100%", alignItems: "flex-start", gap: "10px", flex: 1 }}>
+      <div style={{ display: "flex", flexDirection: "column", width: "100%", alignItems: "flex-start", gap: "4px", flex: 1, minHeight: 0 }}>
         <span className="menu-card__name" style={{
-          fontSize: hasFeaturedPhoto ? "15px" : "19px",
+          fontSize: hasFeaturedPhoto ? "13px" : "15px",
           fontWeight: 700,
           color: "var(--text-primary)",
           textAlign: "left",
-          lineHeight: 1.22,
+          lineHeight: 1.25,
           letterSpacing: 0,
           display: "-webkit-box",
-          WebkitLineClamp: hasFeaturedPhoto ? 2 : 4,
+          WebkitLineClamp: hasFeaturedPhoto ? 2 : 3,
           WebkitBoxOrient: "vertical",
           overflow: "hidden",
           overflowWrap: "anywhere"
@@ -123,7 +124,7 @@ export default function ProductCard({ item, onClick, variantCount = 0, priceLabe
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", width: "100%", alignItems: "center" }}>
-        <span className="menu-card__price" style={{ fontWeight: 800, color: "var(--brand-hover)", fontSize: "16px", letterSpacing: 0 }}>
+        <span className="menu-card__price" style={{ fontWeight: 800, color: "var(--brand-hover)", fontSize: "14px", letterSpacing: 0 }}>
           {priceLabel ?? formatter.format(item.basePrice)}
         </span>
       </div>

@@ -110,18 +110,40 @@ export async function addCustomer(input: { name: string; phone: string }) {
   });
 }
 
-export async function updateCustomer(id: number, input: Partial<{ name: string; phone: string }>) {
+export async function updateCustomer(id: number, input: Partial<{
+  name: string;
+  phone: string;
+  tier: string;
+  memberCode: string | null;
+  birthday: string | null;
+  notes: string;
+  totalSpend: number;
+  creditBalance: number;
+  tags: string[];
+  lineUserId: string | null;
+  metadata: Record<string, unknown>;
+}>) {
   if (input.phone) {
     const dup = await prisma.customer.findFirst({
       where: { phone: input.phone, id: { not: id } }
     });
     if (dup) throw new Error("เบอร์โทรนี้ถูกใช้งานแล้ว");
   }
+  const birthday = input.birthday ? new Date(input.birthday) : input.birthday === null ? null : undefined;
   return prisma.customer.update({
     where: { id },
     data: {
       ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.phone !== undefined ? { phone: input.phone } : {})
+      ...(input.phone !== undefined ? { phone: input.phone } : {}),
+      ...(input.tier !== undefined ? { tier: input.tier } : {}),
+      ...(input.memberCode !== undefined ? { memberCode: input.memberCode || null } : {}),
+      ...(birthday !== undefined ? { birthday } : {}),
+      ...(input.notes !== undefined ? { notes: input.notes } : {}),
+      ...(input.totalSpend !== undefined ? { totalSpend: input.totalSpend } : {}),
+      ...(input.creditBalance !== undefined ? { creditBalance: input.creditBalance } : {}),
+      ...(input.tags !== undefined ? { tags: JSON.stringify(input.tags) } : {}),
+      ...(input.lineUserId !== undefined ? { lineUserId: input.lineUserId || null } : {}),
+      ...(input.metadata !== undefined ? { metadata: JSON.stringify(input.metadata) } : {})
     }
   });
 }

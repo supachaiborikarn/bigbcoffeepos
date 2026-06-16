@@ -23,8 +23,25 @@ import {
   getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows, getDailyCloseReport,
   createPurchase, getPurchases,
   getIntegrationStatus, getIntegrationOutboxSummary, getIntegrationEvents, retryIntegrationEvent, processOutboxQueue,
-  importProducts, importCustomers, importHistoricalOrders
+  importProducts, importCustomers, importHistoricalOrders,
+  getStoreSetting, updateStoreSetting,
+  listTaxInvoices, createTaxInvoice,
+  listStockCounts, createStockCount, postStockCount,
+  listStockTransfers, createStockTransfer, receiveStockTransfer,
+  approvePurchase,
+  listProductUnits, saveProductUnit,
+  listPriceRules, savePriceRule,
+  listInventoryLots, saveInventoryLot,
+  listProductVariants, saveProductVariant,
+  listPromotions, savePromotion,
+  listCoupons, saveCoupon,
+  listBusinessDocuments, createBusinessDocument,
+  getTaxExportRows, compareSales,
+  getDailyEmailSetting, saveDailyEmailSetting, enqueueDailySummaryEmail,
+  getCustomerDisplay,
+  listMarketplaceConnections, saveMarketplaceConnection, enqueueMarketplaceSync
 } from "./store/index.js";
+import type { StoreSettingInput, VatMode } from "./store/index.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 5175);
@@ -48,6 +65,18 @@ function sendCsv(res: express.Response, filename: string, rows: Record<string, u
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   return res.send(`\uFEFF${header}\n${body}`);
+}
+function sendExcelXml(res: express.Response, filename: string, rows: Record<string, unknown>[], columns: { key: string; label: string }[]) {
+  const esc = (value: unknown) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const header = columns.map((column) => `<Cell><Data ss:Type="String">${esc(column.label)}</Data></Cell>`).join("");
+  const body = rows.map((row) => `<Row>${columns.map((column) => `<Cell><Data ss:Type="${typeof row[column.key] === "number" ? "Number" : "String"}">${esc(row[column.key])}</Data></Cell>`).join("")}</Row>`).join("");
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="Tax Export"><Table><Row>${header}</Row>${body}</Table></Worksheet>
+</Workbook>`;
+  res.setHeader("Content-Type", "application/vnd.ms-excel; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  return res.send(xml);
 }
 async function readAuditRows(input: { limit?: number; action?: string } = {}) {
   const auditLogFile = process.env.AUDIT_LOG_FILE || path.resolve(process.cwd(), "data", "audit.log");
@@ -227,7 +256,19 @@ app.put("/api/customers/:id", async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
-    const c = await updateCustomer(id, { name: req.body?.name?.trim(), phone: req.body?.phone?.trim() });
+    const c = await updateCustomer(id, {
+      name: req.body?.name?.trim(),
+      phone: req.body?.phone?.trim(),
+      tier: req.body?.tier !== undefined ? String(req.body.tier).trim() : undefined,
+      memberCode: req.body?.memberCode === null ? null : req.body?.memberCode !== undefined ? String(req.body.memberCode).trim() : undefined,
+      birthday: req.body?.birthday === null ? null : req.body?.birthday !== undefined ? String(req.body.birthday) : undefined,
+      notes: req.body?.notes !== undefined ? String(req.body.notes).trim() : undefined,
+      totalSpend: req.body?.totalSpend !== undefined ? parseMoney(req.body.totalSpend) ?? undefined : undefined,
+      creditBalance: req.body?.creditBalance !== undefined ? parseMoney(req.body.creditBalance) ?? undefined : undefined,
+      tags: Array.isArray(req.body?.tags) ? req.body.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean) : undefined,
+      lineUserId: req.body?.lineUserId === null ? null : req.body?.lineUserId !== undefined ? String(req.body.lineUserId).trim() : undefined,
+      metadata: req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : undefined
+    });
     if (!c) return res.status(404).json({ error: "ไม่พบสมาชิก" });
     return res.json({ customer: c });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
@@ -484,7 +525,9 @@ app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)
       branchId,
       customerId: req.body.customerId ?? null,
       items: req.body.items.map((i: Record<string, unknown>) => ({
-        menuItemId: Number(i.menuItemId), qty: Number(i.qty),
+        menuItemId: Number(i.menuItemId),
+        productUnitId: i.productUnitId === undefined || i.productUnitId === null ? null : Number(i.productUnitId),
+        qty: Number(i.qty),
         modifiers: Array.isArray(i.modifiers) ? i.modifiers : [],
         note: typeof i.note === "string" ? i.note.trim() : undefined
       })),
@@ -677,6 +720,276 @@ app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess(
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
+app.post("/api/purchases/:id/approve", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const purchase = await approvePurchase(id, req.user?.id ?? null);
+    audit("purchase.approved", req, { purchaseId: id });
+    return res.json({ purchase });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+/* ─── POSPOS parity features ─── */
+app.get("/api/tax-invoices", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ items: await listTaxInvoices(branchId) });
+});
+
+app.post("/api/tax-invoices", requireRole("admin", "manager", "cashier"), async (req, res) => {
+  const orderId = parseId(req.body?.orderId);
+  if (orderId === null) return res.status(400).json({ error: "กรุณาระบุออเดอร์" });
+  try {
+    const invoice = await createTaxInvoice({
+      orderId,
+      buyerName: String(req.body?.buyerName ?? "").trim(),
+      buyerTaxId: String(req.body?.buyerTaxId ?? "").trim(),
+      buyerAddress: String(req.body?.buyerAddress ?? "").trim(),
+      buyerBranch: String(req.body?.buyerBranch ?? "").trim()
+    });
+    audit("tax_invoice.created", req, { invoiceId: invoice.id, orderId });
+    return res.status(201).json({ invoice });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/stock-counts", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ items: await listStockCounts(branchId) });
+});
+
+app.post("/api/stock-counts", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
+  const branchId = parseId(req.body?.branchId);
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (branchId === null) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
+  try {
+    const stockCount = await createStockCount({
+      branchId,
+      note: String(req.body?.note ?? ""),
+      items: items.map((item: any) => ({ ingredientId: parseId(item.ingredientId) ?? 0, countedQty: Number(item.countedQty) || 0 }))
+    });
+    audit("stock_count.created", req, { stockCountId: stockCount?.id, branchId });
+    return res.status(201).json({ stockCount });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.post("/api/stock-counts/:id/post", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const stockCount = await postStockCount(id);
+    audit("stock_count.posted", req, { stockCountId: id });
+    return res.json({ stockCount });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/stock-transfers", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ items: await listStockTransfers(branchId) });
+});
+
+app.post("/api/stock-transfers", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.fromBranchId)), async (req, res) => {
+  const fromBranchId = parseId(req.body?.fromBranchId);
+  const toBranchId = parseId(req.body?.toBranchId);
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (fromBranchId === null || toBranchId === null) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
+  try {
+    const transfer = await createStockTransfer({
+      fromBranchId,
+      toBranchId,
+      note: String(req.body?.note ?? ""),
+      items: items.map((item: any) => ({ ingredientId: parseId(item.ingredientId) ?? 0, qty: Number(item.qty) || 0 }))
+    });
+    audit("stock_transfer.created", req, { transferId: transfer.id, fromBranchId, toBranchId });
+    return res.status(201).json({ transfer });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.post("/api/stock-transfers/:id/receive", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const transfer = await receiveStockTransfer(id);
+    audit("stock_transfer.received", req, { transferId: id });
+    return res.json({ transfer });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/product-units", requireRole("admin", "manager"), async (req, res) => {
+  const menuItemId = parseId(req.query.menuItemId as string) ?? undefined;
+  return res.json({ items: await listProductUnits(menuItemId) });
+});
+
+app.post("/api/product-units", requireRole("admin", "manager"), async (req, res) => {
+  const menuItemId = parseId(req.body?.menuItemId);
+  if (menuItemId === null) return res.status(400).json({ error: "กรุณาเลือกสินค้า" });
+  try {
+    const item = await saveProductUnit({
+      menuItemId,
+      unitName: String(req.body?.unitName ?? "").trim(),
+      factor: Number(req.body?.factor) || 1,
+      price: req.body?.price === "" || req.body?.price === undefined ? null : Number(req.body.price),
+      barcode: String(req.body?.barcode ?? "")
+    });
+    return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/price-rules", requireRole("admin", "manager"), async (_req, res) => res.json({ items: await listPriceRules() }));
+app.post("/api/price-rules", requireRole("admin", "manager"), async (req, res) => {
+  try {
+    const item = await savePriceRule({
+      menuItemId: parseId(req.body?.menuItemId),
+      customerTier: String(req.body?.customerTier ?? ""),
+      minQty: Number(req.body?.minQty) || 1,
+      price: Number(req.body?.price) || 0
+    });
+    return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/inventory-lots", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  const days = parseId(req.query.days as string) ?? 30;
+  return res.json({ items: await listInventoryLots(branchId, days) });
+});
+
+app.post("/api/inventory-lots", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
+  const branchId = parseId(req.body?.branchId);
+  const ingredientId = parseId(req.body?.ingredientId);
+  if (branchId === null || ingredientId === null) return res.status(400).json({ error: "ข้อมูล lot ไม่ครบ" });
+  try {
+    const item = await saveInventoryLot({ branchId, ingredientId, lotNo: String(req.body?.lotNo ?? ""), qty: Number(req.body?.qty) || 0, expiryDate: req.body?.expiryDate });
+    return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/product-variants", requireRole("admin", "manager"), async (req, res) => {
+  const menuItemId = parseId(req.query.menuItemId as string) ?? undefined;
+  return res.json({ items: await listProductVariants(menuItemId) });
+});
+
+app.post("/api/product-variants", requireRole("admin", "manager"), async (req, res) => {
+  const menuItemId = parseId(req.body?.menuItemId);
+  if (menuItemId === null) return res.status(400).json({ error: "กรุณาเลือกสินค้า" });
+  try {
+    const item = await saveProductVariant({
+      menuItemId,
+      optionName: String(req.body?.optionName ?? "").trim(),
+      optionValue: String(req.body?.optionValue ?? "").trim(),
+      priceDelta: Number(req.body?.priceDelta) || 0,
+      sku: String(req.body?.sku ?? ""),
+      barcode: String(req.body?.barcode ?? "")
+    });
+    return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/promotions", requireRole("admin", "manager"), async (_req, res) => res.json({ items: await listPromotions() }));
+app.post("/api/promotions", requireRole("admin", "manager"), async (req, res) => {
+  try {
+    const item = await savePromotion({ name: String(req.body?.name ?? ""), type: String(req.body?.type ?? "ORDER_PERCENT"), value: Number(req.body?.value) || 0, category: String(req.body?.category ?? ""), startAt: req.body?.startAt, endAt: req.body?.endAt, active: req.body?.active !== false });
+    return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/coupons", requireRole("admin", "manager"), async (_req, res) => res.json({ items: await listCoupons() }));
+app.post("/api/coupons", requireRole("admin", "manager"), async (req, res) => {
+  try {
+    const item = await saveCoupon({ code: String(req.body?.code ?? ""), type: String(req.body?.type ?? "ORDER_FIXED"), value: Number(req.body?.value) || 0, maxUses: req.body?.maxUses ? Number(req.body.maxUses) : null, expiresAt: req.body?.expiresAt, active: req.body?.active !== false });
+    return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/business-documents", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ items: await listBusinessDocuments(branchId) });
+});
+
+app.post("/api/business-documents", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
+  const branchId = parseId(req.body?.branchId);
+  if (branchId === null) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
+  try {
+    const item = await createBusinessDocument({ branchId, type: String(req.body?.type ?? "INVOICE"), customerName: String(req.body?.customerName ?? ""), total: Number(req.body?.total) || 0, payload: req.body?.payload ?? {} });
+    return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/reports/tax-export.xls", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const rows = await getTaxExportRows({
+    from: isStr(req.query.from) ? String(req.query.from) : undefined,
+    to: isStr(req.query.to) ? String(req.query.to) : undefined,
+    branchId: parseId(req.query.branchId as string) ?? undefined
+  });
+  return sendExcelXml(res, "tax-export.xls", rows, [
+    { key: "invoiceNo", label: "เลขที่เอกสาร" },
+    { key: "createdAt", label: "วันที่" },
+    { key: "branch", label: "สาขา" },
+    { key: "buyerName", label: "ผู้ซื้อ" },
+    { key: "buyerTaxId", label: "เลขภาษีผู้ซื้อ" },
+    { key: "subtotal", label: "มูลค่าสินค้า" },
+    { key: "discountAmount", label: "ส่วนลด" },
+    { key: "tax", label: "VAT" },
+    { key: "total", label: "รวม" },
+    { key: "eTaxStatus", label: "สถานะ e-Tax" }
+  ]);
+});
+
+app.get("/api/reports/compare", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchIdA as string)), async (req, res) => {
+  const fromA = isStr(req.query.fromA) ? String(req.query.fromA) : "";
+  const toA = isStr(req.query.toA) ? String(req.query.toA) : "";
+  const fromB = isStr(req.query.fromB) ? String(req.query.fromB) : "";
+  const toB = isStr(req.query.toB) ? String(req.query.toB) : "";
+  if (!fromA || !toA || !fromB || !toB) return res.status(400).json({ error: "กรุณาระบุช่วงวันที่เปรียบเทียบ" });
+  return res.json({ report: await compareSales({ fromA, toA, fromB, toB, branchIdA: parseId(req.query.branchIdA as string) ?? undefined, branchIdB: parseId(req.query.branchIdB as string) ?? undefined }) });
+});
+
+app.get("/api/daily-email-setting", requireAdmin, async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ setting: await getDailyEmailSetting(branchId) });
+});
+
+app.put("/api/daily-email-setting", requireAdmin, async (req, res) => {
+  const setting = await saveDailyEmailSetting({ branchId: parseId(req.body?.branchId), recipients: String(req.body?.recipients ?? ""), sendTime: String(req.body?.sendTime ?? "21:00"), enabled: req.body?.enabled === true });
+  audit("daily_email_setting.updated", req, { branchId: setting.branchId });
+  return res.json({ setting });
+});
+
+app.post("/api/daily-email/enqueue", requireAdmin, async (req, res) => {
+  try {
+    const event = await enqueueDailySummaryEmail({ date: String(req.body?.date ?? new Date().toISOString().slice(0, 10)), branchId: parseId(req.body?.branchId) ?? undefined });
+    return res.status(201).json({ event });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/customer-display", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string);
+  if (branchId === null) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
+  return res.json({ display: await getCustomerDisplay(branchId) });
+});
+
+app.get("/api/marketplaces", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ items: await listMarketplaceConnections(branchId) });
+});
+
+app.put("/api/marketplaces", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
+  const branchId = parseId(req.body?.branchId);
+  if (branchId === null) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
+  try {
+    const item = await saveMarketplaceConnection({ branchId, provider: String(req.body?.provider ?? ""), shopName: String(req.body?.shopName ?? ""), config: req.body?.config ?? {} });
+    return res.json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.post("/api/marketplaces/:id/sync", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const event = await enqueueMarketplaceSync(id);
+    return res.status(201).json({ event });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
 /* ─── Integrations ─── */
 app.get("/api/integrations/status", requireAdmin, async (_req, res) => {
   return res.json({ items: await getIntegrationStatus() });
@@ -742,6 +1055,46 @@ app.post("/api/migration/sync", async (req, res) => {
     sendAlert("critical", "migration_sync_failed", meta);
     return res.status(500).json({ error: (e as Error).message });
   }
+});
+
+/* ─── Store Settings ─── */
+app.get(
+  "/api/settings/store",
+  requireBranchAccess((req) => parseId(req.query.branchId as string | undefined)),
+  async (req, res) => {
+    const branchId = parseId(req.query.branchId as string | undefined);
+    if (branchId === null) return res.status(400).json({ error: "กรุณาระบุสาขา" });
+    return res.json({ settings: await getStoreSetting(branchId) });
+  }
+);
+
+app.put("/api/settings/store", requireAdmin, async (req: AuthRequest, res) => {
+  const branchId = parseId(req.body?.branchId);
+  if (branchId === null) return res.status(400).json({ error: "กรุณาระบุสาขา" });
+
+  const body = req.body ?? {};
+  const input: StoreSettingInput = {};
+  if (isStr(body.shopName) || body.shopName === "") input.shopName = String(body.shopName).slice(0, 200);
+  if (isStr(body.taxId) || body.taxId === "") input.taxId = String(body.taxId).replace(/[^0-9]/g, "").slice(0, 13);
+  if (isStr(body.branchLabel) || body.branchLabel === "") input.branchLabel = String(body.branchLabel).slice(0, 100);
+  if (isStr(body.addressLine) || body.addressLine === "") input.addressLine = String(body.addressLine).slice(0, 500);
+  if (isStr(body.phone) || body.phone === "") input.phone = String(body.phone).slice(0, 50);
+  if (isStr(body.receiptHeader) || body.receiptHeader === "") input.receiptHeader = String(body.receiptHeader).slice(0, 500);
+  if (isStr(body.receiptFooter) || body.receiptFooter === "") input.receiptFooter = String(body.receiptFooter).slice(0, 500);
+  if (body.vatMode === "INCLUSIVE" || body.vatMode === "EXCLUSIVE" || body.vatMode === "NONE") {
+    input.vatMode = body.vatMode as VatMode;
+  }
+  if (body.vatRate !== undefined) {
+    const rate = Number(body.vatRate);
+    if (Number.isFinite(rate) && rate >= 0 && rate <= 100) input.vatRate = Math.round(rate * 100) / 100;
+  }
+  if (Array.isArray(body.paymentMethods)) {
+    input.paymentMethods = body.paymentMethods.filter((x: unknown): x is string => typeof x === "string");
+  }
+
+  const settings = await updateStoreSetting(branchId, input);
+  audit("settings.store.updated", req, { branchId });
+  return res.json({ settings });
 });
 
 app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {

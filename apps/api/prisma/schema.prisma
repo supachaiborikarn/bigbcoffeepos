@@ -1,6 +1,5 @@
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -23,6 +22,14 @@ model Branch {
   stockMovements  StockMovement[]
   purchases       Purchase[]
   users           User[]
+  storeSetting    StoreSetting?
+  taxInvoices     TaxInvoice[]
+  stockCounts     StockCount[]
+  stockTransfersFrom StockTransfer[] @relation("StockTransferFromBranch")
+  stockTransfersTo   StockTransfer[] @relation("StockTransferToBranch")
+  inventoryLots   InventoryLot[]
+  businessDocuments BusinessDocument[]
+  marketplaceConnections MarketplaceConnection[]
 
   @@map("branches")
 }
@@ -39,6 +46,7 @@ model User {
   orders Order[]
   shifts Shift[]
   branch Branch? @relation(fields: [branchId], references: [id])
+  approvedPurchases Purchase[] @relation("PurchaseApprovedBy")
 
   @@map("users")
 }
@@ -65,6 +73,9 @@ model MenuItem {
 
   orderItems OrderItem[]
   recipes    Recipe[]
+  productUnits ProductUnit[]
+  priceRules PriceRule[]
+  productVariants ProductVariant[]
 
   @@index([source, sourceId])
   @@index([optionGroup])
@@ -76,9 +87,19 @@ model Customer {
   name      String
   phone     String   @unique
   points    Int      @default(0)
+  tier      String   @default("REGULAR")
+  memberCode String? @unique @map("member_code")
+  birthday  DateTime?
+  notes     String   @default("")
+  totalSpend Float   @default(0) @map("total_spend")
+  creditBalance Float @default(0) @map("credit_balance")
+  tags      String   @default("[]")
+  lineUserId String? @map("line_user_id")
+  metadata  String   @default("{}")
   createdAt DateTime @default(now()) @map("created_at")
 
   orders Order[]
+  taxInvoices TaxInvoice[]
 
   @@map("customers")
 }
@@ -94,6 +115,9 @@ model Ingredient {
   recipes        Recipe[]
   cupStockSettingItems CupStockSettingItem[]
   stockMovements StockMovement[]
+  stockCountItems StockCountItem[]
+  stockTransferItems StockTransferItem[]
+  inventoryLots InventoryLot[]
 
   @@map("ingredients")
 }
@@ -195,6 +219,7 @@ model Order {
   items    OrderItem[]
   payments Payment[]
   events   OrderEvent[]
+  taxInvoice TaxInvoice?
 
   @@index([branchId])
   @@index([shiftId])
@@ -310,9 +335,12 @@ model Purchase {
   note      String   @default("")
   total     Float    @default(0)
   status    String   @default("RECEIVED")
+  approvedByUserId Int? @map("approved_by_user_id")
+  approvedAt DateTime? @map("approved_at")
   createdAt DateTime @default(now()) @map("created_at")
 
   branch Branch         @relation(fields: [branchId], references: [id])
+  approvedBy User?      @relation("PurchaseApprovedBy", fields: [approvedByUserId], references: [id])
   items  PurchaseItem[]
 
   @@map("purchases")
@@ -330,6 +358,254 @@ model PurchaseItem {
   purchase Purchase @relation(fields: [purchaseId], references: [id])
 
   @@map("purchase_items")
+}
+
+model StoreSetting {
+  id             Int      @id @default(autoincrement())
+  branchId       Int      @unique @map("branch_id")
+  shopName       String   @default("") @map("shop_name")
+  taxId          String   @default("") @map("tax_id")
+  branchLabel    String   @default("") @map("branch_label")
+  addressLine    String   @default("") @map("address_line")
+  phone          String   @default("")
+  receiptHeader  String   @default("") @map("receipt_header")
+  receiptFooter  String   @default("ขอบคุณที่ใช้บริการ") @map("receipt_footer")
+  vatMode        String   @default("INCLUSIVE") @map("vat_mode")
+  vatRate        Float    @default(7) @map("vat_rate")
+  paymentMethods String   @default("[\"CASH\",\"QR\",\"CARD\"]") @map("payment_methods")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@map("store_settings")
+}
+
+model TaxInvoice {
+  id          Int      @id @default(autoincrement())
+  branchId    Int      @map("branch_id")
+  orderId     Int      @unique @map("order_id")
+  customerId  Int?     @map("customer_id")
+  invoiceNo   String   @unique @map("invoice_no")
+  buyerName   String   @map("buyer_name")
+  buyerTaxId  String   @default("") @map("buyer_tax_id")
+  buyerAddress String  @default("") @map("buyer_address")
+  buyerBranch String   @default("") @map("buyer_branch")
+  subtotal    Float    @default(0)
+  discountAmount Float @default(0) @map("discount_amount")
+  tax         Float    @default(0)
+  total       Float    @default(0)
+  status      String   @default("ISSUED")
+  eTaxStatus  String   @default("PENDING") @map("e_tax_status")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  branch   Branch    @relation(fields: [branchId], references: [id])
+  order    Order     @relation(fields: [orderId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+
+  @@index([branchId])
+  @@index([createdAt])
+  @@map("tax_invoices")
+}
+
+model StockCount {
+  id        Int      @id @default(autoincrement())
+  branchId  Int      @map("branch_id")
+  status    String   @default("DRAFT")
+  note      String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+  postedAt  DateTime? @map("posted_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  items  StockCountItem[]
+
+  @@index([branchId])
+  @@index([status])
+  @@map("stock_counts")
+}
+
+model StockCountItem {
+  id            Int   @id @default(autoincrement())
+  stockCountId  Int   @map("stock_count_id")
+  ingredientId  Int   @map("ingredient_id")
+  expectedQty   Float @default(0) @map("expected_qty")
+  countedQty    Float @default(0) @map("counted_qty")
+  differenceQty Float @default(0) @map("difference_qty")
+
+  stockCount StockCount @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([stockCountId, ingredientId])
+  @@map("stock_count_items")
+}
+
+model StockTransfer {
+  id           Int      @id @default(autoincrement())
+  fromBranchId Int     @map("from_branch_id")
+  toBranchId   Int     @map("to_branch_id")
+  status       String  @default("DRAFT")
+  note         String  @default("")
+  createdAt    DateTime @default(now()) @map("created_at")
+  approvedAt   DateTime? @map("approved_at")
+  receivedAt   DateTime? @map("received_at")
+
+  fromBranch Branch @relation("StockTransferFromBranch", fields: [fromBranchId], references: [id])
+  toBranch   Branch @relation("StockTransferToBranch", fields: [toBranchId], references: [id])
+  items      StockTransferItem[]
+
+  @@index([fromBranchId])
+  @@index([toBranchId])
+  @@index([status])
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id              Int   @id @default(autoincrement())
+  stockTransferId Int   @map("stock_transfer_id")
+  ingredientId    Int   @map("ingredient_id")
+  qty             Float @default(0)
+
+  stockTransfer StockTransfer @relation(fields: [stockTransferId], references: [id], onDelete: Cascade)
+  ingredient    Ingredient    @relation(fields: [ingredientId], references: [id])
+
+  @@map("stock_transfer_items")
+}
+
+model ProductUnit {
+  id        Int    @id @default(autoincrement())
+  menuItemId Int   @map("menu_item_id")
+  unitName  String @map("unit_name")
+  factor    Float  @default(1)
+  price     Float?
+  barcode   String?
+  active    Boolean @default(true)
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@index([menuItemId])
+  @@map("product_units")
+}
+
+model PriceRule {
+  id        Int      @id @default(autoincrement())
+  menuItemId Int?    @map("menu_item_id")
+  customerTier String @default("") @map("customer_tier")
+  minQty    Float    @default(1) @map("min_qty")
+  price     Float
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  menuItem MenuItem? @relation(fields: [menuItemId], references: [id])
+
+  @@index([menuItemId])
+  @@map("price_rules")
+}
+
+model InventoryLot {
+  id           Int      @id @default(autoincrement())
+  branchId     Int      @map("branch_id")
+  ingredientId Int      @map("ingredient_id")
+  lotNo        String   @default("") @map("lot_no")
+  qty          Float    @default(0)
+  expiryDate   DateTime? @map("expiry_date")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@index([branchId])
+  @@index([expiryDate])
+  @@map("inventory_lots")
+}
+
+model ProductVariant {
+  id        Int     @id @default(autoincrement())
+  menuItemId Int    @map("menu_item_id")
+  sku       String?
+  barcode   String?
+  optionName String @default("") @map("option_name")
+  optionValue String @default("") @map("option_value")
+  priceDelta Float @default(0) @map("price_delta")
+  active    Boolean @default(true)
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@index([menuItemId])
+  @@map("product_variants")
+}
+
+model Promotion {
+  id        Int      @id @default(autoincrement())
+  name      String
+  type      String
+  value     Float    @default(0)
+  category  String   @default("")
+  startAt   DateTime? @map("start_at")
+  endAt     DateTime? @map("end_at")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([active])
+  @@map("promotions")
+}
+
+model Coupon {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  type      String
+  value     Float    @default(0)
+  maxUses   Int?     @map("max_uses")
+  usedCount Int      @default(0) @map("used_count")
+  expiresAt DateTime? @map("expires_at")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([active])
+  @@map("coupons")
+}
+
+model BusinessDocument {
+  id        Int      @id @default(autoincrement())
+  branchId  Int      @map("branch_id")
+  type      String
+  documentNo String  @unique @map("document_no")
+  customerName String @default("") @map("customer_name")
+  total     Float    @default(0)
+  status    String   @default("DRAFT")
+  payload   String   @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
+  @@index([type])
+  @@map("business_documents")
+}
+
+model DailyEmailSetting {
+  id        Int      @id @default(autoincrement())
+  branchId  Int?     @map("branch_id")
+  recipients String  @default("")
+  sendTime  String   @default("21:00") @map("send_time")
+  enabled   Boolean  @default(false)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("daily_email_settings")
+}
+
+model MarketplaceConnection {
+  id        Int      @id @default(autoincrement())
+  branchId  Int      @map("branch_id")
+  provider  String
+  shopName  String   @default("") @map("shop_name")
+  status    String   @default("READY")
+  config    String   @default("{}")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@unique([branchId, provider])
+  @@map("marketplace_connections")
 }
 
 model Migration {

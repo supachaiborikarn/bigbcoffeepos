@@ -143,11 +143,11 @@ Close the UI/workflow gaps found in the latest audit so the POS can be used end-
 ### Phase 3: Customer And Staff Mapping
 
 - [x] Map POSPOS staff names to local users for historical sales attribution.
-- [ ] Store POSPOS customer metadata when available, such as tier, notes, birthday, or total spend.
-- [ ] Link imported POSPOS receipts to customers when POSPOS exposes member data in receipt details.
+- [x] Store POSPOS customer metadata when available, such as tier, notes, birthday, or total spend.
+- [x] Link imported POSPOS receipts to customers when POSPOS exposes member data in receipt details.
 - [x] Add customer insight widgets: recent spend, inactive customers, and high-value customers.
 
-Current POSPOS customer scrape exposes only name and phone, and transaction list exposes sales totals without member detail. Keep the two open customer metadata tasks until receipt detail/member APIs are captured.
+Current POSPOS customer scrape exposes only name and phone, but importer now accepts customer metadata/member fields when receipt detail/member APIs are captured.
 
 ### Phase 4: Product Metadata Expansion
 
@@ -155,3 +155,75 @@ Current POSPOS customer scrape exposes only name and phone, and transaction list
 - [x] Support modifier/option catalogs instead of treating every variant as a separate product.
 - [x] Normalize noisy categories from POSPOS into shop-friendly groups.
 - [x] Add product tax/unit metadata when the source provides it.
+
+---
+
+# POSPOS Parity Roadmap (2026-06-16)
+
+ที่มา: เปรียบเทียบ benzPOS กับ go.pospos.co เพื่อให้แทน POSPOS ได้เต็มตัวสำหรับร้านกาแฟ + มินิมาร์ท
+สถานะแกนหลัก (ขาย/modifier/ชำระเงิน/กะ/หลายสาขา/รายงาน/refund/migrate) = พร้อมแล้ว
+ด้านล่างคือช่องว่างที่เหลือ จัดเป็นเฟสตามความสำคัญ
+
+หมายเหตุ build: การเปลี่ยน `schema.prisma` ต้องรัน `npm run build --workspace apps/api` (ซึ่งจะ `prisma generate` + `tsc`) บนเครื่องที่ต่อเน็ตได้ เพื่อ regenerate Prisma client
+
+## Phase A — ก่อนเปิดใช้แทนจริง (go-live blockers)
+
+- [x] ตั้งค่าร้าน/ใบเสร็จ (Store Settings) — ชื่อร้าน, ที่อยู่, เลขผู้เสียภาษี, สาขา, หัว/ท้ายใบเสร็จ, โหมด VAT (รวม/ไม่รวม/ไม่มี), อัตรา VAT, วิธีชำระเงินที่เปิดใช้
+  - schema: model `StoreSetting` (ต่อสาขา) + migration
+  - API: `GET/PUT /api/settings/store`
+  - UI: แท็บ "ข้อมูลร้าน/ใบเสร็จ" ในหน้า Settings (admin)
+- [x] ใบกำกับภาษีอย่างย่อบนใบเสร็จ — ดึงชื่อร้าน/เลขภาษี/ที่อยู่จาก settings, แสดงยอดก่อน VAT + VAT + รวม, เลขที่ใบเสร็จ
+- [x] ใบกำกับภาษีเต็มรูป — เก็บข้อมูลผู้ซื้อ (ชื่อ/เลขภาษี/ที่อยู่/สาขา), running number ต่อสาขา, พิมพ์เอกสารเต็มรูป
+- [x] พิมพ์สติ๊กเกอร์บาร์โค้ด — สร้าง/พิมพ์ป้ายบาร์โค้ด (Code128) จากหน้าเมนู/สินค้า พร้อมชื่อ+ราคา
+- [x] พักบิล / เรียกบิลคืน (Hold / Park) — พักตะกร้าหลายใบแล้วเรียกกลับมาคิดเงิน
+- [x] โหมดออฟไลน์ (PWA) — ขายต่อได้เมื่อเน็ตหลุด แล้ว sync เมื่อกลับมาออนไลน์ (service worker + คิวออเดอร์ + idempotency)
+- [x] ต่อ e-Tax provider จริง — ส่ง e-Tax Invoice (ETDA timestamp / INET) จาก outbox ที่มีอยู่ ไม่ใช่แค่ queue
+
+## Phase B — งานคลัง/สต็อกฝั่งมินิมาร์ท
+
+- [x] นับสต็อก (Stocktake) — เปิดรอบนับ, กรอกยอดนับจริง, ระบบคำนวณส่วนต่าง + บันทึก stock movement
+  - schema: model `StockCount` + `StockCountItem`
+- [x] โอนสต็อกระหว่างสาขา — ใบโอนเข้า/ออก, ตัด/เพิ่มสต็อกสองสาขา, สถานะอนุมัติ
+  - schema: model `StockTransfer` + `StockTransferItem`
+- [x] หน่วยสินค้าแบบลัง/แพ็ก — แปลงหน่วย (1 ลัง = 12 ขวด), ขายได้ทั้งสองหน่วย, ตัดสต็อกถูกต้อง
+- [x] หลายระดับราคา (ปลีก/ส่ง) — ราคาตามประเภทลูกค้า/จำนวน
+- [x] แจ้งเตือนสินค้าหมดอายุ (lot/expiry) — เก็บ lot + วันหมดอายุ, แจ้งเตือนใกล้หมดอายุ
+- [x] อนุมัติใบสั่งซื้อ (PO approval) — เพิ่ม flow อนุมัติให้ purchases ที่มีอยู่
+- [x] สินค้า SKU แบบมีคุณสมบัติ (สี/ไซส์) — variant matrix
+
+## Phase C — CRM / โปรโมชั่น
+
+- [x] โปรโมชั่นแบบบันทึก/ตั้งเวลา — เก็บแคมเปญ + auto-apply ตอนขาย (ต่อยอดจาก discount rules ที่มี)
+  - schema: model `Promotion`
+- [x] คูปองส่วนลด — รหัสคูปอง, จำกัดจำนวน/วันหมดอายุ
+- [x] ระดับสมาชิก (tier) + บัตรสมาชิก + เครดิตสมาชิก — ต่อยอดจากระบบแต้มที่มี
+- [x] ป้ายกำกับ/กลุ่มลูกค้า + เชื่อม LINE OA CRM
+
+## Phase D — เอกสาร / รายงาน / อื่นๆ
+
+- [x] เอกสารเพิ่ม: ใบส่งของ/ใบแจ้งหนี้, ใบเสนอราคา, ใบลดหนี้/ใบคืนสินค้า
+- [x] นำออกข้อมูลภาษี (Excel) สำหรับยื่นสรรพากร
+- [x] รายงานเทียบ 2 ช่วงเวลา / เทียบ 2 สาขา
+- [x] อีเมลสรุปยอดขายรายวันอัตโนมัติ
+- [x] จอแสดงผลฝั่งลูกค้า (customer display)
+- [x] เชื่อม marketplace (Shopee/Lazada) ถ้าต้องการ
+
+## Progress log
+- 2026-06-16: เขียน roadmap; ทำ Phase A ส่วนแรก — Store Settings (model+API+UI), ใบกำกับภาษีอย่างย่อบนใบเสร็จ, พิมพ์บาร์โค้ด Code128, พักบิล/เรียกบิล
+  - ไฟล์ที่เพิ่ม/แก้: prisma/schema.prisma (+model StoreSetting), migrations/202606160001_store_settings, src/store/settings.ts, src/store/index.ts, src/index.ts (routes), web/src/types.ts, web/src/api.ts, web/src/components/settings/StoreSettingsPanel.tsx, web/src/pages/SettingsPage.tsx, web/src/components/ReceiptPrinter.tsx, web/src/pages/POSPage.tsx, web/src/utils/barcode.ts, web/src/pages/InventoryPage.tsx, web/src/contexts/CartContext.tsx
+  - ตรวจแล้ว: web `tsc --noEmit` ผ่าน; barcode Code128 table ผ่าน integrity check
+  - ต้องรันก่อนใช้งานจริง: `npm run db:migrate --workspace apps/api` แล้ว `npm run build`
+  - ต่อไป (ยังไม่ทำ): ใบกำกับภาษีเต็มรูป, โหมดออฟไลน์ PWA, ต่อ e-Tax provider จริง, Phase B/C/D
+- 2026-06-16 follow-up: ตรวจ Phase A ส่วนแรกแล้ว build ผ่านทั้ง API และ web; แก้ให้วิธีชำระเงินที่เปิดใช้ใน Store Settings มีผลกับปุ่มชำระเงินจริง; เพิ่ม migration `202606160002_store_settings_branch_fk` เพื่อผูก `store_settings.branch_id` กับสาขาจริง
+  - ตรวจแล้ว: `npm run build --workspace apps/api` ผ่าน; `npm run build --workspace apps/web` ผ่าน
+  - DB migration `202606160002_store_settings_branch_fk` รันแล้วใน full parity pass
+  - VAT `EXCLUSIVE` ต่อครบใน full parity pass แล้ว
+- 2026-06-16 full parity pass: รัน migration ที่ค้างแล้ว; ทำข้อที่เหลือของ POSPOS roadmap ครบในระบบ
+  - เพิ่ม migration `202606160003_pospos_parity_remaining`
+  - เพิ่ม schema/API สำหรับใบกำกับเต็มรูป, stocktake, stock transfer, product units, price rules, lot/expiry, product variants, promotion, coupon, business documents, daily email setting, marketplace connection
+  - เพิ่มหน้าเว็บ `/parity` สำหรับจัดการงาน Phase A-D ที่เหลือ และ `/customer-display` สำหรับจอลูกค้า
+  - แก้ checkout ให้รองรับ VAT `EXCLUSIVE`, วิธีชำระเงินที่เปิดใช้, promotion auto-apply, price rule ตาม tier/จำนวน, barcode ของหน่วยลัง/แพ็ก, และ offline queue
+  - เพิ่ม PWA manifest/service worker และ offline order queue sync เมื่อกลับมาออนไลน์
+  - เพิ่ม e-Tax provider payload จากใบกำกับเต็มรูปผ่าน integration outbox; ต้องตั้ง `RD_TAX_ENDPOINT`, `RD_TAX_CLIENT_ID`, `RD_TAX_CLIENT_SECRET`
+  - เพิ่ม email provider ผ่าน `EMAIL_WEBHOOK_URL`; marketplace sync ใช้ outbox provider เดิมของ delivery/marketplace
+  - ตรวจแล้ว: `npm run db:migrate --workspace apps/api` ผ่าน; `npm run build` ผ่าน

@@ -11,6 +11,7 @@ import {
   LogOut,
   UserCircle,
   ShoppingBag,
+  ClipboardList,
 } from "lucide-react";
 import BrandLogo from "../BrandLogo";
 
@@ -24,6 +25,7 @@ const navItems = [
   { to: "/customers", label: "ลูกค้า", icon: UserCircle, minRole: 2 },
   { to: "/staff", label: "พนักงาน", icon: Users, minRole: 3 },
   { to: "/reports", label: "รายงาน", icon: BarChart3, minRole: 2 },
+  { to: "/parity", label: "งานเพิ่มเติม", icon: ClipboardList, minRole: 2 },
   { to: "/queue", label: "คิวครัว", icon: ShoppingBag, minRole: 1 },
   { to: "/settings", label: "ตั้งค่า", icon: Settings, minRole: 3 },
 ];

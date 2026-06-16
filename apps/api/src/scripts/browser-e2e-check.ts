@@ -63,6 +63,17 @@ function startProcess(command: string, args: string[], cwd: string, env: NodeJS.
   return child;
 }
 
+function resolveBin(root: string, workspace: string, bin: string) {
+  const suffix = process.platform === "win32" ? ".cmd" : "";
+  const candidates = [
+    path.join(root, workspace, "node_modules", ".bin", `${bin}${suffix}`),
+    path.join(root, "node_modules", ".bin", `${bin}${suffix}`)
+  ];
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!found) throw new Error(`Unable to find ${bin} binary. Tried: ${candidates.join(", ")}`);
+  return found;
+}
+
 function stopProcess(child?: ChildProcessWithoutNullStreams) {
   if (!child || child.killed) return;
   child.kill("SIGTERM");
@@ -195,7 +206,7 @@ async function main() {
       NODE_ENV: "test"
     };
     apiProcess = startProcess("node", ["--import", "tsx", "apps/api/src/index.ts"], root, env);
-    webProcess = startProcess(path.join(root, "node_modules", ".bin", "vite"), ["--host", "127.0.0.1", "--port", String(webPort)], path.join(root, "apps/web"), env);
+    webProcess = startProcess(resolveBin(root, "apps/web", "vite"), ["--host", "127.0.0.1", "--port", String(webPort)], path.join(root, "apps/web"), env);
 
     await waitForUrl(`${apiUrl}/health`);
     await waitForUrl(webUrl);
@@ -218,7 +229,7 @@ async function main() {
 
     await addModifiedLatte(page, data.latte.name);
     await addSimpleItem(page, data.cookie.name);
-    await page.getByText(/ยอดรวม \(2 รายการ\)/).waitFor({ timeout: 10_000 });
+    await page.getByText(/ยอดรวม \(2 ชิ้น\)/).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByText("รับเงินสด").waitFor({ timeout: 10_000 });
     const cashModal = page.locator(".modal-backdrop").last();
@@ -246,8 +257,8 @@ async function main() {
     assert(cashOrder.payments[0]?.changeAmount === 15, "Cash change amount mismatch");
 
     await addSimpleItem(page, data.cookie.name);
-    await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
-    await page.getByRole("button", { name: "สแกนจ่าย (QR)" }).click();
+    await page.getByText(/ยอดรวม \(1 ชิ้น\)/).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "QR", exact: true }).click();
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน QR/ }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();
@@ -260,8 +271,8 @@ async function main() {
     assert(qrOrder.payments[0]?.status === "CONFIRMED", "QR payment confirmation was not persisted");
 
     await addSimpleItem(page, data.cookie.name);
-    await page.getByText(/ยอดรวม \(1 รายการ\)/).waitFor({ timeout: 10_000 });
-    await page.getByRole("button", { name: "บัตรเครดิต" }).click();
+    await page.getByText(/ยอดรวม \(1 ชิ้น\)/).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "บัตร", exact: true }).click();
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน บัตรเครดิต/ }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();

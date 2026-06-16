@@ -73,7 +73,7 @@ Monitoring policy: [docs/MONITORING_ALERTS.md](docs/MONITORING_ALERTS.md)
 ## Maintenance Scripts
 API scripts ที่ตั้งใจให้ใช้ได้:
 - `npm run orders:check --workspace apps/api`: สรุปจำนวนออเดอร์และ 5 รายการล่าสุดแบบ read-only
-- `npm run data:export --workspace apps/api`: export stock/sales เป็น Excel ไปที่ `apps/api/downloads/exports` หรือกำหนด `EXPORT_OUT_DIR`
+- `npm run data:export --workspace apps/api`: export stock/sales เป็น CSV ไปที่ `apps/api/downloads/exports` หรือกำหนด `EXPORT_OUT_DIR`
 - `EXPORT_BRANCH_ID=1 npm run data:export --workspace apps/api`: export เฉพาะสาขา
 - `ALLOW_MOCK_HISTORY=1 npm run mock-history:generate --workspace apps/api`: สร้างข้อมูล mock สำหรับ disposable/dev database เท่านั้น
 

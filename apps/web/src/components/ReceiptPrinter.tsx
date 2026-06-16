@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { CartItem, DiscountRule, Order } from "../types";
+import type { CartItem, DiscountRule, Order, StoreSetting } from "../types";
 import Numpad from "./ui/Numpad";
 import { logoUrl } from "./BrandLogo";
 
@@ -14,10 +14,33 @@ type ReceiptData = {
   paymentMethod: string;
   cashReceived?: number;
   changeAmount?: number;
+  storeSetting?: StoreSetting | null;
 };
 
 function formatMoney(v: number) {
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: 0 }).format(v);
+}
+
+function formatMoney2(v: number) {
+  return new Intl.NumberFormat("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+}
+
+function wrapText(text: string, width: number): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let line = "";
+  for (const word of words) {
+    if (!line) {
+      line = word;
+    } else if ((line + " " + word).length <= width) {
+      line += " " + word;
+    } else {
+      out.push(line);
+      line = word;
+    }
+  }
+  if (line) out.push(line);
+  return out;
 }
 
 function escapeHtml(value: unknown) {
@@ -88,9 +111,19 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
     add(" ".repeat(pad) + text);
   };
 
-  center("Big B Coffee");
+  const ss = data.storeSetting ?? null;
+  const shopName = ss?.shopName?.trim() || "Big B Coffee";
+  const hasTaxId = Boolean(ss?.taxId?.trim());
+
+  center(shopName);
   center(branchName);
+  if (ss?.branchLabel?.trim()) center(ss.branchLabel);
+  if (ss?.addressLine?.trim()) wrapText(ss.addressLine, W).forEach((l) => center(l));
+  if (ss?.phone?.trim()) center(`โทร. ${ss.phone.trim()}`);
+  if (hasTaxId) center(`เลขภาษี ${ss!.taxId.trim()}`);
+  if (ss?.receiptHeader?.trim()) wrapText(ss.receiptHeader, W).forEach((l) => center(l));
   add(LINE);
+  center(hasTaxId ? "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" : "ใบเสร็จรับเงิน");
   add(`บิล #${data.order.id}`);
   add(`${dateStr} ${timeStr}`);
   add(DLINE);
@@ -115,6 +148,16 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
 
   add(DLINE);
   add(`${padRight("ยอดสุทธิ", W - 10)}${padLeft(formatMoney(data.total), 10)}`);
+
+  // VAT breakdown (embedded VAT) for abbreviated tax invoice
+  const vatMode = ss?.vatMode ?? "INCLUSIVE";
+  const vatRate = ss?.vatRate ?? 0;
+  if (vatMode !== "NONE" && vatRate > 0 && data.total > 0) {
+    const vat = Math.round((data.total * vatRate / (100 + vatRate)) * 100) / 100;
+    const base = Math.round((data.total - vat) * 100) / 100;
+    add(`${padRight("มูลค่าสินค้า", W - 12)}${padLeft(formatMoney2(base), 12)}`);
+    add(`${padRight(`VAT ${vatRate}%`, W - 12)}${padLeft(formatMoney2(vat), 12)}`);
+  }
   add("");
 
   const methodLabel = data.paymentMethod === "CASH" ? "เงินสด" : data.paymentMethod === "QR" ? "โอนเงิน" : data.paymentMethod === "CARD" ? "บัตรเครดิต" : "E-Wallet";
@@ -126,8 +169,8 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
   }
 
   add(LINE);
-  center("ขอบคุณที่อุดหนุนค่ะ");
-  center("Big B Coffee");
+  center(ss?.receiptFooter?.trim() || "ขอบคุณที่อุดหนุนค่ะ");
+  center(shopName);
   add("");
 
   // Build print HTML

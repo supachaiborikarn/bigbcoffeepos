@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Settings } from "lucide-react";
-import { createCustomer, getCustomers, getMenu, getRecipes } from "../api";
-import type { Customer, DiscountRule, MenuItem, PaymentMethod } from "../types";
+import { ChevronLeft, ChevronRight, PauseCircle, Settings, X } from "lucide-react";
+import { createCustomer, getCustomers, getMenu, getProductUnits, getRecipes, getStoreSetting } from "../api";
+import type { Customer, DiscountRule, MenuItem, PaymentMethod, ProductUnit, StoreSetting } from "../types";
 import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
 import { useCart } from "../contexts/CartContext";
@@ -25,10 +25,23 @@ const paymentLabels: Record<PaymentMethod, string> = {
   CARD: "บัตรเครดิต",
   EWALLET: "E-Wallet"
 };
+const PAYMENT_METHODS: PaymentMethod[] = ["CASH", "QR", "CARD", "EWALLET"];
 const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
 
 function formatMoney(value: number) {
   return moneyFormatter.format(value);
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function getPayableTotal(totalBeforeTax: number, setting: StoreSetting | null) {
+  const rate = setting?.vatRate && setting.vatRate > 0 ? setting.vatRate : 0;
+  if (setting?.vatMode === "EXCLUSIVE" && rate > 0) {
+    return roundMoney(totalBeforeTax + (totalBeforeTax * rate / 100));
+  }
+  return totalBeforeTax;
 }
 
 function getRoleLevel(role?: string | null) {
@@ -45,6 +58,7 @@ function makeRuleId() {
 
 export default function POSPage() {
   const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [productUnits, setProductUnits] = useState<ProductUnit[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("ทั้งหมด");
@@ -66,9 +80,8 @@ export default function POSPage() {
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
-  const [categoryScrollState, setCategoryScrollState] = useState({ canScrollPrev: false, canScrollNext: false });
+  const [storeSetting, setStoreSetting] = useState<StoreSetting | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const categoryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const { activeBranch } = useBranch();
   const { activeShift } = useShift();
@@ -91,7 +104,11 @@ export default function POSPage() {
     removeDiscountRule,
     clearDiscountRules,
     pointsToUse,
-    setPointsToUse
+    setPointsToUse,
+    heldBills,
+    holdCart,
+    restoreHeldBill,
+    removeHeldBill
   } = useCart();
 
   const scannerInputRef = useRef<HTMLInputElement | null>(null);
@@ -103,9 +120,18 @@ export default function POSPage() {
 
   useEffect(() => {
     getMenu().then(setMenu).catch(() => {});
+    getProductUnits().then(setProductUnits).catch(() => setProductUnits([]));
     getRecipes().then((items) => setRecipeCount(items.length)).catch(() => setRecipeCount(null));
     refreshCustomers().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!activeBranch?.id) {
+      setStoreSetting(null);
+      return;
+    }
+    getStoreSetting(activeBranch.id).then(setStoreSetting).catch(() => setStoreSetting(null));
+  }, [activeBranch]);
 
   useEffect(() => {
     if (!selectedMember) {
@@ -147,32 +173,24 @@ export default function POSPage() {
       .filter((customer) => customer.name.toLowerCase().includes(query) || customer.phone.includes(query))
       .slice(0, 8);
   }, [customers, memberQuery]);
+  const enabledPaymentMethods = useMemo(() => {
+    const configured = storeSetting?.paymentMethods.filter((method) => PAYMENT_METHODS.includes(method));
+    return configured?.length ? configured : PAYMENT_METHODS;
+  }, [storeSetting]);
 
   const maxRedeemablePoints = selectedMember
     ? Math.min(selectedMember.points, Math.floor(Math.max(0, subtotal - discountAmount)))
     : 0;
   const canManageMenu = getRoleLevel(user?.role) >= 2;
+  const payableTotal = useMemo(() => getPayableTotal(total, storeSetting), [total, storeSetting]);
 
-  const refreshCategoryScrollState = useCallback(() => {
-    const el = categoryScrollRef.current;
-    if (!el) {
-      setCategoryScrollState({ canScrollPrev: false, canScrollNext: false });
-      return;
+  useEffect(() => {
+    if (!enabledPaymentMethods.includes(paymentMethod)) {
+      setPaymentMethod(enabledPaymentMethods[0]);
     }
-    const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
-    setCategoryScrollState({
-      canScrollPrev: el.scrollLeft > 2,
-      canScrollNext: el.scrollLeft < maxScrollLeft - 2
-    });
-  }, []);
+  }, [enabledPaymentMethods, paymentMethod]);
 
-  const scrollCategories = (direction: -1 | 1) => {
-    const el = categoryScrollRef.current;
-    if (!el) return;
-    const amount = Math.max(180, Math.floor(el.clientWidth * 0.75));
-    el.scrollBy({ left: direction * amount, behavior: "smooth" });
-    window.setTimeout(refreshCategoryScrollState, 260);
-  };
+
 
   const addCartItem = (item: MenuItem, qty: number = 1, modifiers: import("../types").Modifier[] = []) => {
     addItem({
@@ -199,6 +217,29 @@ export default function POSPage() {
   const processBarcodeScan = (rawCode: string) => {
     const code = rawCode.trim().toLowerCase();
     if (!code) return;
+    const productUnit = productUnits.find((unit) => unit.active && unit.barcode?.toLowerCase() === code);
+    if (productUnit) {
+      const parent = menu.find((item) => item.id === productUnit.menuItemId && item.active);
+      if (!parent) {
+        setScanFeedback({ tone: "error", message: `หน่วยสินค้าไม่มีสินค้าแม่: ${code}`, code });
+        return;
+      }
+      addItem({
+        id: Math.random().toString(36).slice(2, 9),
+        menuItemId: parent.id,
+        productUnitId: productUnit.id,
+        unitLabel: productUnit.unitName,
+        unitFactor: productUnit.factor,
+        name: `${parent.name} (${productUnit.unitName})`,
+        category: parent.category,
+        basePrice: productUnit.price ?? parent.basePrice * productUnit.factor,
+        qty: 1,
+        modifiers: []
+      });
+      setScanFeedback({ tone: "success", message: `เพิ่ม ${parent.name} (${productUnit.unitName}) เข้าตะกร้าแล้ว`, code });
+      window.requestAnimationFrame(() => scannerInputRef.current?.focus());
+      return;
+    }
     const item = menu.find((i) => i.active && (i.barcode?.toLowerCase() === code || i.sku?.toLowerCase() === code || i.name.toLowerCase() === code));
     if (!item) {
       setScanFeedback({ tone: "error", message: `ไม่พบสินค้า: ${code}`, code });
@@ -271,7 +312,7 @@ export default function POSPage() {
     const cartSnapshot = [...cart];
     const subtotalSnapshot = subtotal;
     const discountSnapshot = discountAmount;
-    const totalSnapshot = total;
+    const totalSnapshot = payableTotal;
     const pointsSnapshot = Number(pointsToUse) || 0;
     const rulesSnapshot = [...discountRules];
     try {
@@ -293,7 +334,8 @@ export default function POSPage() {
         pointsUsed: pointsSnapshot,
         paymentMethod,
         cashReceived,
-        changeAmount: changeAmt
+        changeAmount: changeAmt,
+        storeSetting
       }, activeBranch?.name || "Big B Coffee");
       if (!printed) toast.error("พิมพ์ใบเสร็จไม่สำเร็จ กรุณาตรวจสอบการตั้งค่าปริ้นเตอร์");
       setSelectedMember(null);
@@ -307,10 +349,14 @@ export default function POSPage() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [cart, isSubmitting, subtotal, discountAmount, total, pointsToUse, discountRules, checkout, clearCart, paymentMethod, selectedMember, activeBranch, refreshCustomers, toast]);
+  }, [cart, isSubmitting, subtotal, discountAmount, payableTotal, pointsToUse, discountRules, checkout, clearCart, paymentMethod, selectedMember, activeBranch, storeSetting, refreshCustomers, toast]);
 
   const handleCheckoutClick = () => {
     if (cart.length === 0 || isSubmitting || !activeShift) return;
+    if (!enabledPaymentMethods.includes(paymentMethod)) {
+      toast.error("วิธีชำระเงินนี้ถูกปิดไว้");
+      return;
+    }
     if (paymentMethod === "CASH") {
       setShowCashDrawer(true);
     } else {
@@ -327,6 +373,7 @@ export default function POSPage() {
 
       if (e.key === "F1") { e.preventDefault(); searchInputRef.current?.focus(); }
       if (e.key === "F8") { e.preventDefault(); clearCart(); }
+      if (e.key === "F9") { e.preventDefault(); if (!isInput) holdCart(); }
       if (e.key === "F12") {
         e.preventDefault();
         if (!isInput) handleCheckoutClick();
@@ -334,13 +381,9 @@ export default function POSPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [clearCart, handleCheckoutClick]);
+  }, [clearCart, holdCart, handleCheckoutClick]);
 
-  useEffect(() => {
-    refreshCategoryScrollState();
-    window.addEventListener("resize", refreshCategoryScrollState);
-    return () => window.removeEventListener("resize", refreshCategoryScrollState);
-  }, [categories, refreshCategoryScrollState]);
+
 
   return (
     <main style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
@@ -358,6 +401,15 @@ export default function POSPage() {
                   ยังไม่มีสูตรตัดสต็อก
                 </span>
               )}
+              <button
+                className="btn btn--ghost"
+                onClick={() => holdCart()}
+                disabled={cart.length === 0}
+                title="พักบิลปัจจุบันแล้วเริ่มบิลใหม่ (F9)"
+              >
+                <PauseCircle size={16} />
+                พักบิล
+              </button>
               {canManageMenu && (
                 <Link to="/inventory?tab=products&manage=menu" className="btn btn--primary pos-manage-card-header">
                   <Settings size={16} />
@@ -366,7 +418,34 @@ export default function POSPage() {
               )}
             </div>
           </div>
-          
+
+          {heldBills.length > 0 && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+              <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>บิลที่พักไว้:</span>
+              {heldBills.map((bill) => (
+                <span
+                  key={bill.id}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid var(--border)", borderRadius: 999, padding: "4px 6px 4px 12px", fontSize: 13 }}
+                >
+                  <button
+                    onClick={() => restoreHeldBill(bill.id)}
+                    title="เรียกบิลนี้กลับมาคิดเงิน"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--brand-hover)", fontWeight: 600, padding: 0 }}
+                  >
+                    {bill.label} · {bill.itemCount} ชิ้น · ฿{Math.round(bill.total).toLocaleString("th-TH")}
+                  </button>
+                  <button
+                    onClick={() => removeHeldBill(bill.id)}
+                    title="ลบบิลที่พัก"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", display: "inline-flex", padding: 0 }}
+                  >
+                    <X size={14} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: "16px" }}>
             <input
               ref={searchInputRef}
@@ -400,62 +479,64 @@ export default function POSPage() {
           )}
         </div>
 
-        <div className="pos-category-strip">
-          <button
-            type="button"
-            className="pos-category-arrow"
-            onClick={() => scrollCategories(-1)}
-            disabled={!categoryScrollState.canScrollPrev}
-            aria-label="เลื่อนหมวดหมู่ไปทางซ้าย"
-          >
-            <ChevronLeft size={18} />
-          </button>
-          {canManageMenu && (
-            <Link to="/inventory?tab=products&manage=menu" className="pos-category-manage">
-              <Settings size={15} />
-              จัดการการ์ด
-            </Link>
-          )}
-          <div ref={categoryScrollRef} className="pos-category-scroll" onScroll={refreshCategoryScrollState}>
-            <div className="pos-category-tabs">
-              {categories.map((item) => (
-                <button key={item} className={`tab ${category === item ? "tab--active" : ""}`}
-                  style={{
-                    borderRadius: "20px",
-                    background: category === item ? "var(--brand)" : "#fff",
-                    color: category === item ? "#fff" : "var(--text-secondary)",
-                    border: `1px solid ${category === item ? "var(--brand)" : "var(--border)"}`,
-                    padding: "8px 16px",
-                    fontWeight: 500,
-                    boxShadow: category === item ? "0 2px 4px rgba(139, 94, 60, 0.2)" : "none",
-                    whiteSpace: "nowrap",
-                    flexShrink: 0
-                  }}
-                  onClick={() => setCategory(item)}>
+        {/* Split view: Left Sidebar Categories, Right Product Grid */}
+        <div style={{ display: "flex", flex: 1, minHeight: 0, background: "#fff" }}>
+          {/* Left Categories Sidebar */}
+          <aside style={{
+            width: "140px",
+            borderRight: "1px solid var(--border)",
+            background: "var(--bg-muted)",
+            display: "flex",
+            flexDirection: "column",
+            overflowY: "auto",
+            flexShrink: 0
+          }}>
+            {categories.map((item) => (
+              <button
+                key={item}
+                style={{
+                  width: "100%",
+                  padding: "16px 12px",
+                  textAlign: "left",
+                  background: category === item ? "#fff" : "transparent",
+                  color: category === item ? "var(--brand-hover)" : "var(--text-secondary)",
+                  border: "none",
+                  borderLeft: `4px solid ${category === item ? "var(--brand)" : "transparent"}`,
+                  fontWeight: category === item ? "bold" : "normal",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  borderBottom: "1px solid rgba(0,0,0,0.04)",
+                  transition: "all 0.15s ease",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}
+                onClick={() => setCategory(item)}
+              >
+                <span style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  lineHeight: "1.3"
+                }}>
                   {item}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="pos-category-arrow"
-            onClick={() => scrollCategories(1)}
-            disabled={!categoryScrollState.canScrollNext}
-            aria-label="เลื่อนหมวดหมู่ไปทางขวา"
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
+                </span>
+              </button>
+            ))}
+          </aside>
 
-        <div style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
-          <ProductGrid 
-            menu={menu} 
-            category={category} 
-            search={search} 
-            branchType={activeBranch?.branchType} 
-            onItemClick={handleMenuItemClick}
-          />
+          {/* Right Product Grid */}
+          <div style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
+            <ProductGrid
+              menu={menu}
+              category={category}
+              search={search}
+              branchType={activeBranch?.branchType}
+              onItemClick={handleMenuItemClick}
+            />
+          </div>
         </div>
       </section>
 
@@ -464,7 +545,7 @@ export default function POSPage() {
         cart={cart}
         subtotal={subtotal}
         discountAmount={discountAmount}
-        total={total}
+        total={payableTotal}
         pointsToUse={pointsToUse}
         setPointsToUse={setPointsToUse}
         updateQty={updateQty}
@@ -488,6 +569,7 @@ export default function POSPage() {
         removeDiscountRule={removeDiscountRule}
         paymentMethod={paymentMethod}
         setPaymentMethod={setPaymentMethod}
+        enabledPaymentMethods={enabledPaymentMethods}
         handleCheckoutClick={handleCheckoutClick}
         isSubmitting={isSubmitting}
         activeShift={activeShift}
@@ -495,7 +577,7 @@ export default function POSPage() {
 
       {showCashDrawer && (
         <CashDrawerModal
-          total={total}
+          total={payableTotal}
           isSubmitting={isSubmitting}
           onConfirm={(cashReceived, change) => handleCheckout(cashReceived, change)}
           onCancel={() => setShowCashDrawer(false)}
@@ -510,7 +592,7 @@ export default function POSPage() {
                 <h2 style={{ fontSize: 20 }}>ยืนยันชำระเงิน {paymentLabels[pendingPaymentConfirm]}</h2>
                 <p className="muted" style={{ marginTop: 6 }}>บันทึกบิลหลังตรวจยอดรับชำระแล้ว</p>
               </div>
-              <strong style={{ fontSize: 24, color: "var(--brand-hover)" }}>{formatMoney(total)}</strong>
+              <strong style={{ fontSize: 24, color: "var(--brand-hover)" }}>{formatMoney(payableTotal)}</strong>
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               <button className="btn btn--ghost" onClick={() => setPendingPaymentConfirm(null)} disabled={isSubmitting}>ยกเลิก</button>

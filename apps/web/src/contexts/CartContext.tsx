@@ -8,6 +8,20 @@ import { useShift } from "./ShiftContext";
 
 type ScanFeedback = { tone: "idle" | "success" | "error"; message: string; code?: string };
 
+export type HeldBill = {
+  id: string;
+  label: string;
+  branchId: number | null;
+  createdAt: string;
+  itemCount: number;
+  total: number;
+  cart: CartItem[];
+  discountType: DiscountType;
+  discountValue: string;
+  discountRules: DiscountRule[];
+  pointsToUse: string;
+};
+
 type CartContextType = {
   cart: CartItem[];
   discountType: DiscountType;
@@ -30,6 +44,10 @@ type CartContextType = {
   subtotal: number;
   discountAmount: number;
   total: number;
+  heldBills: HeldBill[];
+  holdCart: (label?: string) => boolean;
+  restoreHeldBill: (id: string) => void;
+  removeHeldBill: (id: string) => void;
 };
 
 const CartContext = createContext<CartContextType | null>(null);
@@ -69,7 +87,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [discountRules, setDiscountRules] = useState<DiscountRule[]>([]);
   const [pointsToUse, setPointsToUse] = useState("");
   const [scanFeedback, setScanFeedback] = useState<ScanFeedback>({ tone: "idle", message: "พร้อมยิงบาร์โค้ด" });
-  
+  const [heldBills, setHeldBills] = useState<HeldBill[]>([]);
+
   const { activeBranch } = useBranch();
   const { user } = useAuth();
   const { activeShift, refreshShift } = useShift();
@@ -186,30 +205,80 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return Math.round(Math.max(0, subtotal - discountAmount - pointsDiscount) * 100) / 100;
   }, [subtotal, discountAmount, pointsToUse]);
 
+  const holdCart = useCallback((label?: string) => {
+    if (cart.length === 0) {
+      toast.error("ไม่มีรายการให้พัก");
+      return false;
+    }
+    const timeLabel = new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+    const bill: HeldBill = {
+      id: makeId(),
+      label: label?.trim() || `บิลพัก ${timeLabel}`,
+      branchId: activeBranch?.id ?? null,
+      createdAt: new Date().toISOString(),
+      itemCount: cart.reduce((sum, item) => sum + item.qty, 0),
+      total,
+      cart,
+      discountType,
+      discountValue,
+      discountRules,
+      pointsToUse
+    };
+    setHeldBills((prev) => [bill, ...prev]);
+    clearCart();
+    toast.success("พักบิลแล้ว");
+    return true;
+  }, [cart, total, activeBranch, discountType, discountValue, discountRules, pointsToUse, clearCart, toast]);
+
+  const restoreHeldBill = useCallback((id: string) => {
+    if (cart.length > 0) {
+      toast.error("เคลียร์หรือพักตะกร้าปัจจุบันก่อนเรียกบิลที่พักไว้");
+      return;
+    }
+    const bill = heldBills.find((b) => b.id === id);
+    if (!bill) return;
+    checkoutKeyRef.current = null;
+    setCart(bill.cart);
+    setDiscountType(bill.discountType);
+    setDiscountValue(bill.discountValue);
+    setDiscountRules(bill.discountRules);
+    setPointsToUse(bill.pointsToUse);
+    setScanFeedback({ tone: "idle", message: "เรียกบิลที่พักไว้แล้ว" });
+    setHeldBills((prev) => prev.filter((b) => b.id !== id));
+  }, [cart, heldBills, toast]);
+
+  const removeHeldBill = useCallback((id: string) => {
+    setHeldBills((prev) => prev.filter((b) => b.id !== id));
+  }, []);
+
+  const visibleHeldBills = useMemo(
+    () => heldBills.filter((b) => b.branchId === (activeBranch?.id ?? null)),
+    [heldBills, activeBranch?.id]
+  );
+
   const checkout = useCallback(async (paymentMethod: PaymentMethod, customerId: number | null, usablePoints: number, paymentDetails?: { cashReceived?: number; paymentConfirmed?: boolean; referenceNo?: string }) => {
     if (cart.length === 0 || !activeBranch) throw new Error("ไม่สามารถชำระเงินได้");
     if (!activeShift) throw new Error("กรุณาเปิดกะก่อนขาย");
     const idempotencyKey = checkoutKeyRef.current ?? makeCheckoutKey();
     checkoutKeyRef.current = idempotencyKey;
     try {
-      const orderInput: Parameters<typeof createOrder>[0] = {
-        items: cart,
-        paymentMethod,
-        paymentDetails,
-        discountType,
-        discountValue: Number(discountValue) || 0,
-        discounts: discountRules,
-        branchId: activeBranch.id,
-        customerId,
-        loyaltyPointsToUse: usablePoints,
-        userId: user?.id,
-        shiftId: activeShift.id,
-        idempotencyKey,
-      };
       let order: Order;
       const checkoutStartedAt = performance.now();
       try {
-        order = await createOrder(orderInput);
+        order = await createOrder({
+          items: cart,
+          paymentMethod,
+          paymentDetails,
+          discountType,
+          discountValue: Number(discountValue) || 0,
+          discounts: discountRules,
+          branchId: activeBranch.id,
+          customerId,
+          loyaltyPointsToUse: usablePoints,
+          userId: user?.id,
+          shiftId: activeShift.id,
+          idempotencyKey,
+        });
       } catch (error) {
         if (!isCheckoutTimeout(error)) throw error;
         console.warn("[POS] checkout timed out, polling existing order", { idempotencyKey });
@@ -234,7 +303,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
     <CartContext.Provider value={{
       cart, discountType, discountValue, discountRules, pointsToUse, scanFeedback,
       addItem, updateQty, removeItem, clearCart, setDiscountType, setDiscountValue, addDiscountRule, removeDiscountRule, clearDiscountRules, setPointsToUse, setScanFeedback, checkout,
-      subtotal, discountAmount, total
+      subtotal, discountAmount, total,
+      heldBills: visibleHeldBills, holdCart, restoreHeldBill, removeHeldBill
     }}>
       {children}
     </CartContext.Provider>

@@ -4,6 +4,7 @@ dist
 data/
 downloads/
 debug_screenshots/
+.playwright-cli/
 production-data-readiness-report.json
 recipe-bootstrap-report.json
 restore-drill-report.json

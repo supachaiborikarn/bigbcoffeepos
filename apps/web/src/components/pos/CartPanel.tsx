@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useCart } from "../../contexts/CartContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { User, Tag, Plus, Minus, X, Search, UserPlus } from "lucide-react";
 import type { Customer, DiscountRule, PaymentMethod, CartItem, Shift } from "../../types";
@@ -103,6 +104,20 @@ export default function CartPanel(props: CartPanelProps) {
 
   const [showMemberModal, setShowMemberModal] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const { appliedCoupon, applyCoupon, removeCoupon, autoPromotions } = useCart();
+  const [couponInput, setCouponInput] = useState("");
+  const [couponBusy, setCouponBusy] = useState(false);
+
+  async function handleApplyCoupon() {
+    if (couponBusy) return;
+    setCouponBusy(true);
+    try {
+      await applyCoupon(couponInput);
+      setCouponInput("");
+    } finally {
+      setCouponBusy(false);
+    }
+  }
 
   const isCategoryPromotion = discountDraft.type === "CATEGORY_PERCENT" || discountDraft.type === "BUY_X_GET_Y";
   const isBuyGet = discountDraft.type === "BUY_X_GET_Y";
@@ -274,6 +289,56 @@ export default function CartPanel(props: CartPanelProps) {
             </button>
           )}
         </div>
+
+        {/* Auto-applied promotions (server-side, shown so cash totals are correct) */}
+        {cart.length > 0 && autoPromotions.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {autoPromotions.map((promo) => (
+              <span key={promo.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#ecfdf5", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 600 }}>
+                <Tag size={12} /> {promo.label} (อัตโนมัติ)
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Coupon */}
+        {appliedCoupon ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, background: "#fff7ed", border: "1px solid #fdba74", padding: "6px 12px", borderRadius: "8px" }}>
+            <span style={{ fontSize: "12px", color: "#9a3412", fontWeight: 600 }}>
+              คูปอง {appliedCoupon.code} ({appliedCoupon.type.toUpperCase().includes("PERCENT") ? `${appliedCoupon.value}%` : `${appliedCoupon.value} บาท`})
+            </span>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              style={{ padding: "2px", border: "none", color: "var(--danger)", display: "flex", alignItems: "center" }}
+              onClick={removeCoupon}
+              aria-label="ลบคูปอง"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              className="input"
+              style={{ flex: 1, height: "36px", fontSize: "13px" }}
+              placeholder="โค้ดคูปอง"
+              value={couponInput}
+              onChange={(e) => setCouponInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleApplyCoupon(); }}
+              disabled={cart.length === 0}
+            />
+            <button
+              type="button"
+              className="btn btn--ghost"
+              style={{ height: "36px", fontSize: "13px", whiteSpace: "nowrap" }}
+              onClick={handleApplyCoupon}
+              disabled={cart.length === 0 || couponBusy || !couponInput.trim()}
+            >
+              {couponBusy ? "..." : "ใช้คูปอง"}
+            </button>
+          </div>
+        )}
 
         {/* Member Point Summary Details */}
         {selectedMember && (

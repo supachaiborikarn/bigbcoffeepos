@@ -61,6 +61,7 @@ type CreateOrderInput = {
   discountType: DiscountType;
   discountValue: number;
   discounts?: DiscountRule[];
+  couponCode?: string;
   branchId: number;
   customerId: number | null;
   loyaltyPointsToUse: number;
@@ -68,6 +69,48 @@ type CreateOrderInput = {
   shiftId?: number;
 };
 type OfflineOrderInput = CreateOrderInput;
+
+const OFFLINE_FAILED_KEY = "bb_pos_offline_failed";
+type FailedOfflineOrder = { input: OfflineOrderInput; error: string; failedAt: string };
+
+export function getOfflinePendingCount(): number {
+  return getOfflineQueue().length;
+}
+
+function getOfflineFailed(): FailedOfflineOrder[] {
+  try {
+    const raw = localStorage.getItem(OFFLINE_FAILED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setOfflineFailed(items: FailedOfflineOrder[]) {
+  localStorage.setItem(OFFLINE_FAILED_KEY, JSON.stringify(items));
+}
+
+export function getOfflineFailedCount(): number {
+  return getOfflineFailed().length;
+}
+
+export function getOfflineFailedDetails(): FailedOfflineOrder[] {
+  return getOfflineFailed();
+}
+
+export function discardFailedOfflineOrders() {
+  setOfflineFailed([]);
+}
+
+/** Move server-rejected offline orders back into the queue to retry (e.g. after reopening a shift). */
+export async function retryFailedOfflineOrders() {
+  const failed = getOfflineFailed();
+  if (!failed.length) return { sent: 0, remaining: getOfflineQueue().length, failed: 0 };
+  setOfflineQueue([...getOfflineQueue(), ...failed.map((f) => f.input)]);
+  setOfflineFailed([]);
+  return flushOfflineOrders();
+}
 
 function getOfflineQueue(): OfflineOrderInput[] {
   try {
@@ -125,19 +168,27 @@ function queueOfflineOrder(input: OfflineOrderInput): Order {
 
 export async function flushOfflineOrders() {
   const queue = getOfflineQueue();
-  if (!queue.length) return { sent: 0, remaining: 0 };
+  if (!queue.length) return { sent: 0, remaining: 0, failed: getOfflineFailedCount() };
   const remaining: OfflineOrderInput[] = [];
+  const failed = getOfflineFailed();
   let sent = 0;
   for (const item of queue) {
     try {
       await createOrderOnline(item);
       sent += 1;
-    } catch {
-      remaining.push(item);
+    } catch (error) {
+      if (isOfflineCheckoutError(error)) {
+        // Network problem — keep in the queue and retry later.
+        remaining.push(item);
+      } else {
+        // Server rejected (e.g. stock/shift) — move aside for manual attention, don't retry blindly.
+        failed.push({ input: item, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
+      }
     }
   }
   setOfflineQueue(remaining);
-  return { sent, remaining: remaining.length };
+  setOfflineFailed(failed);
+  return { sent, remaining: remaining.length, failed: failed.length };
 }
 
 type FetchJsonInit = RequestInit & { timeoutMs?: number };
@@ -482,6 +533,7 @@ async function createOrderOnline(input: CreateOrderInput) {
       discountType: input.discountType,
       discountValue: input.discountValue,
       discounts: input.discounts,
+      couponCode: input.couponCode,
       branchId: input.branchId,
       customerId: input.customerId,
       loyaltyPointsToUse: input.loyaltyPointsToUse,
@@ -757,6 +809,20 @@ export async function createPromotion(input: { name: string; type: string; value
   return payload.item;
 }
 
+export async function getActivePromotions() {
+  const payload = await fetchJson<{ items: Promotion[] }>(`${API_URL}/promotions/active`);
+  return payload.items;
+}
+
+export async function updatePromotion(id: number, input: Partial<{ name: string; type: string; value: number; category: string; startAt: string | null; endAt: string | null; active: boolean }>) {
+  const payload = await fetchJson<{ item: Promotion }>(`${API_URL}/promotions/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function deletePromotion(id: number) {
+  await fetchJson<{ ok: boolean }>(`${API_URL}/promotions/${id}`, { method: "DELETE" });
+}
+
 export async function getCoupons() {
   const payload = await fetchJson<{ items: Coupon[] }>(`${API_URL}/coupons`);
   return payload.items;
@@ -765,6 +831,23 @@ export async function getCoupons() {
 export async function createCoupon(input: { code: string; type: string; value: number; maxUses?: number | null; expiresAt?: string; active?: boolean }) {
   const payload = await fetchJson<{ item: Coupon }>(`${API_URL}/coupons`, { method: "POST", body: JSON.stringify(input) });
   return payload.item;
+}
+
+export async function updateCoupon(id: number, input: Partial<{ type: string; value: number; maxUses: number | null; expiresAt: string | null; active: boolean }>) {
+  const payload = await fetchJson<{ item: Coupon }>(`${API_URL}/coupons/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  return payload.item;
+}
+
+export async function deleteCoupon(id: number) {
+  await fetchJson<{ ok: boolean }>(`${API_URL}/coupons/${id}`, { method: "DELETE" });
+}
+
+export async function validateCoupon(code: string) {
+  const payload = await fetchJson<{ coupon: { code: string; type: string; value: number } }>(`${API_URL}/coupons/validate`, {
+    method: "POST",
+    body: JSON.stringify({ code })
+  });
+  return payload.coupon;
 }
 
 export async function getBusinessDocuments(branchId?: number) {

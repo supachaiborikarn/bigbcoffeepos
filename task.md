@@ -208,6 +208,20 @@ Current POSPOS customer scrape exposes only name and phone, but importer now acc
 - [x] จอแสดงผลฝั่งลูกค้า (customer display)
 - [x] เชื่อม marketplace (Shopee/Lazada) ถ้าต้องการ
 
+## UI polish log (ดูจอจริงผ่าน Chrome แล้วปรับ)
+- 2026-06-16: รีวิว UI สดผ่าน Claude-in-Chrome (login → branch → POS/dashboard/parity)
+  - การ์ดสินค้า POS: เปลี่ยนจากการ์ดโล่งสูง (1 คอลัมน์ พื้นที่ว่างเยอะ) เป็นไทล์แนวนอนแน่น — avatar รูป/ตัวอักษรนำหน้า + ชื่อ + ป้ายหมวด + ราคา, แสดงรูปสินค้าอัตโนมัติถ้ามี imageUrl (ProductCard.tsx + .menu-card--pos ใน styles.css, grid minmax 150→240)
+  - แก้ TopBar ทับกัน: `.input{width:100%}` override ทำให้ dropdown สาขากินเต็มแถบจนชนข้อมูลผู้ใช้/กะ — เพิ่ม `select.topbar__branch-select` width override
+  - ตรวจแล้ว: web `tsc` ผ่าน, ดูผลสดยืนยันแล้ว
+  - ปรับตามฟีดแบ็ก (จอเล็ก ใช้นิ้วกด): เปลี่ยนการ์ดสินค้าเป็น **การ์ดใหญ่แบบกริด** (รูป/ตัวอักษรใหญ่ด้านบน), โชว์**ชื่อเมนูเต็ม** (เลิกตัดบรรทัด), ป้ายจำนวนตัวเลือกย้ายไปมุมรูป, ราคาเด่น
+    - layout จอเล็ก: cart panel = clamp(300px,30vw,420px), sidebar หดผ่าน media query (≤1180px→208px, ≤920px→184px) → ได้ 2 การ์ดใหญ่/แถวที่ 1024px, 3 การ์ด/แถวที่ 1440px
+    - ยืนยันด้วยภาพจริงที่ 1024 และ 1440 แล้ว
+- 2026-06-16 all-pages pass (ตรวจทุกหน้าผ่านจอจริงก่อน push):
+  - ตรวจ + ยืนยันสวย/สม่ำเสมอ: Login, เลือกสาขา, POS, แดชบอร์ด, เมนู/สต็อก (Inventory), รายงาน, ตั้งค่า (Store Settings ของผมแสดงครบ), ออเดอร์/เดลิเวอรี่
+  - /parity: แยกแผง "นับสต็อก · โอนสต็อก" เป็น 2 ส่วนย่อยมี label ① นับสต็อก / ② โอนสต็อก ให้ไม่สับสน
+  - ตรวจ build สุดท้าย: `tsc --noEmit` ผ่านทั้ง api และ web → พร้อม push
+  - ก่อน push: รัน `npm run build` + `npm run production-hardening:check` บนเครื่อง แล้ว push; ดึงข้อมูล POSPOS ด้วย `npm run sync:pospos` (ต้องตั้ง POSPOS_EMAIL/POSPOS_PASSWORD)
+
 ## Progress log
 - 2026-06-16: เขียน roadmap; ทำ Phase A ส่วนแรก — Store Settings (model+API+UI), ใบกำกับภาษีอย่างย่อบนใบเสร็จ, พิมพ์บาร์โค้ด Code128, พักบิล/เรียกบิล
   - ไฟล์ที่เพิ่ม/แก้: prisma/schema.prisma (+model StoreSetting), migrations/202606160001_store_settings, src/store/settings.ts, src/store/index.ts, src/index.ts (routes), web/src/types.ts, web/src/api.ts, web/src/components/settings/StoreSettingsPanel.tsx, web/src/pages/SettingsPage.tsx, web/src/components/ReceiptPrinter.tsx, web/src/pages/POSPage.tsx, web/src/utils/barcode.ts, web/src/pages/InventoryPage.tsx, web/src/contexts/CartContext.tsx
@@ -227,3 +241,31 @@ Current POSPOS customer scrape exposes only name and phone, but importer now acc
   - เพิ่ม e-Tax provider payload จากใบกำกับเต็มรูปผ่าน integration outbox; ต้องตั้ง `RD_TAX_ENDPOINT`, `RD_TAX_CLIENT_ID`, `RD_TAX_CLIENT_SECRET`
   - เพิ่ม email provider ผ่าน `EMAIL_WEBHOOK_URL`; marketplace sync ใช้ outbox provider เดิมของ delivery/marketplace
   - ตรวจแล้ว: `npm run db:migrate --workspace apps/api` ผ่าน; `npm run build` ผ่าน
+- 2026-06-16 hardening pass (ปิดช่องว่างที่เหลือหลังตรวจงาน parity):
+  - คูปองผูกเข้า POS จริง: เพิ่ม `POST /api/coupons/validate` (cashier ใช้ได้), ช่องกรอกโค้ดคูปองในตะกร้า, คำนวณส่วนลดฝั่ง client ให้ตรงกับ server (เก็บเงินถูกต้อง), ตัด `usedCount` แบบ atomic ใน transaction ตอน checkout + กันหมดอายุ/เกินโควต้า
+  - เพิ่ม แก้ไข/เปิด-ปิด/ลบ ให้ promotion + coupon: `PUT/DELETE /api/promotions/:id`, `PUT/DELETE /api/coupons/:id` + ปุ่มจัดการในหน้า `/parity`
+  - ออฟไลน์: เพิ่มตัวบอกสถานะ ออนไลน์/ออฟไลน์ + จำนวนบิลรอ sync + ปุ่ม sync เอง (TopBar), flush คิวอัตโนมัติทุก 25 วิ, toast เตือนเมื่อบันทึกบิลออฟไลน์
+  - ตรวจแล้ว: `tsc --noEmit` ผ่านทั้ง api และ web (Prisma client ถูก regenerate มีครบทุกโมเดล)
+  - caveat ที่ยังเหลือ (ต้องรู้):
+    - ออฟไลน์ = ขายแบบ "ชั่วคราว" — พิมพ์สลิป id ลบชั่วคราว, ยังไม่ validate สต็อก/กะ ตอนออฟไลน์, ถ้า sync แล้ว server ปฏิเสธ (สต็อกหมด/กะปิด) บิลจะค้างในคิวให้แก้เอง (ตัวบอกสถานะจะโชว์จำนวนค้าง)
+    - โปรโมชั่น auto-apply ลดยอดฝั่ง server แต่จอ POS ยังไม่โชว์ส่วนลดโปรโมชันก่อนรับเงิน (คูปองโชว์แล้ว) — ถ้าใช้โปรโมชัน auto ควรเช็คยอดรับเงินสด
+    - e-Tax/marketplace/email = ส่งผ่าน outbox/webhook ต้องตั้ง ENV provider จริงถึงจะส่งออกได้
+    - variant/lot ยังไม่บังคับตัดสต็อกแบบ FEFO ตามล็อต
+  - ต้องรันบน Mac เพื่อยืนยัน runtime: `npm run build`, `npm run production-hardening:check --workspace apps/api`, และถ้ามี DB test ก็ `npm run checkout:integration` / `npm run browser:e2e`
+  - ✅ ผู้ใช้รันบน Mac แล้ว: `npm run build` ผ่าน (api+web), `production-hardening:check` 63/63 ผ่าน
+- 2026-06-16 promo-on-POS pass: โชว์ส่วนลดโปรโมชัน auto บนจอ POS ก่อนรับเงิน (แก้ปัญหาเก็บเงินสดเกินเพราะ server ลดให้แต่จอโชว์ยอดเต็ม)
+  - เพิ่ม `GET /api/promotions/active` (cashier เข้าได้) + `listActivePromotions()`
+  - CartContext ดึงโปรโมชัน active มาคำนวณลงยอดรวม/เงินทอน ให้ตรงลำดับกับ server (promotions → manual rules → coupon) โดยไม่ส่งซ้ำใน `discounts` (กัน double-apply)
+  - CartPanel โชว์ป้ายโปรโมชันอัตโนมัติที่กำลังใช้; ใบเสร็จ/CashDrawer สะท้อนส่วนลดถูกต้องเพราะอ่านจาก cart context
+  - ตรวจแล้ว: `tsc --noEmit` ผ่านทั้ง api และ web
+  - caveat ที่ยังเหลือ: ออฟไลน์ยังไม่ validate สต็อก/กะ; variant/lot ยังไม่บังคับ FEFO; e-Tax/marketplace/email ต้องตั้ง ENV provider จริง
+- 2026-06-16 FEFO pass: ตัดสต็อกตามล็อตหมดอายุ (First-Expired-First-Out)
+  - เพิ่ม `applyLotFefoDeductions()` ใน checkout transaction: เมื่อขาย ตัดล็อต (InventoryLot) เรียงตามวันหมดอายุก่อน (ล็อตไม่มีวันหมดอายุตัดท้ายสุด) แบบ best-effort — cap ไม่ให้ล็อตติดลบ, ถ้าล็อตไม่พอ (ข้อมูลล็อตไม่ครบ) ข้ามส่วนเกิน เพราะ IngredientStock ยังเป็นตัวตัดสินจริง
+  - `listInventoryLots` กรอง `qty > 0` แล้ว → ล็อตที่ตัดหมดจะหายจากการแจ้งเตือนหมดอายุ
+  - ตรวจแล้ว: api `tsc --noEmit` ผ่าน
+  - caveat: การคืนเงิน/ยกเลิกบิล คืนยอดเข้า IngredientStock (ตัวจริง) แต่ยังไม่คืนกลับเข้าล็อตเดิม (ล็อตเป็น advisory) — ถ้าต้องการความแม่นยำระดับล็อตเวลาคืนเงิน ต้องทำเพิ่ม
+- 2026-06-16 caveat-closing pass:
+  - คืนล็อตตอนยกเลิก/คืนเงิน: เพิ่ม `restoreLotFefo()` คืนยอดกลับเข้าล็อตที่หมดอายุก่อน (ถ้าไม่มีล็อตสร้างล็อต RESTORE) — ล็อตกับสต็อกไม่ดริฟต์เวลา refund แล้ว
+  - ออฟไลน์ แยก "บิลล้มเหลว" (เซิร์ฟเวอร์ปฏิเสธ เช่น สต็อก/กะ) ออกจาก "รอ sync" (เน็ตมีปัญหา): บิลล้มเหลวไม่ retry วนไม่จบ, ตัวบอกสถานะโชว์จำนวน + รายละเอียดเหตุผล + ปุ่ม "ลองส่งใหม่"/"ล้างทิ้ง"
+  - ตรวจแล้ว: `tsc --noEmit` ผ่านทั้ง api และ web
+  - caveat ที่เหลือ (ต้อง credential จริงเท่านั้น): e-Tax (ETDA/INET), marketplace (Shopee/Lazada), อีเมลสรุป — โค้ด/outbox พร้อมแล้ว รอตั้ง ENV provider

@@ -67,9 +67,9 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
       display: "grid",
       gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
       gridAutoRows: "max-content",
-      gap: "14px",
+      gap: "12px",
       alignContent: "start",
-      padding: "20px",
+      padding: "16px",
       flex: 1,
       minHeight: 0
     }}>

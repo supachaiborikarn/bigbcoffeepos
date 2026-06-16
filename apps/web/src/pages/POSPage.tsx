@@ -386,7 +386,7 @@ export default function POSPage() {
 
 
   return (
-    <main style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
+    <main style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) clamp(300px, 30vw, 420px)", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
       {/* Center Panel: Products */}
       <section style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRight: "1px solid var(--border)" }}>
         <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border)", background: "#fff" }}>

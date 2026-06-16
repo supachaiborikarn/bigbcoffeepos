@@ -1,12 +1,27 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CartItem, DiscountRule, DiscountType, Order, PaymentMethod } from "../types";
-import { createOrder, getOrderByIdempotencyKey } from "../api";
+import { createOrder, getActivePromotions, getOrderByIdempotencyKey, validateCoupon } from "../api";
 import { useBranch } from "./BranchContext";
 import { useAuth } from "./AuthContext";
 import { useToast } from "./ToastContext";
 import { useShift } from "./ShiftContext";
 
 type ScanFeedback = { tone: "idle" | "success" | "error"; message: string; code?: string };
+
+export type AppliedCoupon = { code: string; type: string; value: number };
+
+const PROMO_RULE_TYPES = new Set(["ORDER_PERCENT", "ORDER_FIXED", "CATEGORY_PERCENT", "BUY_X_GET_Y"]);
+
+function promotionToRule(promo: { id: number; name: string; type: string; value: number; category?: string }): DiscountRule | null {
+  if (!PROMO_RULE_TYPES.has(promo.type)) return null;
+  return {
+    id: `PROMO-${promo.id}`,
+    label: promo.name,
+    type: promo.type as DiscountRule["type"],
+    value: Number(promo.value) || 0,
+    category: promo.category || undefined
+  };
+}
 
 export type HeldBill = {
   id: string;
@@ -48,6 +63,10 @@ type CartContextType = {
   holdCart: (label?: string) => boolean;
   restoreHeldBill: (id: string) => void;
   removeHeldBill: (id: string) => void;
+  appliedCoupon: AppliedCoupon | null;
+  applyCoupon: (code: string) => Promise<void>;
+  removeCoupon: () => void;
+  autoPromotions: DiscountRule[];
 };
 
 const CartContext = createContext<CartContextType | null>(null);
@@ -88,6 +107,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [pointsToUse, setPointsToUse] = useState("");
   const [scanFeedback, setScanFeedback] = useState<ScanFeedback>({ tone: "idle", message: "พร้อมยิงบาร์โค้ด" });
   const [heldBills, setHeldBills] = useState<HeldBill[]>([]);
+  const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
+  const [autoPromotions, setAutoPromotions] = useState<DiscountRule[]>([]);
 
   const { activeBranch } = useBranch();
   const { user } = useAuth();
@@ -120,6 +141,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setDiscountValue("");
     setDiscountRules([]);
     setPointsToUse("");
+    setAppliedCoupon(null);
     setScanFeedback({ tone: "idle", message: "พร้อมยิงบาร์โค้ด" });
   }, []);
 
@@ -130,6 +152,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
     previousBranchId.current = branchId;
   }, [activeBranch?.id, clearCart]);
+
+  // Load active promotions so POS totals mirror the server's auto-applied discount.
+  useEffect(() => {
+    let cancelled = false;
+    getActivePromotions()
+      .then((items) => {
+        if (cancelled) return;
+        setAutoPromotions(items.map(promotionToRule).filter((rule): rule is DiscountRule => Boolean(rule)));
+      })
+      .catch(() => { if (!cancelled) setAutoPromotions([]); });
+    return () => { cancelled = true; };
+  }, [activeBranch?.id]);
 
   const subtotal = useMemo(() => cart.reduce((sum, item) => {
     const modifiersTotal = item.modifiers.reduce((modSum, mod) => modSum + mod.price, 0);
@@ -182,28 +216,67 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return Math.max(0, Math.min(remainingSubtotal, maxDiscount));
   }, [cart, subtotal]);
   
-  const discountAmount = useMemo(() => {
+  const ruleDiscount = useMemo(() => {
     let totalDiscount = 0;
+    // Server auto-applies active promotions first, then manual discount rules.
+    autoPromotions.forEach((rule) => {
+      totalDiscount += computeRuleDiscount(rule, Math.max(0, subtotal - totalDiscount));
+    });
     discountRules.forEach((rule) => {
       totalDiscount += computeRuleDiscount(rule, Math.max(0, subtotal - totalDiscount));
     });
 
     if (discountRules.length === 0) {
+      const remaining = Math.max(0, subtotal - totalDiscount);
       const val = Number(discountValue);
       if (discountType === "PERCENT" && Number.isFinite(val) && val > 0) {
-        totalDiscount = Math.min(subtotal, subtotal * (val / 100));
+        totalDiscount += Math.min(remaining, subtotal * (val / 100));
       } else if (discountType === "FIXED" && Number.isFinite(val) && val > 0) {
-        totalDiscount = Math.min(subtotal, val);
+        totalDiscount += Math.min(remaining, val);
       }
     }
 
     return Math.round(totalDiscount * 100) / 100;
-  }, [subtotal, discountType, discountValue, discountRules, computeRuleDiscount]);
+  }, [subtotal, discountType, discountValue, discountRules, autoPromotions, computeRuleDiscount]);
+
+  // Coupon discount mirrors the server's whole-bill coupon math so cash collection is correct.
+  const couponDiscount = useMemo(() => {
+    if (!appliedCoupon) return 0;
+    const remaining = Math.max(0, subtotal - ruleDiscount);
+    const type = appliedCoupon.type.toUpperCase();
+    const amount = type.includes("PERCENT")
+      ? remaining * ((appliedCoupon.value || 0) / 100)
+      : (appliedCoupon.value || 0);
+    return Math.round(Math.min(remaining, Math.max(0, amount)) * 100) / 100;
+  }, [appliedCoupon, subtotal, ruleDiscount]);
+
+  const discountAmount = useMemo(
+    () => Math.round((ruleDiscount + couponDiscount) * 100) / 100,
+    [ruleDiscount, couponDiscount]
+  );
 
   const total = useMemo(() => {
     const pointsDiscount = Math.min(Number(pointsToUse) || 0, Math.max(0, subtotal - discountAmount));
     return Math.round(Math.max(0, subtotal - discountAmount - pointsDiscount) * 100) / 100;
   }, [subtotal, discountAmount, pointsToUse]);
+
+  const applyCoupon = useCallback(async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) {
+      toast.error("กรุณาใส่โค้ดคูปอง");
+      return;
+    }
+    try {
+      const coupon = await validateCoupon(trimmed);
+      setAppliedCoupon(coupon);
+      toast.success(`ใช้คูปอง ${coupon.code} แล้ว`);
+    } catch (e) {
+      setAppliedCoupon(null);
+      toast.error((e as Error).message);
+    }
+  }, [toast]);
+
+  const removeCoupon = useCallback(() => setAppliedCoupon(null), []);
 
   const holdCart = useCallback((label?: string) => {
     if (cart.length === 0) {
@@ -272,6 +345,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           discountType,
           discountValue: Number(discountValue) || 0,
           discounts: discountRules,
+          couponCode: appliedCoupon?.code,
           branchId: activeBranch.id,
           customerId,
           loyaltyPointsToUse: usablePoints,
@@ -291,20 +365,26 @@ export function CartProvider({ children }: { children: ReactNode }) {
       void refreshShift().catch((error) => {
         console.warn("[POS] refresh shift after checkout failed", error);
       });
-      toast.success("ชำระเงินสำเร็จ");
+      // Offline-queued orders are returned with a synthetic negative id.
+      if (order.id < 0) {
+        toast.success("บันทึกบิลออฟไลน์แล้ว ระบบจะ sync อัตโนมัติเมื่อเน็ตกลับมา");
+      } else {
+        toast.success("ชำระเงินสำเร็จ");
+      }
       return order;
     } catch (e) {
       toast.error((e as Error).message);
       throw e;
     }
-  }, [cart, activeBranch, activeShift, user, discountType, discountValue, discountRules, clearCart, refreshShift, toast]);
+  }, [cart, activeBranch, activeShift, user, discountType, discountValue, discountRules, appliedCoupon, clearCart, refreshShift, toast]);
 
   return (
     <CartContext.Provider value={{
       cart, discountType, discountValue, discountRules, pointsToUse, scanFeedback,
       addItem, updateQty, removeItem, clearCart, setDiscountType, setDiscountValue, addDiscountRule, removeDiscountRule, clearDiscountRules, setPointsToUse, setScanFeedback, checkout,
       subtotal, discountAmount, total,
-      heldBills: visibleHeldBills, holdCart, restoreHeldBill, removeHeldBill
+      heldBills: visibleHeldBills, holdCart, restoreHeldBill, removeHeldBill,
+      appliedCoupon, applyCoupon, removeCoupon, autoPromotions
     }}>
       {children}
     </CartContext.Provider>

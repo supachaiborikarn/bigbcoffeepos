@@ -6,6 +6,7 @@ import { useShift } from "../../contexts/ShiftContext";
 import { useToast } from "../../contexts/ToastContext";
 import type { ShiftSummary } from "../../types";
 import Numpad from "../ui/Numpad";
+import OfflineStatus from "../OfflineStatus";
 
 const formatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -159,6 +160,7 @@ export default function TopBar() {
         </div>
 
         <div className="topbar__right">
+          <OfflineStatus />
           <div className="topbar__item" style={{ gap: 12, cursor: "default" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
               <strong style={{ fontSize: 14 }}>{user?.name}</strong>

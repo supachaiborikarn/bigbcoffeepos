@@ -13,9 +13,16 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => undefined);
-    flushOfflineOrders().catch(() => undefined);
-  });
-  window.addEventListener("online", () => {
-    flushOfflineOrders().catch(() => undefined);
   });
 }
+
+// Offline order sync: flush on load, when the network returns, and periodically.
+window.addEventListener("load", () => {
+  flushOfflineOrders().catch(() => undefined);
+});
+window.addEventListener("online", () => {
+  flushOfflineOrders().catch(() => undefined);
+});
+window.setInterval(() => {
+  if (navigator.onLine) flushOfflineOrders().catch(() => undefined);
+}, 25_000);

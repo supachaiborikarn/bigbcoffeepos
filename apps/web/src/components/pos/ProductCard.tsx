@@ -40,94 +40,36 @@ function isTopSeller(item: MenuItem) {
   return TOP_SELLER_LABELS.some((label) => `${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""}`.toLowerCase().includes(label));
 }
 
+function initial(name: string) {
+  const trimmed = name.trim();
+  return trimmed ? trimmed.charAt(0).toUpperCase() : "·";
+}
+
 export default function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
   const topSeller = isTopSeller(item);
-  const hasFeaturedPhoto = topSeller && Boolean(item.imageUrl?.trim());
+  const hasPhoto = Boolean(item.imageUrl?.trim());
   const metaLabel = variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || item.category;
 
   return (
     <button
       type="button"
-      className="menu-card"
+      className="menu-card menu-card--pos"
       onClick={() => onClick(item)}
       aria-label={`เพิ่ม ${item.name}`}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        padding: "10px",
-        gap: "6px",
-        position: "relative",
-        minHeight: hasFeaturedPhoto ? 200 : 115,
-        height: "100%"
-      }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px", minWidth: 0 }}>
-        <span className="menu-card__category" style={{
-          background: "var(--brand-subtle)",
-          color: "var(--brand)",
-          padding: "2px 6px",
-          borderRadius: "4px",
-          fontSize: "10px",
-          lineHeight: 1.2,
-          whiteSpace: "nowrap",
-          maxWidth: "100%",
-          overflow: "hidden",
-          textOverflow: "ellipsis"
-        }}>
-          {metaLabel}
-        </span>
-        {topSeller && (
-          <span style={{
-            background: "var(--warning)",
-            color: "white",
-            fontSize: "9px",
-            fontWeight: 700,
-            padding: "2px 6px",
-            borderRadius: "4px",
-            lineHeight: 1.2,
-            flexShrink: 0
-          }}>
-            ขายดี
-          </span>
+      <div className="menu-card__thumb" aria-hidden="true">
+        {hasPhoto ? (
+          <img src={item.imageUrl ?? ""} alt="" loading="lazy" />
+        ) : (
+          <span className="menu-card__thumb-initial">{initial(item.name)}</span>
         )}
+        {topSeller && <span className="menu-card__flag">ขายดี</span>}
+        {metaLabel && <span className="menu-card__meta menu-card__meta--corner">{metaLabel}</span>}
       </div>
 
-      {hasFeaturedPhoto && (
-        <div style={{
-          width: "100%",
-          aspectRatio: "4/3",
-          backgroundColor: "var(--bg-muted)",
-          borderRadius: "6px",
-          overflow: "hidden"
-        }}>
-          <img src={item.imageUrl ?? ""} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} loading="lazy" />
-        </div>
-      )}
+      <span className="menu-card__name menu-card__name--pos">{item.name}</span>
 
-      <div style={{ display: "flex", flexDirection: "column", width: "100%", alignItems: "flex-start", gap: "4px", flex: 1, minHeight: 0 }}>
-        <span className="menu-card__name" style={{
-          fontSize: hasFeaturedPhoto ? "13px" : "15px",
-          fontWeight: 700,
-          color: "var(--text-primary)",
-          textAlign: "left",
-          lineHeight: 1.25,
-          letterSpacing: 0,
-          display: "-webkit-box",
-          WebkitLineClamp: hasFeaturedPhoto ? 2 : 3,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-          overflowWrap: "anywhere"
-        }}>
-          {item.name}
-        </span>
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end", width: "100%", alignItems: "center" }}>
-        <span className="menu-card__price" style={{ fontWeight: 800, color: "var(--brand-hover)", fontSize: "14px", letterSpacing: 0 }}>
-          {priceLabel ?? formatter.format(item.basePrice)}
-        </span>
-      </div>
+      <span className="menu-card__price menu-card__price--pos">{priceLabel ?? formatter.format(item.basePrice)}</span>
     </button>
   );
 }

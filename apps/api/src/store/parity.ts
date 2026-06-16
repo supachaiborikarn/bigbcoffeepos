@@ -259,6 +259,7 @@ export async function listInventoryLots(branchId?: number, expiringDays = 30) {
   return db.inventoryLot.findMany({
     where: {
       ...(branchId ? { branchId } : {}),
+      qty: { gt: 0 },
       OR: [{ expiryDate: null }, { expiryDate: { lte: until } }]
     },
     include: { ingredient: true, branch: true },
@@ -299,6 +300,19 @@ export async function listPromotions() {
   return db.promotion.findMany({ orderBy: { id: "desc" } });
 }
 
+/** Active, in-window promotions for POS auto-apply preview (cashier-accessible). */
+export async function listActivePromotions() {
+  const now = new Date();
+  return db.promotion.findMany({
+    where: {
+      active: true,
+      OR: [{ startAt: null }, { startAt: { lte: now } }],
+      AND: [{ OR: [{ endAt: null }, { endAt: { gte: now } }] }]
+    },
+    orderBy: { id: "asc" }
+  });
+}
+
 export async function savePromotion(input: { name: string; type: string; value: number; category?: string; startAt?: string; endAt?: string; active?: boolean }) {
   return db.promotion.create({
     data: {
@@ -328,6 +342,45 @@ export async function saveCoupon(input: { code: string; type: string; value: num
       active: input.active !== false
     }
   });
+}
+
+/** Validate a coupon for POS use (cashier-accessible). Throws on invalid/expired/used-up. */
+export async function validateCoupon(code: string) {
+  const coupon = await db.coupon.findUnique({ where: { code: String(code).trim().toUpperCase() } });
+  if (!coupon || coupon.active === false) throw new Error("คูปองไม่ถูกต้องหรือถูกปิดใช้งาน");
+  if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) throw new Error("คูปองหมดอายุแล้ว");
+  if (coupon.maxUses != null && coupon.usedCount >= coupon.maxUses) throw new Error("คูปองถูกใช้ครบจำนวนแล้ว");
+  return { code: coupon.code, type: coupon.type, value: Number(coupon.value) || 0 };
+}
+
+export async function updatePromotion(id: number, input: { name?: string; type?: string; value?: number; category?: string; startAt?: string | null; endAt?: string | null; active?: boolean }) {
+  const data: any = {};
+  if (input.name !== undefined) data.name = input.name.trim();
+  if (input.type !== undefined) data.type = input.type;
+  if (input.value !== undefined) data.value = roundMoney(input.value);
+  if (input.category !== undefined) data.category = input.category.trim();
+  if (input.startAt !== undefined) data.startAt = toDate(input.startAt);
+  if (input.endAt !== undefined) data.endAt = toDate(input.endAt);
+  if (input.active !== undefined) data.active = input.active;
+  return db.promotion.update({ where: { id }, data });
+}
+
+export async function deletePromotion(id: number) {
+  return db.promotion.delete({ where: { id } });
+}
+
+export async function updateCoupon(id: number, input: { type?: string; value?: number; maxUses?: number | null; expiresAt?: string | null; active?: boolean }) {
+  const data: any = {};
+  if (input.type !== undefined) data.type = input.type;
+  if (input.value !== undefined) data.value = roundMoney(input.value);
+  if (input.maxUses !== undefined) data.maxUses = input.maxUses;
+  if (input.expiresAt !== undefined) data.expiresAt = toDate(input.expiresAt);
+  if (input.active !== undefined) data.active = input.active;
+  return db.coupon.update({ where: { id }, data });
+}
+
+export async function deleteCoupon(id: number) {
+  return db.coupon.delete({ where: { id } });
 }
 
 export async function listBusinessDocuments(branchId?: number) {

@@ -33,8 +33,8 @@ import {
   listPriceRules, savePriceRule,
   listInventoryLots, saveInventoryLot,
   listProductVariants, saveProductVariant,
-  listPromotions, savePromotion,
-  listCoupons, saveCoupon,
+  listPromotions, listActivePromotions, savePromotion, updatePromotion, deletePromotion,
+  listCoupons, saveCoupon, updateCoupon, deleteCoupon, validateCoupon,
   listBusinessDocuments, createBusinessDocument,
   getTaxExportRows, compareSales,
   getDailyEmailSetting, saveDailyEmailSetting, enqueueDailySummaryEmail,
@@ -535,6 +535,7 @@ app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)
       discountType: req.body.discountType ?? null,
       discountValue: Number(req.body.discountValue) || 0,
       discounts: Array.isArray(req.body.discounts) ? req.body.discounts : undefined,
+      couponCode: typeof req.body.couponCode === "string" ? req.body.couponCode : undefined,
       loyaltyPointsToUse: Number(req.body.loyaltyPointsToUse) || 0,
       userId: req.user?.id ?? req.body.userId ?? undefined,
       shiftId: req.body.shiftId ?? undefined,
@@ -885,10 +886,34 @@ app.post("/api/product-variants", requireRole("admin", "manager"), async (req, r
 });
 
 app.get("/api/promotions", requireRole("admin", "manager"), async (_req, res) => res.json({ items: await listPromotions() }));
+// Cashier-accessible: active promotions for POS auto-apply preview
+app.get("/api/promotions/active", async (_req, res) => res.json({ items: await listActivePromotions() }));
 app.post("/api/promotions", requireRole("admin", "manager"), async (req, res) => {
   try {
     const item = await savePromotion({ name: String(req.body?.name ?? ""), type: String(req.body?.type ?? "ORDER_PERCENT"), value: Number(req.body?.value) || 0, category: String(req.body?.category ?? ""), startAt: req.body?.startAt, endAt: req.body?.endAt, active: req.body?.active !== false });
     return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+app.put("/api/promotions/:id", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const item = await updatePromotion(id, {
+      name: req.body?.name, type: req.body?.type,
+      value: req.body?.value !== undefined ? Number(req.body.value) : undefined,
+      category: req.body?.category, startAt: req.body?.startAt, endAt: req.body?.endAt, active: req.body?.active
+    });
+    audit("promotion.updated", req, { promotionId: id });
+    return res.json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+app.delete("/api/promotions/:id", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    await deletePromotion(id);
+    audit("promotion.deleted", req, { promotionId: id });
+    return res.json({ ok: true });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
@@ -897,6 +922,37 @@ app.post("/api/coupons", requireRole("admin", "manager"), async (req, res) => {
   try {
     const item = await saveCoupon({ code: String(req.body?.code ?? ""), type: String(req.body?.type ?? "ORDER_FIXED"), value: Number(req.body?.value) || 0, maxUses: req.body?.maxUses ? Number(req.body.maxUses) : null, expiresAt: req.body?.expiresAt, active: req.body?.active !== false });
     return res.status(201).json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+app.put("/api/coupons/:id", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const item = await updateCoupon(id, {
+      type: req.body?.type,
+      value: req.body?.value !== undefined ? Number(req.body.value) : undefined,
+      maxUses: req.body?.maxUses === null ? null : (req.body?.maxUses !== undefined ? Number(req.body.maxUses) : undefined),
+      expiresAt: req.body?.expiresAt, active: req.body?.active
+    });
+    audit("coupon.updated", req, { couponId: id });
+    return res.json({ item });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+app.delete("/api/coupons/:id", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    await deleteCoupon(id);
+    audit("coupon.deleted", req, { couponId: id });
+    return res.json({ ok: true });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+// Cashier-accessible coupon validation for POS (any authenticated user)
+app.post("/api/coupons/validate", async (req, res) => {
+  const code = typeof req.body?.code === "string" ? req.body.code : "";
+  if (!code.trim()) return res.status(400).json({ error: "กรุณาใส่โค้ดคูปอง" });
+  try {
+    return res.json({ coupon: await validateCoupon(code) });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 

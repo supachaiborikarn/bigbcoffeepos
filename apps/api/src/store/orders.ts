@@ -168,6 +168,17 @@ function promotionToDiscountRule(promotion: any): DiscountRule | null {
   });
 }
 
+function couponToDiscountRule(coupon: any): DiscountRule | null {
+  const type = String(coupon.type || "").toUpperCase();
+  const ruleType = type.includes("PERCENT") ? "ORDER_PERCENT" : "ORDER_FIXED";
+  return normalizeRule({
+    id: `COUPON-${coupon.id}`,
+    label: `คูปอง ${coupon.code}`,
+    type: ruleType,
+    value: Number(coupon.value) || 0
+  });
+}
+
 function computeDiscount(rules: DiscountRule[], subtotal: number, orderItems: OrderItemDraft[]) {
   let totalDiscount = 0;
   const applied: Array<{ label: string; amount: number }> = [];
@@ -366,6 +377,58 @@ async function createSaleStockMovements(tx: any, branchId: number, orderId: numb
   if (rows.length > 0) await tx.stockMovement.createMany({ data: rows });
 }
 
+/**
+ * FEFO (First-Expired-First-Out) lot consumption.
+ * Advisory tracking on top of the authoritative IngredientStock: when stock is sold,
+ * draw down inventory lots starting from the earliest expiry date (undated lots last).
+ * Capped per lot so lots never go negative; any shortfall (incomplete lot data) is ignored.
+ */
+async function applyLotFefoDeductions(tx: any, branchId: number, ...stocks: Map<number, number>[]) {
+  const consumed = new Map<number, number>();
+  for (const stock of stocks) {
+    for (const [ingredientId, qty] of stock) {
+      if (qty > 0) consumed.set(ingredientId, (consumed.get(ingredientId) ?? 0) + qty);
+    }
+  }
+  if (consumed.size === 0) return;
+
+  for (const [ingredientId, needTotal] of consumed) {
+    let need = needTotal;
+    const lots = await tx.inventoryLot.findMany({ where: { branchId, ingredientId, qty: { gt: 0 } } });
+    lots.sort((a: any, b: any) => {
+      const ax = a.expiryDate ? new Date(a.expiryDate).getTime() : Infinity;
+      const bx = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+      return ax - bx || a.id - b.id;
+    });
+    for (const lot of lots) {
+      if (need <= 0) break;
+      const take = Math.min(lot.qty, need);
+      if (take <= 0) continue;
+      await tx.inventoryLot.update({ where: { id: lot.id }, data: { qty: { decrement: take } } });
+      need -= take;
+    }
+  }
+}
+
+/**
+ * Reverse FEFO on cancel/refund: add restored quantity back to the earliest-expiry lot
+ * (mirrors how it was consumed). Creates a restore lot if none exist. Best-effort/advisory.
+ */
+async function restoreLotFefo(tx: any, branchId: number, ingredientId: number, qty: number) {
+  if (qty <= 0) return;
+  const lots = await tx.inventoryLot.findMany({ where: { branchId, ingredientId } });
+  if (lots.length === 0) {
+    await tx.inventoryLot.create({ data: { branchId, ingredientId, lotNo: "RESTORE", qty } });
+    return;
+  }
+  lots.sort((a: any, b: any) => {
+    const ax = a.expiryDate ? new Date(a.expiryDate).getTime() : Infinity;
+    const bx = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+    return ax - bx || a.id - b.id;
+  });
+  await tx.inventoryLot.update({ where: { id: lots[0].id }, data: { qty: { increment: qty } } });
+}
+
 async function writeIntegrationOutbox(outboxPayload: Record<string, unknown>) {
   await prisma.integrationOutbox.createMany({
     data: [
@@ -496,6 +559,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
             reason: `${status}-${current.id}`
           }
         });
+        await restoreLotFefo(tx, current.branchId, ingredientId, restoreQty);
       }
 
       if (current.customerId) {
@@ -584,6 +648,7 @@ export async function createOrder(input: {
   userId?: number;
   shiftId?: number;
   discounts?: DiscountRule[];
+  couponCode?: string;
   paymentDetails?: PaymentDetails;
   idempotencyKey?: string | null;
 }) {
@@ -705,8 +770,24 @@ export async function createOrder(input: {
     ? input.discounts.map(normalizeRule).filter((rule): rule is DiscountRule => Boolean(rule))
     : [];
   const promotionRules = activePromotions.map(promotionToDiscountRule).filter((rule: DiscountRule | null): rule is DiscountRule => Boolean(rule));
+
+  // Coupon: validate before pricing, then increment usage atomically inside the transaction.
+  const couponCode = typeof input.couponCode === "string" ? input.couponCode.trim().toUpperCase().slice(0, 40) : "";
+  let coupon: any = null;
+  if (couponCode) {
+    coupon = await (prisma as any).coupon.findUnique({ where: { code: couponCode } }).catch(() => null);
+    if (!coupon || coupon.active === false) throw new Error("คูปองไม่ถูกต้องหรือถูกปิดใช้งาน");
+    if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) throw new Error("คูปองหมดอายุแล้ว");
+    if (coupon.maxUses != null && coupon.usedCount >= coupon.maxUses) throw new Error("คูปองถูกใช้ครบจำนวนแล้ว");
+  }
+  const couponRule = coupon ? couponToDiscountRule(coupon) : null;
+
   const fallbackRule = legacyDiscountRule(input.discountType, input.discountValue);
-  const discountRules = [...promotionRules, ...(requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []))];
+  const discountRules = [
+    ...promotionRules,
+    ...(couponRule ? [couponRule] : []),
+    ...(requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []))
+  ];
   const { discountAmount, applied: appliedDiscounts } = computeDiscount(discountRules, subtotal, orderItems);
 
   const discountable = Math.max(0, subtotal - discountAmount);
@@ -833,6 +914,18 @@ export async function createOrder(input: {
     }
     await measureCheckoutStep("orderEventCreateMany", () => tx.orderEvent.createMany({ data: orderEvents }));
 
+    if (coupon) {
+      const couponUpdate = await tx.coupon.updateMany({
+        where: {
+          id: coupon.id,
+          active: true,
+          ...(coupon.maxUses != null ? { usedCount: { lt: coupon.maxUses } } : {})
+        },
+        data: { usedCount: { increment: 1 } }
+      });
+      if (couponUpdate.count !== 1) throw new Error("คูปองถูกใช้ครบจำนวนแล้ว");
+    }
+
     if (customer && pointsToUse > 0) {
       const pointsResult = await measureCheckoutStep("customerPointsUpdate", () => tx.customer.updateMany({
         where: { id: input.customerId!, points: { gte: pointsToUse } },
@@ -849,6 +942,7 @@ export async function createOrder(input: {
     await measureCheckoutStep("strictStock", () => applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id));
     await measureCheckoutStep("flexibleStock", () => applyFlexibleStockDecrements(tx, input.branchId, flexibleStock));
     await measureCheckoutStep("stockMovements", () => createSaleStockMovements(tx, input.branchId, newOrder.id, requiredStock, flexibleStock));
+    await measureCheckoutStep("lotFefo", () => applyLotFefoDeductions(tx, input.branchId, requiredStock, flexibleStock));
 
     if (input.shiftId) {
       const cashAdd = paymentMethod === "CASH" ? total : 0;

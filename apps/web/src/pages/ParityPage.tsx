@@ -8,6 +8,10 @@ import {
   createProductUnit,
   createProductVariant,
   createPromotion,
+  updatePromotion,
+  deletePromotion,
+  updateCoupon,
+  deleteCoupon,
   createStockCount,
   createStockTransfer,
   createTaxInvoice,
@@ -196,7 +200,8 @@ export default function ParityPage() {
       </section>
 
       <section className="panel" style={panelStyle}>
-        <h2>นับสต็อกและโอนสต็อก</h2>
+        <h2>นับสต็อก · โอนสต็อกระหว่างสาขา</h2>
+        <p style={{ margin: "2px 0 8px", fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>① นับสต็อก — กรอกยอดนับจริงเทียบกับระบบ</p>
         <div style={gridStyle}>
           <select style={inputStyle} value={data.countIngredientId ?? firstIngredient} onChange={(e) => setData({ ...data, countIngredientId: Number(e.target.value) })}>
             {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -209,6 +214,7 @@ export default function ParityPage() {
         {(data.stockCounts ?? []).some((item: any) => item.status !== "POSTED") && (
           <button className="btn btn--ghost" disabled={busy} onClick={() => run(() => postStockCount((data.stockCounts ?? []).find((item: any) => item.status !== "POSTED").id), "บันทึกส่วนต่างสต็อกแล้ว")}>บันทึกส่วนต่างรอบล่าสุด</button>
         )}
+        <p style={{ margin: "14px 0 8px", paddingTop: 12, borderTop: "1px solid var(--border-light)", fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>② โอนสต็อก — เลือกสาขาปลายทาง + วัตถุดิบ + จำนวน (โอนออกจากสาขานี้)</p>
         <div style={gridStyle}>
           <select style={inputStyle} value={data.transferToBranchId ?? otherBranch} onChange={(e) => setData({ ...data, transferToBranchId: Number(e.target.value) })}>
             {branches.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -266,6 +272,40 @@ export default function ParityPage() {
           <input style={inputStyle} placeholder="tier / tag เช่น VIP" value={data.customerTier ?? ""} onChange={(e) => setData({ ...data, customerTier: e.target.value })} />
           <button className="btn btn--ghost" disabled={busy || !firstCustomer} onClick={() => run(() => updateCustomer(Number(data.customerId ?? firstCustomer), { tier: data.customerTier ?? "REGULAR", tags: [data.customerTier ?? ""] }), "อัปเดตสมาชิกแล้ว")}>บันทึก tier/tag</button>
         </div>
+
+        {(data.promotions ?? []).length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <h3 style={{ fontSize: 14, margin: "8px 0" }}>โปรโมชั่นที่มี</h3>
+            {(data.promotions ?? []).map((promo: any) => (
+              <div key={promo.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border-light)" }}>
+                <span style={{ fontSize: 13 }}>
+                  {promo.active ? "🟢" : "⚪"} {promo.name} · {promo.type.includes("PERCENT") ? `${promo.value}%` : money.format(promo.value)}
+                </span>
+                <span style={{ display: "flex", gap: 6 }}>
+                  <button className="btn btn--ghost" style={{ fontSize: 12, padding: "2px 8px" }} disabled={busy} onClick={() => run(() => updatePromotion(promo.id, { active: !promo.active }), promo.active ? "ปิดโปรโมชันแล้ว" : "เปิดโปรโมชันแล้ว")}>{promo.active ? "ปิด" : "เปิด"}</button>
+                  <button className="btn btn--ghost" style={{ fontSize: 12, padding: "2px 8px", color: "var(--danger)" }} disabled={busy} onClick={() => run(() => deletePromotion(promo.id), "ลบโปรโมชันแล้ว")}>ลบ</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {(data.coupons ?? []).length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <h3 style={{ fontSize: 14, margin: "8px 0" }}>คูปองที่มี</h3>
+            {(data.coupons ?? []).map((coupon: any) => (
+              <div key={coupon.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border-light)" }}>
+                <span style={{ fontSize: 13 }}>
+                  {coupon.active ? "🟢" : "⚪"} {coupon.code} · {coupon.type.includes("PERCENT") ? `${coupon.value}%` : money.format(coupon.value)} · ใช้แล้ว {coupon.usedCount}{coupon.maxUses != null ? `/${coupon.maxUses}` : ""}
+                </span>
+                <span style={{ display: "flex", gap: 6 }}>
+                  <button className="btn btn--ghost" style={{ fontSize: 12, padding: "2px 8px" }} disabled={busy} onClick={() => run(() => updateCoupon(coupon.id, { active: !coupon.active }), coupon.active ? "ปิดคูปองแล้ว" : "เปิดคูปองแล้ว")}>{coupon.active ? "ปิด" : "เปิด"}</button>
+                  <button className="btn btn--ghost" style={{ fontSize: 12, padding: "2px 8px", color: "var(--danger)" }} disabled={busy} onClick={() => run(() => deleteCoupon(coupon.id), "ลบคูปองแล้ว")}>ลบ</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="panel" style={panelStyle}>

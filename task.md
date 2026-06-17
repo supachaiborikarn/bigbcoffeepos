@@ -222,6 +222,14 @@ Current POSPOS customer scrape exposes only name and phone, but importer now acc
   - ตรวจ build สุดท้าย: `tsc --noEmit` ผ่านทั้ง api และ web → พร้อม push
   - ก่อน push: รัน `npm run build` + `npm run production-hardening:check` บนเครื่อง แล้ว push; ดึงข้อมูล POSPOS ด้วย `npm run sync:pospos` (ต้องตั้ง POSPOS_EMAIL/POSPOS_PASSWORD)
 
+## Bugfix log
+- 2026-06-16: แก้บั๊ก "POS ค้างตอนกดรับเงิน+พิมพ์ใบเสร็จ"
+  - สาเหตุ: `printReceipt` ถูกเรียกแบบไม่มี targetWindow → ใช้ iframe + `window.print()` ซึ่งบล็อก thread ของหน้าต่างหลักจนกว่าจะปิด print dialog → POS เหมือนค้าง (ออเดอร์/ตัดสต็อกบันทึกสำเร็จแล้ว แต่จอค้างที่ dialog)
+  - แก้: `handleCheckout` เปิดหน้าต่างพิมพ์แยก (`window.open` ภายใน user gesture ตอนคลิก) แล้วส่งเข้า `printReceipt` เป็น targetWindow → พิมพ์ในหน้าต่างนั้น หน้าต่าง POS หลักไม่ถูกบล็อก; ปิดหน้าต่างพิมพ์อัตโนมัติหลังพิมพ์/ถ้า checkout ล้มเหลว
+  - `ReceiptPrinter` targetWindow path: `document.open()` ก่อนเขียน + try/catch fallback ไป iframe
+  - ตรวจ: web `tsc` ผ่าน; ต้อง redeploy (push/promote) ให้ production ได้รับการแก้นี้
+  - หมายเหตุ: ถ้าเบราว์เซอร์บล็อก popup จะ fallback กลับไป iframe (บล็อกได้) → ผู้ใช้ควรอนุญาต pop-up ของโดเมนนี้ หรือใช้โหมด kiosk printing ของเบราว์เซอร์เพื่อพิมพ์เงียบ
+
 ## Progress log
 - 2026-06-16: เขียน roadmap; ทำ Phase A ส่วนแรก — Store Settings (model+API+UI), ใบกำกับภาษีอย่างย่อบนใบเสร็จ, พิมพ์บาร์โค้ด Code128, พักบิล/เรียกบิล
   - ไฟล์ที่เพิ่ม/แก้: prisma/schema.prisma (+model StoreSetting), migrations/202606160001_store_settings, src/store/settings.ts, src/store/index.ts, src/index.ts (routes), web/src/types.ts, web/src/api.ts, web/src/components/settings/StoreSettingsPanel.tsx, web/src/pages/SettingsPage.tsx, web/src/components/ReceiptPrinter.tsx, web/src/pages/POSPage.tsx, web/src/utils/barcode.ts, web/src/pages/InventoryPage.tsx, web/src/contexts/CartContext.tsx

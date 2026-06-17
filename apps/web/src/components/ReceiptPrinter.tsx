@@ -213,11 +213,16 @@ ${receiptHtml}
 </html>`;
 
   if (targetWindow) {
-    targetWindow.document.write(html);
-    targetWindow.document.close();
-    printWhenReady(targetWindow, targetWindow.document);
-    targetWindow.onafterprint = () => targetWindow.close();
-    return true;
+    try {
+      targetWindow.document.open();
+      targetWindow.document.write(html);
+      targetWindow.document.close();
+      printWhenReady(targetWindow, targetWindow.document);
+      targetWindow.onafterprint = () => targetWindow.close();
+      return true;
+    } catch {
+      // If writing to the pre-opened window fails, fall through to the iframe method.
+    }
   }
 
   const iframe = document.createElement("iframe");

@@ -308,6 +308,9 @@ export default function POSPage() {
 
   const handleCheckout = useCallback(async (cashReceived?: number, changeAmt?: number) => {
     if (cart.length === 0 || isSubmitting) return;
+    // Pre-open the receipt window inside the click gesture. Printing then happens in a
+    // SEPARATE window, so window.print() never blocks/freezes the main POS screen.
+    const receiptWindow = typeof window !== "undefined" ? window.open("", "bbpos_receipt", "width=380,height=640") : null;
     setIsSubmitting(true);
     const cartSnapshot = [...cart];
     const subtotalSnapshot = subtotal;
@@ -336,8 +339,11 @@ export default function POSPage() {
         cashReceived,
         changeAmount: changeAmt,
         storeSetting
-      }, activeBranch?.name || "Big B Coffee");
-      if (!printed) toast.error("พิมพ์ใบเสร็จไม่สำเร็จ กรุณาตรวจสอบการตั้งค่าปริ้นเตอร์");
+      }, activeBranch?.name || "Big B Coffee", receiptWindow);
+      if (!printed) {
+        receiptWindow?.close();
+        toast.error("พิมพ์ใบเสร็จไม่สำเร็จ กรุณาตรวจสอบการตั้งค่าปริ้นเตอร์");
+      }
       setSelectedMember(null);
       setMemberQuery("");
       setPendingPaymentConfirm(null);
@@ -345,6 +351,8 @@ export default function POSPage() {
         console.warn("[POS] refresh customers after checkout failed", error);
       });
     } catch {
+      // Checkout failed — close the blank receipt window we pre-opened.
+      receiptWindow?.close();
       // Checkout errors are already surfaced by the cart context.
     } finally {
       setIsSubmitting(false);

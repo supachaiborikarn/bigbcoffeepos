@@ -409,6 +409,7 @@ export type StoreSetting = {
   vatMode: VatMode;
   vatRate: number;
   paymentMethods: PaymentMethod[];
+  allowNegativeStock: boolean;
 };
 
 export type CartItem = {

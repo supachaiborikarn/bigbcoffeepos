@@ -14,6 +14,7 @@ export interface StoreSettingDTO {
   vatMode: VatMode;
   vatRate: number;
   paymentMethods: string[];
+  allowNegativeStock: boolean;
 }
 
 export interface StoreSettingInput {
@@ -27,6 +28,7 @@ export interface StoreSettingInput {
   vatMode?: VatMode;
   vatRate?: number;
   paymentMethods?: string[];
+  allowNegativeStock?: boolean;
 }
 
 const DEFAULT_PAYMENT_METHODS = ["CASH", "QR", "CARD"];
@@ -61,6 +63,7 @@ type StoreSettingRow = {
   vatMode: string;
   vatRate: number;
   paymentMethods: string;
+  allowNegativeStock?: boolean;
 };
 
 function toDTO(row: StoreSettingRow): StoreSettingDTO {
@@ -75,7 +78,8 @@ function toDTO(row: StoreSettingRow): StoreSettingDTO {
     receiptFooter: row.receiptFooter,
     vatMode: normalizeVatMode(row.vatMode),
     vatRate: row.vatRate,
-    paymentMethods: parsePaymentMethods(row.paymentMethods)
+    paymentMethods: parsePaymentMethods(row.paymentMethods),
+    allowNegativeStock: Boolean(row.allowNegativeStock)
   };
 }
 
@@ -91,7 +95,8 @@ function defaults(branchId: number): StoreSettingDTO {
     receiptFooter: "ขอบคุณที่ใช้บริการ",
     vatMode: "INCLUSIVE",
     vatRate: 7,
-    paymentMethods: [...DEFAULT_PAYMENT_METHODS]
+    paymentMethods: [...DEFAULT_PAYMENT_METHODS],
+    allowNegativeStock: false
   };
 }
 
@@ -116,8 +121,10 @@ export async function updateStoreSetting(branchId: number, input: StoreSettingIn
     const cleaned = input.paymentMethods.filter((x) => VALID_PAYMENT_METHODS.has(x));
     data.paymentMethods = JSON.stringify(cleaned.length > 0 ? cleaned : DEFAULT_PAYMENT_METHODS);
   }
+  if (input.allowNegativeStock !== undefined) data.allowNegativeStock = input.allowNegativeStock;
 
-  const row = await prisma.storeSetting.upsert({
+  // Cast to any so the build passes before `prisma generate` adds the new column type.
+  const row = await (prisma as any).storeSetting.upsert({
     where: { branchId },
     create: { branchId, ...data },
     update: data

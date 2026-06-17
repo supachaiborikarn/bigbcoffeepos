@@ -311,8 +311,21 @@ async function addModifierStockRequirementsForItems(tx: any, requiredStock: Map<
   }
 }
 
-async function applyStrictStockDecrements(tx: any, branchId: number, stock: Map<number, number>, orderId: number) {
+async function applyStrictStockDecrements(tx: any, branchId: number, stock: Map<number, number>, orderId: number, allowNegative = false) {
   if (stock.size === 0) return;
+
+  // Branches that allow negative stock (e.g. a new branch not yet stocked) skip the
+  // over-sell guard and decrement freely, mirroring the flexible-stock behavior.
+  if (allowNegative) {
+    for (const [ingredientId, requiredQty] of stock) {
+      await tx.ingredientStock.upsert({
+        where: { branchId_ingredientId: { branchId, ingredientId } },
+        update: { stockQty: { decrement: requiredQty } },
+        create: { branchId, ingredientId, stockQty: -requiredQty, reorderLevel: 0 }
+      });
+    }
+    return;
+  }
 
   for (const [ingredientId, requiredQty] of stock) {
     const decrementResult = await tx.ingredientStock.updateMany({
@@ -706,6 +719,8 @@ export async function createOrder(input: {
   if (storeSetting && !parsePaymentMethods(storeSetting.paymentMethods).includes(paymentMethod)) {
     throw new Error("วิธีชำระเงินนี้ถูกปิดไว้");
   }
+  // New/unstocked branches can opt in to selling without enough stock (stock can go negative).
+  const allowNegativeStock = (storeSetting as any)?.allowNegativeStock === true;
 
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
   const productUnitById = new Map<number, any>(productUnits.map((item: any) => [item.id, item]));
@@ -939,7 +954,7 @@ export async function createOrder(input: {
       }));
     }
 
-    await measureCheckoutStep("strictStock", () => applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id));
+    await measureCheckoutStep("strictStock", () => applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id, allowNegativeStock));
     await measureCheckoutStep("flexibleStock", () => applyFlexibleStockDecrements(tx, input.branchId, flexibleStock));
     await measureCheckoutStep("stockMovements", () => createSaleStockMovements(tx, input.branchId, newOrder.id, requiredStock, flexibleStock));
     await measureCheckoutStep("lotFefo", () => applyLotFefoDeductions(tx, input.branchId, requiredStock, flexibleStock));

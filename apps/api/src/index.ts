@@ -1147,6 +1147,7 @@ app.put("/api/settings/store", requireAdmin, async (req: AuthRequest, res) => {
   if (Array.isArray(body.paymentMethods)) {
     input.paymentMethods = body.paymentMethods.filter((x: unknown): x is string => typeof x === "string");
   }
+  if (typeof body.allowNegativeStock === "boolean") input.allowNegativeStock = body.allowNegativeStock;
 
   const settings = await updateStoreSetting(branchId, input);
   audit("settings.store.updated", req, { branchId });

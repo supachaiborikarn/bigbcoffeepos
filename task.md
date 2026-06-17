@@ -222,6 +222,19 @@ Current POSPOS customer scrape exposes only name and phone, but importer now acc
   - ตรวจ build สุดท้าย: `tsc --noEmit` ผ่านทั้ง api และ web → พร้อม push
   - ก่อน push: รัน `npm run build` + `npm run production-hardening:check` บนเครื่อง แล้ว push; ดึงข้อมูล POSPOS ด้วย `npm run sync:pospos` (ต้องตั้ง POSPOS_EMAIL/POSPOS_PASSWORD)
 
+## Feature log
+- 2026-06-16: เพิ่มฟีเจอร์ "อนุญาตขายแม้สต็อกไม่พอ (ขายติดลบ)" แบบเปิด/ปิดรายสาขา
+  - เหตุ: สาขาใหม่ (เช่น พงษ์อนันต์) วัตถุดิบสต็อก = 0 เกือบทั้งหมด → ระบบกันขายเกินสต็อก ขึ้น "สต็อกไม่พอ: วัตถุดิบ #... คงเหลือ 0" → ขายไม่ได้
+  - เพิ่มฟิลด์ `StoreSetting.allowNegativeStock` (default false) + migration `202606160004_allow_negative_stock`
+  - `createOrder`: ถ้า allowNegativeStock=true ของสาขานั้น → ตัดสต็อกแบบ upsert ปล่อยติดลบ ไม่ throw (เหมือน flexible stock)
+  - UI: เพิ่ม toggle ในหน้า ตั้งค่า → ข้อมูลร้าน/ใบเสร็จ (รายสาขา)
+  - ตรวจ: `tsc --noEmit` ผ่านทั้ง api/web
+  - **ลำดับ deploy สำคัญ (เป็น schema change):**
+    1. รัน migration บน DB production ก่อน: `npm run db:migrate --workspace apps/api` (ตั้ง DATABASE_URL=prod) — ALTER TABLE เพิ่มคอลัมน์ (backward-compatible กับโค้ดเก่า)
+    2. แล้วค่อย push → Vercel deploy โค้ดใหม่ (build รัน prisma generate)
+    3. เข้า ตั้งค่า → ข้อมูลร้าน เลือกสาขาใหม่ → ติ๊ก "อนุญาตขายแม้สต็อกไม่พอ" → บันทึก → ขายได้เลย
+    - ถ้า deploy โค้ดใหม่ก่อนรัน migration: storeSetting.findUnique จะ select คอลัมน์ที่ยังไม่มี → error ดังนั้นต้อง migrate ก่อน
+
 ## Bugfix log
 - 2026-06-16: แก้บั๊ก "POS ค้างตอนกดรับเงิน+พิมพ์ใบเสร็จ"
   - สาเหตุ: `printReceipt` ถูกเรียกแบบไม่มี targetWindow → ใช้ iframe + `window.print()` ซึ่งบล็อก thread ของหน้าต่างหลักจนกว่าจะปิด print dialog → POS เหมือนค้าง (ออเดอร์/ตัดสต็อกบันทึกสำเร็จแล้ว แต่จอค้างที่ dialog)

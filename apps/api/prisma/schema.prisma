@@ -373,6 +373,7 @@ model StoreSetting {
   vatMode        String   @default("INCLUSIVE") @map("vat_mode")
   vatRate        Float    @default(7) @map("vat_rate")
   paymentMethods String   @default("[\"CASH\",\"QR\",\"CARD\"]") @map("payment_methods")
+  allowNegativeStock Boolean @default(false) @map("allow_negative_stock")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 

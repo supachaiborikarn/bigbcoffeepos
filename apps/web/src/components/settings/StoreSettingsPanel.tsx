@@ -86,7 +86,8 @@ export default function StoreSettingsPanel() {
         receiptFooter: form.receiptFooter,
         vatMode: form.vatMode,
         vatRate: form.vatRate,
-        paymentMethods: form.paymentMethods
+        paymentMethods: form.paymentMethods,
+        allowNegativeStock: form.allowNegativeStock
       });
       setForm(saved);
       toast.success("บันทึกข้อมูลร้านแล้ว");
@@ -190,6 +191,23 @@ export default function StoreSettingsPanel() {
                 </label>
               ))}
             </div>
+          </div>
+
+          <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 12 }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={form.allowNegativeStock}
+                onChange={(e) => setField("allowNegativeStock", e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                <strong>อนุญาตขายแม้สต็อกไม่พอ (ขายติดลบได้)</strong>
+                <span style={{ display: "block", fontSize: 12, color: "var(--muted)" }}>
+                  เปิดไว้สำหรับสาขาใหม่ที่ยังไม่ได้ลงสต็อก — ระบบจะให้ขายได้และตัดสต็อกเป็นค่าติดลบ พอเติมสต็อกครบแล้วค่อยปิดเพื่อกันขายเกิน
+                </span>
+              </span>
+            </label>
           </div>
 
           <div>

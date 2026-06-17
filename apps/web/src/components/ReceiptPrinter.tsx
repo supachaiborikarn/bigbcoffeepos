@@ -15,6 +15,8 @@ type ReceiptData = {
   cashReceived?: number;
   changeAmount?: number;
   storeSetting?: StoreSetting | null;
+  copies?: number;
+  copyLabels?: string[];
 };
 
 function formatMoney(v: number) {
@@ -25,22 +27,11 @@ function formatMoney2(v: number) {
   return new Intl.NumberFormat("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 }
 
-function wrapText(text: string, width: number): string[] {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  const out: string[] = [];
-  let line = "";
-  for (const word of words) {
-    if (!line) {
-      line = word;
-    } else if ((line + " " + word).length <= width) {
-      line += " " + word;
-    } else {
-      out.push(line);
-      line = word;
-    }
-  }
-  if (line) out.push(line);
-  return out;
+function paymentLabel(method: string) {
+  if (method === "CASH") return "เงินสด";
+  if (method === "QR") return "QR / โอนเงิน";
+  if (method === "CARD") return "บัตรเครดิต/เดบิต";
+  return "e-Wallet";
 }
 
 function escapeHtml(value: unknown) {
@@ -52,16 +43,77 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#39;");
 }
 
-function padRight(s: string, len: number) {
-  return s.length >= len ? s.slice(0, len) : s + " ".repeat(len - s.length);
-}
+function renderSlip(data: ReceiptData, branchName: string, copyLabel?: string) {
+  const ss = data.storeSetting ?? null;
+  const shopName = escapeHtml(ss?.shopName?.trim() || "Big B Coffee");
+  const hasTaxId = Boolean(ss?.taxId?.trim());
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
+  const timeStr = now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
 
-function padLeft(s: string, len: number) {
-  return s.length >= len ? s : " ".repeat(len - s.length) + s;
-}
+  const sub: string[] = [];
+  if (ss?.branchLabel?.trim()) sub.push(escapeHtml(ss.branchLabel.trim()));
+  if (ss?.addressLine?.trim()) sub.push(escapeHtml(ss.addressLine.trim()));
+  if (ss?.phone?.trim()) sub.push("โทร. " + escapeHtml(ss.phone.trim()));
+  if (hasTaxId) sub.push("เลขภาษี " + escapeHtml(ss!.taxId.trim()));
+  if (ss?.receiptHeader?.trim()) sub.push(escapeHtml(ss.receiptHeader.trim()));
 
-function fitLine(s: string, len: number) {
-  return s.length <= len ? s : s.slice(0, len);
+  const itemsHtml = data.cart.map((item) => {
+    const modTotal = item.modifiers.reduce((s, m) => s + (m.price || 0), 0);
+    const unit = item.basePrice + modTotal;
+    const line = unit * item.qty;
+    const parts = [`x${item.qty} @ ${formatMoney(unit)}`];
+    const mods = item.modifiers.map((m) => escapeHtml(m.value)).filter(Boolean).join(" · ");
+    if (mods) parts.push(mods);
+    if (item.note) parts.push(escapeHtml(item.note));
+    return `<div class="r-item">
+      <div class="r-item-top"><span class="r-item-name">${escapeHtml(item.name)}</span><span>${formatMoney(line)}</span></div>
+      <div class="r-item-sub">${parts.join(" · ")}</div>
+    </div>`;
+  }).join("");
+
+  const rows: string[] = [`<div class="r-row"><span>ยอดรวม</span><span>${formatMoney(data.subtotal)}</span></div>`];
+  if (data.discountAmount > 0) rows.push(`<div class="r-row"><span>ส่วนลด</span><span>-${formatMoney(data.discountAmount)}</span></div>`);
+  if (data.pointsUsed > 0) rows.push(`<div class="r-row"><span>แลกแต้ม</span><span>-${formatMoney(data.pointsUsed)}</span></div>`);
+
+  const vatMode = ss?.vatMode ?? "INCLUSIVE";
+  const vatRate = ss?.vatRate ?? 0;
+  let vatHtml = "";
+  if (vatMode !== "NONE" && vatRate > 0 && data.total > 0) {
+    const vat = Math.round((data.total * vatRate / (100 + vatRate)) * 100) / 100;
+    const base = Math.round((data.total - vat) * 100) / 100;
+    vatHtml = `<div class="r-row r-muted"><span>มูลค่าสินค้า</span><span>${formatMoney2(base)}</span></div>` +
+      `<div class="r-row r-muted"><span>VAT ${vatRate}%</span><span>${formatMoney2(vat)}</span></div>`;
+  }
+
+  let payHtml = `<div class="r-row"><span>ชำระโดย</span><span>${paymentLabel(data.paymentMethod)}</span></div>`;
+  if (data.cashReceived != null && data.changeAmount != null) {
+    payHtml += `<div class="r-row"><span>รับเงิน</span><span>${formatMoney(data.cashReceived)}</span></div>` +
+      `<div class="r-row"><span>เงินทอน</span><span>${formatMoney(data.changeAmount)}</span></div>`;
+  }
+
+  const copyHtml = copyLabel ? `<div class="r-copy">${escapeHtml(copyLabel)}</div>` : "";
+  const title = hasTaxId ? "ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ" : "ใบเสร็จรับเงิน";
+  const footer = escapeHtml(ss?.receiptFooter?.trim() || "ขอบคุณที่ใช้บริการ");
+
+  return `
+    <img class="r-logo" src="${escapeHtml(logoUrl)}" alt="" />
+    <div class="r-shop">${shopName}</div>
+    <div class="r-sub">${escapeHtml(branchName)}</div>
+    ${sub.map((s) => `<div class="r-sub">${s}</div>`).join("")}
+    <div class="r-title">${title}</div>
+    ${copyHtml}
+    <div class="r-meta"><span>บิล #${data.order.id}</span><span>${dateStr} ${timeStr}</span></div>
+    <div class="r-div"></div>
+    ${itemsHtml}
+    <div class="r-div"></div>
+    ${rows.join("")}
+    <div class="r-total"><span>ยอดสุทธิ</span><span>฿${formatMoney(data.total)}</span></div>
+    ${vatHtml}
+    <div class="r-div"></div>
+    ${payHtml}
+    <div class="r-foot">${footer}<br/>${shopName}</div>
+  `;
 }
 
 function printWhenReady(printWindow: Window, printDocument: Document) {
@@ -95,87 +147,13 @@ function printWhenReady(printWindow: Window, printDocument: Document) {
 }
 
 export function printReceipt(data: ReceiptData, branchName: string, targetWindow?: Window | null) {
-  const W = 30; // 58mm card-slip width at small thermal text
-  const LINE = "─".repeat(W);
-  const DLINE = "═".repeat(W);
-
-  const now = new Date();
-  const dateStr = now.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
-  const timeStr = now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
-
-  const lines: string[] = [];
-  const add = (s: string) => lines.push(s);
-  const center = (s: string) => {
-    const text = fitLine(s, W);
-    const pad = Math.max(0, Math.floor((W - text.length) / 2));
-    add(" ".repeat(pad) + text);
-  };
-
-  const ss = data.storeSetting ?? null;
-  const shopName = ss?.shopName?.trim() || "Big B Coffee";
-  const hasTaxId = Boolean(ss?.taxId?.trim());
-
-  center(shopName);
-  center(branchName);
-  if (ss?.branchLabel?.trim()) center(ss.branchLabel);
-  if (ss?.addressLine?.trim()) wrapText(ss.addressLine, W).forEach((l) => center(l));
-  if (ss?.phone?.trim()) center(`โทร. ${ss.phone.trim()}`);
-  if (hasTaxId) center(`เลขภาษี ${ss!.taxId.trim()}`);
-  if (ss?.receiptHeader?.trim()) wrapText(ss.receiptHeader, W).forEach((l) => center(l));
-  add(LINE);
-  center(hasTaxId ? "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" : "ใบเสร็จรับเงิน");
-  add(`บิล #${data.order.id}`);
-  add(`${dateStr} ${timeStr}`);
-  add(DLINE);
-
-  for (const item of data.cart) {
-    const name = padRight(item.name, W - 12);
-    const qty = `x${item.qty}`;
-    const price = padLeft(`${formatMoney(item.basePrice * item.qty)}`, 8);
-    add(`${name}`);
-    add(`  ${qty}${padLeft(price, W - qty.length - 2)}`);
+  const copies = Math.max(1, Math.floor(data.copies ?? 1));
+  const labels = data.copyLabels ?? [];
+  const slips: string[] = [];
+  for (let i = 0; i < copies; i++) {
+    const breakClass = i < copies - 1 ? " r-slip--break" : "";
+    slips.push(`<div class="r-slip${breakClass}">${renderSlip(data, branchName, labels[i])}</div>`);
   }
-
-  add(LINE);
-  add(`${padRight("ยอดรวม", W - 10)}${padLeft(formatMoney(data.subtotal), 10)}`);
-
-  if (data.discountAmount > 0) {
-    add(`${padRight("ส่วนลด", W - 10)}${padLeft("-" + formatMoney(data.discountAmount), 10)}`);
-  }
-  if (data.pointsUsed > 0) {
-    add(`${padRight("แลกแต้ม", W - 10)}${padLeft("-" + formatMoney(data.pointsUsed), 10)}`);
-  }
-
-  add(DLINE);
-  add(`${padRight("ยอดสุทธิ", W - 10)}${padLeft(formatMoney(data.total), 10)}`);
-
-  // VAT breakdown (embedded VAT) for abbreviated tax invoice
-  const vatMode = ss?.vatMode ?? "INCLUSIVE";
-  const vatRate = ss?.vatRate ?? 0;
-  if (vatMode !== "NONE" && vatRate > 0 && data.total > 0) {
-    const vat = Math.round((data.total * vatRate / (100 + vatRate)) * 100) / 100;
-    const base = Math.round((data.total - vat) * 100) / 100;
-    add(`${padRight("มูลค่าสินค้า", W - 12)}${padLeft(formatMoney2(base), 12)}`);
-    add(`${padRight(`VAT ${vatRate}%`, W - 12)}${padLeft(formatMoney2(vat), 12)}`);
-  }
-  add("");
-
-  const methodLabel = data.paymentMethod === "CASH" ? "เงินสด" : data.paymentMethod === "QR" ? "โอนเงิน" : data.paymentMethod === "CARD" ? "บัตรเครดิต" : "E-Wallet";
-  add(`ชำระ: ${methodLabel}`);
-
-  if (data.cashReceived && data.changeAmount !== undefined) {
-    add(`รับเงิน: ${formatMoney(data.cashReceived)}`);
-    add(`เงินทอน: ${formatMoney(data.changeAmount)}`);
-  }
-
-  add(LINE);
-  center(ss?.receiptFooter?.trim() || "ขอบคุณที่อุดหนุนค่ะ");
-  center(shopName);
-  add("");
-
-  // Build print HTML
-  const receiptHtml = lines.map(l => `<div>${l ? escapeHtml(l) : "&nbsp;"}</div>`).join("\n");
-  const safeLogoUrl = escapeHtml(logoUrl);
 
   const html = `<!DOCTYPE html>
 <html lang="th">
@@ -184,32 +162,29 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
   <title>Receipt #${data.order.id}</title>
   <style>
     @page { margin: 0; size: 58mm auto; }
-    body {
-      box-sizing: border-box;
-      margin: 0; padding: 3mm 2mm;
-      font-family: 'Courier New', monospace;
-      font-size: 10.5px; line-height: 1.35;
-      width: 58mm;
-    }
-    .receipt-logo {
-      display: block;
-      width: 22mm;
-      height: auto;
-      margin: 0 auto 1.5mm;
-      image-rendering: auto;
-      print-color-adjust: exact;
-      -webkit-print-color-adjust: exact;
-    }
-    div { white-space: pre; }
-    @media screen {
-      body { max-width: 220px; margin: 20px auto; border: 1px dashed #ccc; padding: 12px; background: #fff; }
-    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 0; font-family: 'IBM Plex Sans Thai', 'Sarabun', 'Prompt', sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .r-slip { width: 58mm; padding: 4mm 3mm 7mm; }
+    .r-slip--break { page-break-after: always; }
+    .r-logo { display: block; width: 18mm; height: auto; margin: 0 auto 1mm; image-rendering: auto; }
+    .r-shop { text-align: center; font-size: 16px; font-weight: 700; line-height: 1.2; }
+    .r-sub { text-align: center; font-size: 10px; line-height: 1.35; }
+    .r-title { text-align: center; font-size: 11px; font-weight: 700; margin-top: 2mm; }
+    .r-copy { text-align: center; font-size: 12px; font-weight: 800; border: 1.5px solid #000; border-radius: 4px; padding: 1mm 0; margin: 1.5mm 0 0; letter-spacing: 1px; }
+    .r-meta { display: flex; justify-content: space-between; font-size: 10px; margin-top: 1.5mm; }
+    .r-div { border-top: 1px dashed #000; margin: 1.5mm 0; }
+    .r-item { margin: 1.2mm 0; }
+    .r-item-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; font-weight: 600; }
+    .r-item-name { overflow-wrap: anywhere; }
+    .r-item-sub { font-size: 9.5px; color: #333; margin-top: 0.3mm; }
+    .r-row { display: flex; justify-content: space-between; font-size: 11px; line-height: 1.5; }
+    .r-muted { color: #444; font-size: 10px; }
+    .r-total { display: flex; justify-content: space-between; align-items: center; font-size: 16px; font-weight: 800; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 1.2mm 0; margin: 1.2mm 0; }
+    .r-foot { text-align: center; font-size: 10px; margin-top: 3mm; line-height: 1.5; }
+    @media screen { body { background: #f3f4f6; } .r-slip { background: #fff; margin: 12px auto; box-shadow: 0 1px 6px rgba(0,0,0,0.15); } }
   </style>
 </head>
-<body>
-<img class="receipt-logo" src="${safeLogoUrl}" alt="Big B Coffee" />
-${receiptHtml}
-</body>
+<body>${slips.join("")}</body>
 </html>`;
 
   if (targetWindow) {

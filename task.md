@@ -235,6 +235,13 @@ Current POSPOS customer scrape exposes only name and phone, but importer now acc
     3. เข้า ตั้งค่า → ข้อมูลร้าน เลือกสาขาใหม่ → ติ๊ก "อนุญาตขายแม้สต็อกไม่พอ" → บันทึก → ขายได้เลย
     - ถ้า deploy โค้ดใหม่ก่อนรัน migration: storeSetting.findUnique จะ select คอลัมน์ที่ยังไม่มี → error ดังนั้นต้อง migrate ก่อน
 
+## Feature log (receipt)
+- 2026-06-16: ออกแบบใบเสร็จใหม่ + พิมพ์หลายใบสำหรับบ่อถ่าย
+  - ใบเสร็จเปลี่ยนจาก monospace (Courier) เป็น layout HTML สไตล์สวยขึ้น: โลโก้ + ชื่อร้านตัวใหญ่ + ที่อยู่/เลขภาษี, หัวข้อใบกำกับภาษีอย่างย่อ, รายการแบบ flex (ชื่อ-ราคาชิดขอบ) + ตัวเลือก/หมายเหตุใต้รายการ, กล่องยอดสุทธิเส้นหนา, แยก VAT, ฟอนต์ไทย IBM Plex Sans Thai (ReceiptPrinter.tsx `renderSlip`)
+  - สาขา oil_service (บ่อถ่าย) พิมพ์ **3 ใบแยกกัน** ต่อบิล: "สำหรับสำนักงาน" / "สำหรับร้าน (เก็บที่บ่อ)" / "สำหรับลูกค้า" — แต่ละใบมีป้ายกำกับชัด คั่นด้วย page-break (printReceipt รับ copies/copyLabels; POSPage ตั้งให้ตาม branchType)
+  - สาขาอื่นพิมพ์ 1 ใบตามปกติ
+  - ตรวจ: web `tsc` ผ่าน; ต้อง redeploy ให้มีผล
+
 ## Bugfix log
 - 2026-06-16: แก้บั๊ก "POS ค้างตอนกดรับเงิน+พิมพ์ใบเสร็จ"
   - สาเหตุ: `printReceipt` ถูกเรียกแบบไม่มี targetWindow → ใช้ iframe + `window.print()` ซึ่งบล็อก thread ของหน้าต่างหลักจนกว่าจะปิด print dialog → POS เหมือนค้าง (ออเดอร์/ตัดสต็อกบันทึกสำเร็จแล้ว แต่จอค้างที่ dialog)

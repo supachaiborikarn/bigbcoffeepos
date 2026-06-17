@@ -338,7 +338,12 @@ export default function POSPage() {
         paymentMethod,
         cashReceived,
         changeAmount: changeAmt,
-        storeSetting
+        storeSetting,
+        // บ่อถ่ายน้ำมัน (oil_service): พิมพ์ 3 ใบแยก — สำนักงาน / ร้าน / ลูกค้า
+        copies: activeBranch?.branchType === "oil_service" ? 3 : 1,
+        copyLabels: activeBranch?.branchType === "oil_service"
+          ? ["สำหรับสำนักงาน", "สำหรับร้าน (เก็บที่บ่อ)", "สำหรับลูกค้า"]
+          : undefined
       }, activeBranch?.name || "Big B Coffee", receiptWindow);
       if (!printed) {
         receiptWindow?.close();

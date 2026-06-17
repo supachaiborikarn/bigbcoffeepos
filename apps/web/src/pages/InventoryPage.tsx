@@ -314,7 +314,7 @@ export default function InventoryPage() {
   };
 
   const lowStockItems = useMemo(
-    () => inventory.filter((item) => item.stockQty <= item.reorderLevel),
+    () => inventory.filter((item) => item.reorderLevel > 0 && item.stockQty <= item.reorderLevel),
     [inventory]
   );
 

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { getOrders, updateOrderStatus } from "../api";
+import { getOrders, updateOrderStatus, getStoreSetting } from "../api";
+import { printReceipt } from "../components/ReceiptPrinter";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
-import type { Order, OrderStatus, PaymentMethod } from "../types";
-import { Ban, CheckCircle2, Clock, Filter, Search, ShoppingBag } from "lucide-react";
+import type { Order, OrderStatus, PaymentMethod, StoreSetting } from "../types";
+import { Ban, CheckCircle2, Clock, Filter, Printer, Search, ShoppingBag } from "lucide-react";
 
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   CASH: "เงินสด",
@@ -55,6 +56,43 @@ export default function OrdersPage() {
   useEffect(() => {
     refresh();
   }, [activeBranch?.id]);
+
+  async function reprint(order: Order) {
+    // Open the print window inside the click gesture so it never blocks the page.
+    const win = typeof window !== "undefined" ? window.open("", "bbpos_receipt", "width=380,height=640") : null;
+    let storeSetting: StoreSetting | null = null;
+    try { storeSetting = await getStoreSetting(order.branchId); } catch { /* fall back to defaults */ }
+    const isOil = activeBranch?.branchType === "oil_service";
+    const cart = order.items.map((it) => ({
+      id: String(it.id),
+      menuItemId: it.menuItemId,
+      name: it.name,
+      category: "",
+      basePrice: it.basePrice,
+      qty: it.qty,
+      modifiers: it.modifiers ?? [],
+      note: it.note
+    }));
+    const printed = printReceipt({
+      order,
+      cart,
+      discountRules: [],
+      subtotal: order.subtotal,
+      discountAmount: order.discountAmount,
+      total: order.total,
+      pointsUsed: order.loyaltyPointsUsed,
+      paymentMethod: order.paymentMethod,
+      storeSetting,
+      copies: isOil ? 3 : 1,
+      copyLabels: isOil
+        ? ["สำเนา · สำหรับสำนักงาน", "สำเนา · สำหรับร้าน (เก็บที่บ่อ)", "สำเนา · สำหรับลูกค้า"]
+        : ["สำเนาใบเสร็จ"]
+    }, activeBranch?.name || "Big B Coffee", win);
+    if (!printed) {
+      win?.close();
+      toast.error("พิมพ์ใบเสร็จไม่สำเร็จ กรุณาอนุญาต pop-up ของเว็บนี้");
+    }
+  }
 
   const operationalOrders = useMemo(() => {
     if (activeShift) return orders.filter((order) => order.shiftId === activeShift.id);
@@ -183,6 +221,9 @@ export default function OrdersPage() {
                 <div style={{ borderTop: "1px dashed var(--border)", paddingTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontWeight: 700, fontSize: 16 }}>{formatMoney(order.total)}</span>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => reprint(order)}>
+                      <Printer size={16} /> พิมพ์ซ้ำ
+                    </button>
                     {order.status === "PAID" && (
                       <button className="btn btn--primary" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => setReady(order)}>
                         <CheckCircle2 size={16} /> เสร็จสิ้น

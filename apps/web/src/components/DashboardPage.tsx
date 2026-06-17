@@ -51,7 +51,7 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
     getUsers().then((users) => setStaffCount(users.filter((u) => u.active !== false).length)).catch(() => {});
     if (resolvedBranchId) {
       getInventory(resolvedBranchId)
-        .then((items) => setInventory(items.filter((i) => i.stockQty <= i.reorderLevel)))
+        .then((items) => setInventory(items.filter((i) => i.reorderLevel > 0 && i.stockQty <= i.reorderLevel)))
         .catch(() => setInventory([]));
       getShifts(resolvedBranchId)
         .then((items) => setShifts(items.slice(0, 5)))

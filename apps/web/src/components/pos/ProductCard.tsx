@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { MenuItem } from "../../types";
 
 type Props = {
@@ -40,14 +41,10 @@ function isTopSeller(item: MenuItem) {
   return TOP_SELLER_LABELS.some((label) => `${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""}`.toLowerCase().includes(label));
 }
 
-function initial(name: string) {
-  const trimmed = name.trim();
-  return trimmed ? trimmed.charAt(0).toUpperCase() : "·";
-}
-
 export default function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
+  const [imgError, setImgError] = useState(false);
   const topSeller = isTopSeller(item);
-  const hasPhoto = Boolean(item.imageUrl?.trim());
+  const hasPhoto = Boolean(item.imageUrl?.trim()) && !imgError;
   const metaLabel = variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || item.category;
 
   return (
@@ -57,17 +54,17 @@ export default function ProductCard({ item, onClick, variantCount = 0, priceLabe
       onClick={() => onClick(item)}
       aria-label={`เพิ่ม ${item.name}`}
     >
-      <div className="menu-card__thumb" aria-hidden="true">
+      <div className={`menu-card__thumb${hasPhoto ? "" : " menu-card__thumb--text"}`}>
         {hasPhoto ? (
-          <img src={item.imageUrl ?? ""} alt="" loading="lazy" />
+          <img src={item.imageUrl ?? ""} alt="" loading="lazy" onError={() => setImgError(true)} />
         ) : (
-          <span className="menu-card__thumb-initial">{initial(item.name)}</span>
+          <span className="menu-card__thumb-name">{item.name}</span>
         )}
         {topSeller && <span className="menu-card__flag">ขายดี</span>}
         {metaLabel && <span className="menu-card__meta menu-card__meta--corner">{metaLabel}</span>}
       </div>
 
-      <span className="menu-card__name menu-card__name--pos">{item.name}</span>
+      {hasPhoto && <span className="menu-card__name menu-card__name--pos">{item.name}</span>}
 
       <span className="menu-card__price menu-card__price--pos">{priceLabel ?? formatter.format(item.basePrice)}</span>
     </button>

@@ -12,6 +12,7 @@ import {
   UserCircle,
   ShoppingBag,
   ClipboardList,
+  Database,
 } from "lucide-react";
 import BrandLogo from "../BrandLogo";
 
@@ -26,6 +27,7 @@ const navItems = [
   { to: "/staff", label: "พนักงาน", icon: Users, minRole: 3 },
   { to: "/reports", label: "รายงาน", icon: BarChart3, minRole: 2 },
   { to: "/parity", label: "งานเพิ่มเติม", icon: ClipboardList, minRole: 2 },
+  { to: "/migration", label: "ย้ายข้อมูล", icon: Database, minRole: 3 },
   { to: "/queue", label: "คิวครัว", icon: ShoppingBag, minRole: 1 },
   { to: "/settings", label: "ตั้งค่า", icon: Settings, minRole: 3 },
 ];

@@ -1,3 +1,4 @@
+import "./src/env.js";
 import { syncPosposData } from "./src/scripts/pospos-sync.js";
 
 const ALL_BRANCHES = [1, 3, 4]; // วัชรเกียรติ, ศุภชัย, บ่อถ่ายน้ำมันเครื่อง

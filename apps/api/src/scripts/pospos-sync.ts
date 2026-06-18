@@ -1,4 +1,4 @@
-import { chromium, type Page } from "playwright";
+import { chromium as playwrightChromium, type Browser, type Page } from "playwright";
 import prisma from "../prisma.js";
 import { classifyMenuItem } from "../utils/menu-data-cleaning.js";
 
@@ -101,6 +101,18 @@ const BRANCH_TYPE_MAP: Record<number, string> = {
 
 // ── Main Sync Function ───────────────────────────────────────────────────────
 
+async function launchSyncBrowser(): Promise<Browser> {
+  const isServerless = process.env.VERCEL === "1" || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+  if (!isServerless) return playwrightChromium.launch({ headless: true });
+
+  const chromium = (await import("@sparticuz/chromium")).default;
+  return playwrightChromium.launch({
+    args: chromium.args,
+    executablePath: await chromium.executablePath(),
+    headless: true,
+  });
+}
+
 export async function syncPosposData(branchId: number) {
   console.log(`\n${"═".repeat(60)}`);
   console.log(`  POSPOS Sync — Branch ${branchId}`);
@@ -114,7 +126,7 @@ export async function syncPosposData(branchId: number) {
     throw new Error("POSPOS_EMAIL and POSPOS_PASSWORD are required for POSPOS sync");
   }
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchSyncBrowser();
   const context = await browser.newContext({ acceptDownloads: true });
   const page = await context.newPage();
 

@@ -9,6 +9,12 @@
       "use": "@vercel/node"
     }
   ],
+  "functions": {
+    "src/index.ts": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
+    }
+  },
   "routes": [
     {
       "src": "/api/(.*)",

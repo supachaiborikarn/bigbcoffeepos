@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getOrders, updateOrderStatus, getStoreSetting } from "../api";
 import { printReceipt } from "../components/ReceiptPrinter";
+import { isNativePrintAvailable } from "../utils/nativePrinter";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
@@ -59,7 +60,10 @@ export default function OrdersPage() {
 
   async function reprint(order: Order) {
     // Open the print window inside the click gesture so it never blocks the page.
-    const win = typeof window !== "undefined" ? window.open("", "bbpos_receipt", "width=380,height=640") : null;
+    // In the native wrapper the Star SDK prints directly, so skip the blank window.
+    const win = (!isNativePrintAvailable() && typeof window !== "undefined")
+      ? window.open("", "bbpos_receipt", "width=380,height=640")
+      : null;
     let storeSetting: StoreSetting | null = null;
     try { storeSetting = await getStoreSetting(order.branchId); } catch { /* fall back to defaults */ }
     const isOil = activeBranch?.branchType === "oil_service";

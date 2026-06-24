@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { CartItem, DiscountRule, Order, StoreSetting } from "../types";
 import Numpad from "./ui/Numpad";
 import { logoUrl } from "./BrandLogo";
+import { isNativePrintAvailable, sendReceiptToNative } from "../utils/nativePrinter";
 
 type ReceiptData = {
   order: Order;
@@ -187,6 +188,18 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
 <body>${slips.join("")}</body>
 </html>`;
 
+  // Native iOS wrapper present → hand the rendered receipt HTML to the Star
+  // printer SDK (USB) instead of the browser's AirPrint-only window.print().
+  // The native side rasterises this exact HTML, so Thai text prints perfectly.
+  if (isNativePrintAvailable()) {
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const sent = sendReceiptToNative({ type: "receipt", html, widthMm: 58, copies, baseUrl, billId: data.order.id });
+    if (sent) {
+      targetWindow?.close();
+      return true;
+    }
+  }
+
   if (targetWindow) {
     try {
       targetWindow.document.open();
@@ -250,21 +263,25 @@ export function CashDrawerModal({ total, isSubmitting = false, onConfirm, onCanc
   };
 
   return (
-    <div className="modal-backdrop" onClick={() => { if (!isSubmitting) onCancel(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
-      <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", padding: "32px", borderRadius: "16px", background: "var(--surface)" }}>
-        <h2 style={{ marginBottom: "8px" }}>💰 รับเงินสด</h2>
-        <p className="muted" style={{ marginBottom: "16px" }}>ยอดที่ต้องชำระ: <strong style={{ color: "var(--accent-dark)", fontSize: "20px" }}>฿{formatMoney(total)}</strong></p>
+    <div
+      className="modal-backdrop modal-backdrop--scroll"
+      onClick={() => { if (!isSubmitting) onCancel(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 9999, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "16px" }}
+    >
+      <div className="panel cash-modal" onClick={e => e.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", margin: "auto", background: "var(--bg-surface)" }}>
+        <h2 className="cash-modal__title">💰 รับเงินสด</h2>
+        <p className="muted cash-modal__total">ยอดที่ต้องชำระ: <strong>฿{formatMoney(total)}</strong></p>
 
-        <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <div className="cash-modal__quick">
           {QUICK_AMOUNTS.map(amt => (
-            <button key={amt} className="btn btn--ghost" style={{ flex: 1, minWidth: "60px" }}
+            <button key={amt} className="btn btn--ghost"
               disabled={isSubmitting}
               onClick={() => setReceived(String(amt))}
             >
               ฿{amt}
             </button>
           ))}
-          <button className="btn btn--ghost" style={{ flex: 1, minWidth: "60px" }}
+          <button className="btn btn--ghost"
             disabled={isSubmitting}
             onClick={() => setReceived(String(total))}
           >
@@ -273,12 +290,11 @@ export function CashDrawerModal({ total, isSubmitting = false, onConfirm, onCanc
         </div>
 
         <input
-          className="input"
+          className="input cash-modal__display"
           type="text"
           readOnly
           value={received}
           placeholder="จำนวนเงินที่รับ"
-          style={{ width: "100%", fontSize: "32px", padding: "16px", textAlign: "right", marginBottom: "8px", fontWeight: "bold" }}
         />
 
         <Numpad
@@ -288,14 +304,14 @@ export function CashDrawerModal({ total, isSubmitting = false, onConfirm, onCanc
           enterLabel="ยืนยันรับเงิน"
         />
 
-        <div style={{ background: "var(--pos-bg)", padding: "20px", borderRadius: "12px", textAlign: "center", marginTop: "16px" }}>
-          <p className="muted" style={{ margin: 0 }}>เงินทอน</p>
-          <strong style={{ fontSize: "36px", color: isValid ? "var(--success)" : "#b5482b" }}>
+        <div className="cash-modal__change">
+          <p className="muted">เงินทอน</p>
+          <strong className={isValid ? "is-ok" : "is-low"}>
             ฿{formatMoney(change)}
           </strong>
         </div>
 
-        <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+        <div className="cash-modal__actions">
           <button className="btn btn--ghost btn--full" onClick={onCancel} disabled={isSubmitting}>ยกเลิก</button>
           <button className="btn btn--primary btn--full" onClick={submitPayment} disabled={!isValid || isSubmitting}>
             {isSubmitting ? "กำลังบันทึก..." : "รับเงินและพิมพ์ใบเสร็จ"}

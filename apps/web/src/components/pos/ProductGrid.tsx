@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import type { MenuItem } from "../../types";
 import ProductCard from "./ProductCard";
 import { isCupVariantMenuItem } from "../../utils/menuRules";
@@ -20,16 +20,20 @@ interface ProductGridProps {
 
 export default function ProductGrid({ menu, category, search, branchType, onItemClick }: ProductGridProps) {
   const [variantGroup, setVariantGroup] = useState<{ label: string; variants: MenuItem[] } | null>(null);
+  // Defer the search term so heavy grid filtering/re-rendering never blocks the
+  // search/scan input — keeps characters appearing instantly on iPad.
+  const deferredSearch = useDeferredValue(search);
   const visibleMenu = useMemo(() => {
+    const q = deferredSearch.trim().toLowerCase();
     return menu.filter((item) => {
       if (!item.active) return false;
       if (isCupVariantMenuItem(item)) return false;
       if (branchType && (item as Record<string, any>).branchType && (item as Record<string, any>).branchType !== branchType) return false;
       if (category !== "ทั้งหมด" && item.category !== category) return false;
-      if (search && !`${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.barcode ?? ""}`.toLowerCase().includes(search.toLowerCase())) return false;
+      if (q && !`${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.barcode ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [menu, category, search, branchType]);
+  }, [menu, category, deferredSearch, branchType]);
 
   const productTiles = useMemo(() => {
     const groups = new Map<string, MenuItem[]>();

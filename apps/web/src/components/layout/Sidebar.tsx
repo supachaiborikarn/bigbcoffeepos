@@ -13,6 +13,8 @@ import {
   ShoppingBag,
   ClipboardList,
   Database,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import BrandLogo from "../BrandLogo";
 
@@ -32,13 +34,18 @@ const navItems = [
   { to: "/settings", label: "ตั้งค่า", icon: Settings, minRole: 3 },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  collapsed?: boolean;
+  onToggle?: () => void;
+}
+
+export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const { user, logout } = useAuth();
   const { branches, activeBranch, setBranchId } = useBranch();
   const userLevel = ROLE_LEVEL[user?.role ?? "cashier"] ?? 0;
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
       {/* Brand */}
       <div className="sidebar__brand">
         <BrandLogo className="sidebar__brand-logo" />
@@ -46,6 +53,16 @@ export default function Sidebar() {
           <span className="sidebar__brand-name">Big B Coffee</span>
           <span className="sidebar__brand-sub">POS Platform</span>
         </div>
+        <button
+          type="button"
+          className="sidebar__toggle"
+          onClick={onToggle}
+          title={collapsed ? "ขยายเมนู" : "ย่อเมนู"}
+          aria-label={collapsed ? "ขยายเมนู" : "ย่อเมนู"}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
       </div>
 
       {/* Branch Selector */}
@@ -69,6 +86,7 @@ export default function Sidebar() {
             <NavLink
               key={item.to}
               to={item.to}
+              title={item.label}
               className={({ isActive }) =>
                 `sidebar__link ${isActive ? "sidebar__link--active" : ""}`
               }

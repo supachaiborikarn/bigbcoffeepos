@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { MenuItem } from "../../types";
 
 type Props = {
@@ -41,7 +41,7 @@ function isTopSeller(item: MenuItem) {
   return TOP_SELLER_LABELS.some((label) => `${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""}`.toLowerCase().includes(label));
 }
 
-export default function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
+function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
   const [imgError, setImgError] = useState(false);
   const topSeller = isTopSeller(item);
   const hasPhoto = Boolean(item.imageUrl?.trim()) && !imgError;
@@ -70,3 +70,7 @@ export default function ProductCard({ item, onClick, variantCount = 0, priceLabe
     </button>
   );
 }
+
+// Memoized so the product grid does not re-render every card on each keystroke
+// while scanning a barcode / typing in the search box (keeps iPad input snappy).
+export default memo(ProductCard);

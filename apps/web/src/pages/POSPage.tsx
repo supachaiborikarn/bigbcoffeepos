@@ -9,6 +9,7 @@ import { useCart } from "../contexts/CartContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import { CashDrawerModal, printReceipt } from "../components/ReceiptPrinter";
+import { isNativePrintAvailable } from "../utils/nativePrinter";
 import ProductGrid from "../components/pos/ProductGrid";
 import CartPanel from "../components/pos/CartPanel";
 import ModifierModal from "../components/pos/ModifierModal";
@@ -155,17 +156,6 @@ export default function POSPage() {
 
   const promotionCategories = useMemo(() => categories.filter((item) => item !== "ทั้งหมด"), [categories]);
 
-  const visibleMenu = useMemo(() => {
-    const bt = activeBranch?.branchType;
-    return menu.filter((item) => {
-      if (!item.active) return false;
-      if (bt && (item as Record<string, any>).branchType && (item as Record<string, any>).branchType !== bt) return false;
-      if (category !== "ทั้งหมด" && item.category !== category) return false;
-      if (search && !item.name.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    });
-  }, [menu, category, search, activeBranch]);
-
   const matchingCustomers = useMemo(() => {
     const query = memberQuery.trim().toLowerCase();
     if (!query) return customers.slice(0, 6);
@@ -310,7 +300,10 @@ export default function POSPage() {
     if (cart.length === 0 || isSubmitting) return;
     // Pre-open the receipt window inside the click gesture. Printing then happens in a
     // SEPARATE window, so window.print() never blocks/freezes the main POS screen.
-    const receiptWindow = typeof window !== "undefined" ? window.open("", "bbpos_receipt", "width=380,height=640") : null;
+    // In the native wrapper the Star SDK prints directly, so skip the blank window.
+    const receiptWindow = (!isNativePrintAvailable() && typeof window !== "undefined")
+      ? window.open("", "bbpos_receipt", "width=380,height=640")
+      : null;
     setIsSubmitting(true);
     const cartSnapshot = [...cart];
     const subtotalSnapshot = subtotal;
@@ -598,8 +591,8 @@ export default function POSPage() {
       )}
 
       {pendingPaymentConfirm && (
-        <div className="modal-backdrop" onClick={() => { if (!isSubmitting) setPendingPaymentConfirm(null); }} style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div className="panel" onClick={(event) => event.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", padding: 24, borderRadius: 12, background: "var(--bg-surface)" }}>
+        <div className="modal-backdrop" onClick={() => { if (!isSubmitting) setPendingPaymentConfirm(null); }} style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 20 }}>
+          <div className="panel" onClick={(event) => event.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", margin: "auto", padding: 24, borderRadius: 12, background: "var(--bg-surface)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
               <div>
                 <h2 style={{ fontSize: 20 }}>ยืนยันชำระเงิน {paymentLabels[pendingPaymentConfirm]}</h2>

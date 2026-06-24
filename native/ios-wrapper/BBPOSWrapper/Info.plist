@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist for the BBPOSWrapper iOS app.
+
+  The KEY line for USB Star printing is `UISupportedExternalAccessoryProtocols`
+  containing `jp.star-m.starpro`. Without it, iOS will not let the app talk to
+  the MFi Star printer over the Lightning/USB cable.
+
+  If you point AppConfig.posURL at an http:// LAN address while testing, also add
+  an NSAppTransportSecurity exception (see the commented block below). The
+  production Vercel URL is https, so no ATS change is needed for that.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Big B POS</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- ★ Required so the app can communicate with the USB Star printer (MFi). -->
+	<key>UISupportedExternalAccessoryProtocols</key>
+	<array>
+		<string>jp.star-m.starpro</string>
+	</array>
+
+	<!-- POS runs full-screen in landscape on the iPad. -->
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+	</array>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UIStatusBarHidden</key>
+	<true/>
+
+	<!--
+	  Only needed when testing against an http:// LAN dev server. Uncomment and
+	  set your dev host. NOT needed for the https Vercel production URL.
+
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>192.168.1.50</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	-->
+</dict>
+</plist>

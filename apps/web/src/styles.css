@@ -700,3 +700,67 @@ select.topbar__branch-select { width: min(280px, 34vw); flex: 0 0 auto; }
 @media (max-width: 920px) {
   :root { --sidebar-width: 184px; }
 }
+
+/* ═══ CASH DRAWER MODAL (รับเงินสด) — fits short iPad-landscape screens ═══ */
+/* Backdrop scrolls and aligns to top so the confirm button is always reachable
+   even when the modal is taller than the viewport (iPad landscape). */
+.modal-backdrop--scroll { align-items: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+.cash-modal { padding: 24px; border-radius: 16px; }
+.cash-modal__title { margin-bottom: 6px; font-size: 20px; }
+.cash-modal__total { margin-bottom: 14px; }
+.cash-modal__total strong { color: var(--accent-dark); font-size: 20px; }
+.cash-modal__quick { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.cash-modal__quick .btn { flex: 1; min-width: 60px; }
+.cash-modal__display { width: 100%; font-size: 30px; padding: 14px; text-align: right; margin-bottom: 8px; font-weight: 700; }
+.cash-modal .numpad { padding: 4px 0 0; }
+.cash-modal__change { background: var(--pos-bg); padding: 16px; border-radius: 12px; text-align: center; margin-top: 14px; }
+.cash-modal__change p { margin: 0; }
+.cash-modal__change strong { font-size: 32px; }
+.cash-modal__change strong.is-ok { color: var(--success); }
+.cash-modal__change strong.is-low { color: #b5482b; }
+.cash-modal__actions { display: flex; gap: 12px; margin-top: 16px; }
+
+/* Compact layout on short screens (iPad landscape ≈ 768–834px tall) so the whole
+   modal fits without scrolling whenever possible. */
+@media (max-height: 860px) {
+  .cash-modal { padding: 16px; }
+  .cash-modal__title { font-size: 18px; margin-bottom: 4px; }
+  .cash-modal__total { margin-bottom: 10px; }
+  .cash-modal__quick { gap: 6px; margin-bottom: 10px; }
+  .cash-modal__display { font-size: 24px; padding: 10px; }
+  .cash-modal__change { padding: 10px; margin-top: 10px; }
+  .cash-modal__change strong { font-size: 26px; }
+  .cash-modal__actions { margin-top: 12px; }
+  .numpad { padding: 0 24px 14px; gap: 6px; }
+  .numpad-btn { padding: 9px 0; font-size: 19px; }
+  .cash-modal .numpad { padding: 4px 0 0; }
+}
+
+/* ═══ COLLAPSIBLE SIDEBAR (ย่อเมนูซ้ายเพื่อเพิ่มพื้นที่จอ) ═══ */
+.sidebar { position: relative; transition: width var(--duration-normal) var(--ease-out); }
+.sidebar--collapsed { width: var(--sidebar-collapsed); }
+
+.sidebar__toggle {
+  margin-left: auto;
+  width: 26px; height: 26px; flex-shrink: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-muted); color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all var(--duration-fast);
+}
+.sidebar__toggle:hover { background: var(--border); color: var(--text-primary); }
+
+.sidebar--collapsed .sidebar__brand { flex-direction: column; gap: 10px; padding: 16px 0 12px; }
+.sidebar--collapsed .sidebar__toggle { margin-left: 0; }
+.sidebar--collapsed .sidebar__brand-text,
+.sidebar--collapsed .sidebar__branch-select,
+.sidebar--collapsed .sidebar__section-label,
+.sidebar--collapsed .sidebar__link span,
+.sidebar--collapsed .sidebar__user-info,
+.sidebar--collapsed .sidebar__logout span { display: none; }
+.sidebar--collapsed .sidebar__nav { padding: 0 6px; }
+.sidebar--collapsed .sidebar__link { justify-content: center; padding: 10px 0; }
+.sidebar--collapsed .sidebar__user-panel { justify-content: center; padding: 8px 0; }
+.sidebar--collapsed .sidebar__footer { padding: 12px 6px; }
+.sidebar--collapsed .sidebar__logout { gap: 0; }

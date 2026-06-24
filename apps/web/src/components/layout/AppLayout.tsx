@@ -1,13 +1,23 @@
+import { useEffect, useState } from "react";
 import { Outlet, Navigate, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import { useAuth } from "../../contexts/AuthContext";
 import { useBranch } from "../../contexts/BranchContext";
 
+const SIDEBAR_COLLAPSE_KEY = "bbpos.sidebarCollapsed";
+
 export default function AppLayout() {
   const { user } = useAuth();
   const { activeBranch } = useBranch();
   const location = useLocation();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === "1"; } catch { return false; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, sidebarCollapsed ? "1" : "0"); } catch { /* ignore */ }
+  }, [sidebarCollapsed]);
 
   if (!user) return <Navigate to="/login" replace />;
   if (!activeBranch) return <Navigate to="/branch" replace />;
@@ -17,7 +27,7 @@ export default function AppLayout() {
   return (
     <div className="app-layout">
       <div className="app-layout__body">
-        <Sidebar />
+        <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((v) => !v)} />
         <div className="app-layout__main">
           <TopBar />
           <div className="app-layout__content" style={{ padding: isPOSPage ? "0" : undefined, overflow: isPOSPage ? "hidden" : undefined }}>

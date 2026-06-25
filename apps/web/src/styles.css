@@ -623,20 +623,19 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
   .dash-bottom-row { grid-template-columns: 1fr !important; }
 }
 @media (max-width: 1024px) {
-  .pos-layout { grid-template-columns: minmax(0, 1fr) 340px; }
-  /* !important beats the inline display:flex on the <aside>, so the left category
-     column actually hides on tablets/phones (chips replace it). Without this the
-     column stays and squeezes the product grid down to a single column. */
+  /* Compact POS (tablets + phones): products fill the screen and the cart
+     collapses to a floating button → full-screen payment sheet. This MUST match
+     the JS `isCompact` breakpoint (1024px) so the FAB and the single-column grid
+     agree — otherwise a mid-width tablet gets neither a usable side cart nor the
+     floating button. */
+  .pos-layout { grid-template-columns: 1fr; }
+  /* !important beats the inline display:flex on the <aside> so the left category
+     column actually hides (the horizontal chips replace it). */
   .pos-categories { display: none !important; }
   .pos-cat-chips { display: flex; }
+  .pos-products-scroll { padding-bottom: 88px; }
   .shift-close-layout { grid-template-columns: 1fr; }
   .inventory-toolbar { flex-direction: column; }
-}
-@media (max-width: 900px) {
-  /* Compact POS: products fill the screen; the cart collapses to a floating
-     button that opens the full-screen payment sheet. */
-  .pos-layout { grid-template-columns: 1fr; }
-  .pos-products-scroll { padding-bottom: 88px; }
 }
 @media (max-width: 768px) {
   .sidebar { display: none; }

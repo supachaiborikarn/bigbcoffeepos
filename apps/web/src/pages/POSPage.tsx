@@ -98,9 +98,10 @@ export default function POSPage() {
   const [showCashDrawer, setShowCashDrawer] = useState(false);
   const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState<PaymentMethod | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  // Compact mode: small tablet/phone. Cart collapses to a floating button that
-  // opens a full-screen payment sheet.
-  const isCompact = useMediaQuery("(max-width: 900px)");
+  // Compact mode: tablets + phones (≤1024px, matching the CSS breakpoint that
+  // hides the side cart / left categories). Cart collapses to a floating button
+  // that opens a full-screen payment sheet.
+  const isCompact = useMediaQuery("(max-width: 1024px)");
   const [showCartSheet, setShowCartSheet] = useState(false);
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);

@@ -23,46 +23,32 @@
 
 ---
 
-## ขั้นตอนติดตั้ง (ครั้งแรก)
+## ขั้นตอนติดตั้งบน iPad
 
-### 1. สร้างโปรเจกต์ Xcode
-`File ▸ New ▸ Project ▸ iOS ▸ App`
-- Interface: **SwiftUI**, Language: **Swift**, Minimum Deployments: **iOS 15.0**
-- ตั้งชื่อ `BBPOSWrapper`
+### 1. เปิดโปรเจกต์
 
-### 2. ใส่ไฟล์ Swift เข้าโปรเจกต์
-ลากไฟล์ในโฟลเดอร์ `BBPOSWrapper/` นี้เข้า Xcode (เลือก *Copy items if needed*):
-- `BBPOSWrapperApp.swift`  — จุดเริ่มแอป + ตั้งค่า URL
-- `POSWebView.swift`       — WKWebView + รับ message พิมพ์
-- `ReceiptRenderer.swift`  — เรนเดอร์ HTML ใบเสร็จ → รูปภาพ
-- `StarPrintService.swift` — ค้นหา Star (USB) + สั่งพิมพ์
+เปิดไฟล์ `BBPOSWrapper.xcodeproj` ด้วย Xcode
 
-แล้วลบ `ContentView.swift` ที่ Xcode สร้างให้ตอนแรกทิ้ง (เพราะมี `ContentView` อยู่ใน `POSWebView.swift` แล้ว)
+โปรเจกต์ตั้งค่า SwiftUI, iOS 15, iPad และไฟล์ Swift ไว้แล้ว
 
-### 3. เพิ่ม StarXpand SDK (Swift Package Manager)
-`File ▸ Add Package Dependencies…` แล้วใส่ URL:
-```
-https://github.com/star-micronics/StarXpand-SDK-iOS
-```
-กด **Add Package** เลือก library `StarIO10`
+### 2. รอให้ StarIO10 ดาวน์โหลด
 
-### 4. ตั้งค่า Info.plist
-เปิดแท็บ **Info** ของ target แล้วเพิ่มคีย์ (อ้างอิงไฟล์ `BBPOSWrapper/Info.plist` ในโฟลเดอร์นี้):
-- **Supported external accessory protocols** (`UISupportedExternalAccessoryProtocols`)
-  → Item 0 = `jp.star-m.starpro`  ← **สำคัญที่สุด** ถ้าขาดคีย์นี้จะคุยกับ Star ไม่ได้
+Xcode จะดาวน์โหลด StarXpand SDK 2.12.1 ผ่าน Swift Package Manager อัตโนมัติ
 
-### 5. ตั้ง URL ของ POS
+ไฟล์ `Info.plist` มี protocol `jp.star-m.starpro` สำหรับ USB ไว้แล้ว
+
+### 3. ตรวจ URL ของ POS
 ใน `BBPOSWrapperApp.swift` แก้ `AppConfig.posURL` ให้เป็น URL จริงของร้าน
 (ค่าเริ่มต้นคือ `https://bigbcoffeepos-web.vercel.app` — เปลี่ยนให้ตรงของคุณ)
 
-### 6. ตั้ง Signing
+### 4. ตั้ง Signing
 แท็บ **Signing & Capabilities** ▸ เลือก **Team** (Apple ID / Developer account) ของคุณ
 
-### 7. Build & Run
+### 5. Build & Run
 เสียบ iPad เข้า Mac ▸ เลือกอุปกรณ์เป็น iPad ▸ กด **Run (⌘R)**
 ครั้งแรกต้องไปเชื่อใจ developer ที่ iPad: `Settings ▸ General ▸ VPN & Device Management`
 
-### 8. ทดสอบพิมพ์
+### 6. ทดสอบพิมพ์
 เสียบ Star เข้า iPad ▸ เปิดแอป ▸ ขายของแล้วกด **รับเงินและพิมพ์ใบเสร็จ**
 ครั้งแรกอาจมี popup ขออนุญาตใช้อุปกรณ์เสริม (MFi) ให้กดอนุญาต
 
@@ -77,9 +63,9 @@ https://star-m.jp/eng/products/s_print/apple_app_mfi.html
 ---
 
 ## ข้อควรรู้ / สิ่งที่ควรปรับต่อบนเครื่องจริง
-- โค้ด Swift นี้เป็น **สตาร์ทเตอร์** เขียนตามเอกสาร StarXpand SDK แต่ยัง**ไม่ได้คอมไพล์/ทดสอบบนเครื่องจริง** ชื่อเมธอดบางตัวของ SDK อาจต่างเล็กน้อยตามเวอร์ชัน — Xcode autocomplete จะช่วยชี้จุดที่ต้องปรับ
+- โปรเจกต์นี้ build ผ่านบน Xcode 26.5 และ iOS Simulator 26.5 โดยใช้ StarIO10 2.12.1 แล้ว แต่ยังต้องทดสอบ USB บน iPad กับเครื่องจริง
 - **ความกว้างกระดาษ**: ตั้งไว้ที่ 58mm (384 dots) ถ้าใช้ม้วน 80mm เปลี่ยน `widthMm` เป็น 80 (576 dots) — ฝั่งเว็บส่ง `widthMm: 58` มาใน `nativePrinter.ts` ปรับได้ที่นั่น
-- **หลายสำเนา** (บ่อน้ำมัน 3 ใบ): ตอนนี้ HTML รวมทุกสำเนาไว้แล้ว และโค้ดวนพิมพ์ตาม `copies` — ถ้าอยากให้ตัดกระดาษระหว่างใบให้ปรับที่ `StarPrintService.printImage`
+- **หลายสำเนา** (บ่อน้ำมัน 3 ใบ): HTML รวมทุกสำเนาไว้ในภาพเดียวและตัดกระดาษหลังใบสุดท้าย ถ้าต้องการตัดระหว่างใบต้องแยก HTML ของแต่ละสำเนาก่อนส่งเข้าแอป
 - **รายงานปิดกะ (Z-report) และสติกเกอร์บาร์โค้ด** ยังใช้ `window.print()` เดิม (ยังไม่ได้ต่อเข้า bridge นี้) ถ้าต้องการให้พิมพ์เข้า Star ด้วย บอกได้ จะต่อเพิ่มให้แบบเดียวกัน
 - ถ้าพิมพ์ออกมาจาง/เล็ก/ใหญ่ไป ปรับที่ `ReceiptRenderer` (ความกว้าง snapshot) หรือ CSS ใบเสร็จที่ `apps/web/src/components/ReceiptPrinter.tsx`
 

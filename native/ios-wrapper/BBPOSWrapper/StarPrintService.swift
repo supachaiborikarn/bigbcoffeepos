@@ -25,9 +25,9 @@ final class StarPrintService: NSObject {
                 widthMm: payload.widthMm
             )
             let settings = try await resolvePrinter()
-            for _ in 0..<max(1, payload.copies) {
-                try await printImage(image, settings: settings, widthMm: payload.widthMm)
-            }
+            // The web app already includes every requested copy in this HTML.
+            // Printing the rendered image again would multiply the copy count.
+            try await printImage(image, settings: settings, widthMm: payload.widthMm)
         } catch {
             print("[BBPOS] receipt print failed: \(error)")
             // TODO: surface to the cashier (e.g. evaluateJavaScript a toast, or a UIAlert).
@@ -72,7 +72,7 @@ final class StarPrintService: NSObject {
             StarXpandCommand.DocumentBuilder().addPrinter(
                 StarXpandCommand.PrinterBuilder()
                     .actionPrintImage(StarXpandCommand.Printer.ImageParameter(image: image, width: dots))
-                    .actionFeed(StarXpandCommand.Printer.FeedParameter(height: 3))
+                    .actionFeed(3.0)
                     .actionCut(StarXpandCommand.Printer.CutType.partial)
             )
         )

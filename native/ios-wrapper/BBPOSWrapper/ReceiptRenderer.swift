@@ -34,10 +34,7 @@ final class ReceiptRenderer: NSObject, WKNavigationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self, let web = self.webView else { return }
             web.evaluateJavaScript("document.body.scrollHeight") { result, _ in
-                let height = (result as? CGFloat)
-                    ?? (result as? Double).map(CGFloat.init)
-                    ?? (result as? Int).map(CGFloat.init)
-                    ?? 1200
+                let height = (result as? NSNumber).map(CGFloat.init(truncating:)) ?? 1200
                 web.frame = CGRect(x: 0, y: 0, width: self.targetWidthPx, height: max(1, height))
 
                 let snapConfig = WKSnapshotConfiguration()

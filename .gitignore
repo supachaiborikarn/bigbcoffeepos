@@ -16,3 +16,6 @@ awesome-design-md
 course_videos
 secondbrain/
 transcripts_test/
+native/ios-wrapper/.derivedData/
+xcuserdata/
+*.xcuserstate

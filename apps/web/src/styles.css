@@ -594,6 +594,30 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .pos-cat-chip { flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-muted); color: var(--text-secondary); font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: all 0.15s ease; }
 .pos-cat-chip.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
 
+/* Cart on large screens: the wrapper vanishes so <CartPanel> stays the grid's
+   2nd column exactly as before. On compact screens the same wrapper becomes a
+   full-screen payment sheet instead (.pos-cart-sheet). */
+.pos-cart-side { display: contents; }
+
+/* Compact: floating "cart" button pinned to the bottom of the product area. */
+.pos-cart-fab {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 18px; border: none; border-radius: 14px;
+  background: var(--brand); color: #fff; font-size: 16px; font-weight: 700;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22); cursor: pointer;
+}
+.pos-cart-fab__info { display: flex; align-items: center; gap: 8px; }
+.pos-cart-fab__pay { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+/* Compact: full-screen cart/payment sheet opened from the floating button. */
+.pos-cart-sheet { position: fixed; inset: 0; z-index: 60; background: var(--bg-surface); display: none; flex-direction: column; }
+.pos-cart-sheet.is-open { display: flex; }
+.pos-cart-sheet__head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+/* Let the CartPanel fill the space left under the sheet header (it ships with an
+   inline height:100% that would otherwise overflow past the header). */
+.pos-cart-sheet > .panel { flex: 1 1 0; min-height: 0; height: auto !important; }
+
 @media (max-width: 1280px) {
   .dash-charts-row { grid-template-columns: 1fr !important; }
   .dash-bottom-row { grid-template-columns: 1fr !important; }
@@ -605,9 +629,14 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
   .shift-close-layout { grid-template-columns: 1fr; }
   .inventory-toolbar { flex-direction: column; }
 }
+@media (max-width: 900px) {
+  /* Compact POS: products fill the screen; the cart collapses to a floating
+     button that opens the full-screen payment sheet. */
+  .pos-layout { grid-template-columns: 1fr; }
+  .pos-products-scroll { padding-bottom: 88px; }
+}
 @media (max-width: 768px) {
   .sidebar { display: none; }
-  .pos-layout { grid-template-columns: minmax(0, 1fr) clamp(220px, 42vw, 300px); }
   .dash-kpi-row { grid-template-columns: repeat(2, 1fr); }
 }
 

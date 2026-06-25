@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, PauseCircle, Settings, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, PauseCircle, Settings, ShoppingCart, X } from "lucide-react";
 import { createCustomer, getCustomers, getMenu, getProductUnits, getRecipes, getStoreSetting } from "../api";
 import type { Customer, DiscountRule, MenuItem, PaymentMethod, ProductUnit, StoreSetting } from "../types";
 import { useAuth } from "../contexts/AuthContext";
@@ -29,6 +29,24 @@ const paymentLabels: Record<PaymentMethod, string> = {
 };
 const PAYMENT_METHODS: PaymentMethod[] = ["CASH", "QR", "CARD", "EWALLET"];
 const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
+
+// Tracks a CSS media query in React so we can switch the POS between the
+// side-by-side layout (large screens) and the compact products-only layout with
+// a floating cart button (small tablets/phones).
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(
+    () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, [query]);
+  return matches;
+}
 
 function formatMoney(value: number) {
   return moneyFormatter.format(value);
@@ -80,6 +98,10 @@ export default function POSPage() {
   const [showCashDrawer, setShowCashDrawer] = useState(false);
   const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState<PaymentMethod | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  // Compact mode: small tablet/phone. Cart collapses to a floating button that
+  // opens a full-screen payment sheet.
+  const isCompact = useMediaQuery("(max-width: 900px)");
+  const [showCartSheet, setShowCartSheet] = useState(false);
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
@@ -325,6 +347,7 @@ export default function POSPage() {
       clearCart();
       setLastOrder(order);
       setShowCashDrawer(false);
+      setShowCartSheet(false);
       // Print receipt
       const printed = printReceipt({
         order,
@@ -400,10 +423,12 @@ export default function POSPage() {
 
 
 
+  const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+
   return (
     <main className="pos-layout" style={{ display: "grid", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
       {/* Center Panel: Products */}
-      <section style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRight: "1px solid var(--border)" }}>
+      <section style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRight: "1px solid var(--border)" }}>
         <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
             <div>
@@ -557,7 +582,7 @@ export default function POSPage() {
           </aside>
 
           {/* Right Product Grid */}
-          <div style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
+          <div className="pos-products-scroll" style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
             <ProductGrid
               menu={menu}
               category={category}
@@ -567,10 +592,34 @@ export default function POSPage() {
             />
           </div>
         </div>
+
+        {/* Compact: floating cart button → opens the full-screen payment sheet */}
+        {isCompact && cart.length > 0 && (
+          <button className="pos-cart-fab" onClick={() => setShowCartSheet(true)}>
+            <span className="pos-cart-fab__info">
+              <ShoppingCart size={20} />
+              <span>{cartCount} รายการ</span>
+            </span>
+            <span className="pos-cart-fab__pay">{formatMoney(payableTotal)} · ชำระเงิน →</span>
+          </button>
+        )}
       </section>
 
-      {/* Right Panel: Cart & Payment */}
-      <CartPanel 
+      {/* Right Panel: Cart & Payment.
+          Large screens: side column. Small tablet/phone: full-screen sheet opened
+          from the floating cart button. CartPanel renders once either way. */}
+      <div className={isCompact ? `pos-cart-sheet${showCartSheet ? " is-open" : ""}` : "pos-cart-side"}>
+        {(!isCompact || showCartSheet) && (
+          <>
+            {isCompact && (
+              <div className="pos-cart-sheet__head">
+                <strong style={{ fontSize: 17 }}>ตะกร้า / ชำระเงิน</strong>
+                <button className="btn btn--ghost" onClick={() => setShowCartSheet(false)} aria-label="ปิด">
+                  <X size={20} />
+                </button>
+              </div>
+            )}
+      <CartPanel
         cart={cart}
         subtotal={subtotal}
         discountAmount={discountAmount}
@@ -603,6 +652,9 @@ export default function POSPage() {
         isSubmitting={isSubmitting}
         activeShift={activeShift}
       />
+          </>
+        )}
+      </div>
 
       {showCashDrawer && (
         <CashDrawerModal

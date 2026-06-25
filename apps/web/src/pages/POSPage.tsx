@@ -10,6 +10,7 @@ import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import { CashDrawerModal, printReceipt } from "../components/ReceiptPrinter";
 import { isNativePrintAvailable } from "../utils/nativePrinter";
+import { isRawbtEnabled } from "../utils/rawbtPrinter";
 import ProductGrid from "../components/pos/ProductGrid";
 import CartPanel from "../components/pos/CartPanel";
 import ModifierModal from "../components/pos/ModifierModal";
@@ -78,6 +79,7 @@ export default function POSPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCashDrawer, setShowCashDrawer] = useState(false);
   const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState<PaymentMethod | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
@@ -298,10 +300,14 @@ export default function POSPage() {
 
   const handleCheckout = useCallback(async (cashReceived?: number, changeAmt?: number) => {
     if (cart.length === 0 || isSubmitting) return;
+    setCheckoutError(null);
     // Pre-open the receipt window inside the click gesture. Printing then happens in a
     // SEPARATE window, so window.print() never blocks/freezes the main POS screen.
     // In the native wrapper the Star SDK prints directly, so skip the blank window.
-    const receiptWindow = (!isNativePrintAvailable() && typeof window !== "undefined")
+    // Skip the blank receipt window when printing natively or via RawBT — those
+    // paths print directly, so no browser print window is needed (and we avoid a
+    // popup flashing open/closed on the Android tablet).
+    const receiptWindow = (!isNativePrintAvailable() && !isRawbtEnabled() && typeof window !== "undefined")
       ? window.open("", "bbpos_receipt", "width=380,height=640")
       : null;
     setIsSubmitting(true);
@@ -348,10 +354,12 @@ export default function POSPage() {
       void refreshCustomers().catch((error) => {
         console.warn("[POS] refresh customers after checkout failed", error);
       });
-    } catch {
+    } catch (error) {
       // Checkout failed — close the blank receipt window we pre-opened.
       receiptWindow?.close();
-      // Checkout errors are already surfaced by the cart context.
+      // Surface the reason (e.g. insufficient stock) directly in the payment modal —
+      // the toast can be missed when the blank receipt window flashes open then closes.
+      setCheckoutError((error as Error)?.message || "ชำระเงินไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
       setIsSubmitting(false);
     }
@@ -363,6 +371,7 @@ export default function POSPage() {
       toast.error("วิธีชำระเงินนี้ถูกปิดไว้");
       return;
     }
+    setCheckoutError(null);
     if (paymentMethod === "CASH") {
       setShowCashDrawer(true);
     } else {
@@ -392,7 +401,7 @@ export default function POSPage() {
 
 
   return (
-    <main style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) clamp(300px, 30vw, 420px)", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
+    <main className="pos-layout" style={{ display: "grid", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
       {/* Center Panel: Products */}
       <section style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRight: "1px solid var(--border)" }}>
         <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
@@ -483,12 +492,26 @@ export default function POSPage() {
               {scanFeedback.message}
             </div>
           )}
+
+          {/* Horizontal category chips — shown only on narrow screens (tablet/phone)
+              where the 140px left categories column is hidden to free up space. */}
+          <div className="pos-cat-chips">
+            {categories.map((item) => (
+              <button
+                key={item}
+                className={`pos-cat-chip${category === item ? " is-active" : ""}`}
+                onClick={() => setCategory(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Split view: Left Sidebar Categories, Right Product Grid */}
         <div style={{ display: "flex", flex: 1, minHeight: 0, background: "#fff" }}>
           {/* Left Categories Sidebar */}
-          <aside style={{
+          <aside className="pos-categories" style={{
             width: "140px",
             borderRight: "1px solid var(--border)",
             background: "var(--bg-muted)",
@@ -585,8 +608,9 @@ export default function POSPage() {
         <CashDrawerModal
           total={payableTotal}
           isSubmitting={isSubmitting}
+          errorMessage={checkoutError}
           onConfirm={(cashReceived, change) => handleCheckout(cashReceived, change)}
-          onCancel={() => setShowCashDrawer(false)}
+          onCancel={() => { setCheckoutError(null); setShowCashDrawer(false); }}
         />
       )}
 
@@ -600,8 +624,13 @@ export default function POSPage() {
               </div>
               <strong style={{ fontSize: 24, color: "var(--brand-hover)" }}>{formatMoney(payableTotal)}</strong>
             </div>
+            {checkoutError && (
+              <div role="alert" style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: "#fef3f2", border: "1px solid #fda29b", color: "#b42318", fontSize: 14, lineHeight: 1.45 }}>
+                ⚠️ ชำระเงินไม่สำเร็จ: {checkoutError}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button className="btn btn--ghost" onClick={() => setPendingPaymentConfirm(null)} disabled={isSubmitting}>ยกเลิก</button>
+              <button className="btn btn--ghost" onClick={() => { setCheckoutError(null); setPendingPaymentConfirm(null); }} disabled={isSubmitting}>ยกเลิก</button>
               <button className="btn btn--primary" onClick={() => handleCheckout()} disabled={isSubmitting}>
                 {isSubmitting ? "กำลังบันทึก..." : "ยืนยันและบันทึก"}
               </button>

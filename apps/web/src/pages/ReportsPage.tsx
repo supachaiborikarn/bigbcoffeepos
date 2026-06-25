@@ -180,40 +180,40 @@ export default function ReportsPage() {
   <title>ใบสรุปส่งยอด ${escapeHtml(report.date)}</title>
   <style>
     * { box-sizing: border-box; }
-    @page { margin: 0; size: 80mm auto; }
+    @page { margin: 0; size: 58mm auto; }
     body {
-      width: 80mm;
+      width: 58mm;
       margin: 0;
-      padding: 8px;
+      padding: 6px 4px;
       color: #111827;
       background: #fff;
       font-family: "IBM Plex Sans Thai", "Tahoma", sans-serif;
-      font-size: 11px;
-      line-height: 1.35;
+      font-size: 10px;
+      line-height: 1.3;
     }
     .sheet { width: 100%; }
-    header { text-align: center; border-bottom: 1px dashed #111827; padding-bottom: 8px; margin-bottom: 8px; }
-    h1 { font-size: 16px; margin: 0 0 4px; }
-    h2 { font-size: 12px; margin: 10px 0 4px; padding-top: 6px; border-top: 1px dashed #111827; }
+    header { text-align: center; border-bottom: 1px dashed #111827; padding-bottom: 6px; margin-bottom: 6px; }
+    h1 { font-size: 13px; margin: 0 0 3px; }
+    h2 { font-size: 11px; margin: 8px 0 3px; padding-top: 5px; border-top: 1px dashed #111827; }
     p { margin: 0; }
     .muted { color: #667085; }
-    .row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; align-items: baseline; }
+    .row { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; align-items: baseline; }
     .row span { min-width: 0; overflow-wrap: anywhere; }
     .row strong { text-align: right; white-space: nowrap; }
-    .total { border-top: 1px dashed #111827; margin-top: 4px; padding-top: 6px; font-size: 13px; }
+    .total { border-top: 1px dashed #111827; margin-top: 4px; padding-top: 5px; font-size: 12px; }
     .mini-block { padding: 5px 0; border-bottom: 1px dotted #d0d5dd; }
     .mini-title { font-weight: 700; margin-bottom: 2px; }
     .note { color: #475467; margin-top: 3px; overflow-wrap: anywhere; }
     .pos { color: #047857; }
     .neg { color: #b42318; }
-    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 24px; }
-    .sign { text-align: center; padding-top: 20px; border-top: 1px solid #111827; }
+    .signatures { display: grid; grid-template-columns: 1fr; gap: 22px; margin-top: 20px; }
+    .sign { text-align: center; padding-top: 18px; border-top: 1px solid #111827; }
     .footer { text-align: center; margin-top: 10px; border-top: 1px dashed #111827; padding-top: 6px; }
     @media screen {
       body { background: #f2f4f7; padding: 12px; }
-      .sheet { background: #fff; max-width: 320px; margin: 0 auto; padding: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); }
+      .sheet { background: #fff; max-width: 230px; margin: 0 auto; padding: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); }
     }
-    @media print { body { padding: 8px; background: #fff; } .sheet { box-shadow: none; padding: 0; } }
+    @media print { body { padding: 6px 4px; background: #fff; } .sheet { box-shadow: none; padding: 0; } }
   </style>
 </head>
 <body>

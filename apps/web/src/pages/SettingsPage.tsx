@@ -3,6 +3,7 @@ import { getIntegrationEvents, getIntegrationOutboxSummary, getIntegrationStatus
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import StoreSettingsPanel from "../components/settings/StoreSettingsPanel";
+import PrinterDeviceSettings from "../components/settings/PrinterDeviceSettings";
 import type { IntegrationEvent, IntegrationOutboxSummary, IntegrationProvider, IntegrationStatus } from "../types";
 
 const providerLabel: Record<IntegrationProvider, string> = {
@@ -125,6 +126,8 @@ export default function SettingsPage() {
       </div>
 
       <StoreSettingsPanel />
+
+      <PrinterDeviceSettings />
 
       <section
         style={{

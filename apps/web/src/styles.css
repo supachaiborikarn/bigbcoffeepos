@@ -583,19 +583,31 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .login-sub { color: var(--text-muted); font-size: 14px; margin-bottom: 32px; }
 
 /* ═══ RESPONSIVE ═══ */
+/* POS sales screen base layout: products | cart. The breakpoints below collapse
+   it on narrower tablets so the cart column never squeezes the product side into
+   an overlapping mess. Defined as a class (not inline) so the media queries win. */
+.pos-layout { grid-template-columns: minmax(0, 1fr) clamp(300px, 30vw, 420px); }
+
+/* Horizontal category chips: hidden on desktop (the 140px left column is used),
+   revealed on narrow screens where that column is hidden to free up room. */
+.pos-cat-chips { display: none; gap: 8px; overflow-x: auto; padding: 12px 0 2px; -webkit-overflow-scrolling: touch; }
+.pos-cat-chip { flex: 0 0 auto; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-muted); color: var(--text-secondary); font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: all 0.15s ease; }
+.pos-cat-chip.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
+
 @media (max-width: 1280px) {
   .dash-charts-row { grid-template-columns: 1fr !important; }
   .dash-bottom-row { grid-template-columns: 1fr !important; }
 }
 @media (max-width: 1024px) {
-  .pos-layout { grid-template-columns: 1fr 360px; }
+  .pos-layout { grid-template-columns: minmax(0, 1fr) 340px; }
   .pos-categories { display: none; }
+  .pos-cat-chips { display: flex; }
   .shift-close-layout { grid-template-columns: 1fr; }
   .inventory-toolbar { flex-direction: column; }
 }
 @media (max-width: 768px) {
   .sidebar { display: none; }
-  .pos-layout { grid-template-columns: 1fr; }
+  .pos-layout { grid-template-columns: minmax(0, 1fr) clamp(220px, 42vw, 300px); }
   .dash-kpi-row { grid-template-columns: repeat(2, 1fr); }
 }
 

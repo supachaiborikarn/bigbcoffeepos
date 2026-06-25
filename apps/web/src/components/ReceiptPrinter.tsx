@@ -3,6 +3,7 @@ import type { CartItem, DiscountRule, Order, StoreSetting } from "../types";
 import Numpad from "./ui/Numpad";
 import { logoUrl } from "./BrandLogo";
 import { isNativePrintAvailable, sendReceiptToNative } from "../utils/nativePrinter";
+import { isRawbtEnabled, sendRawbtText } from "../utils/rawbtPrinter";
 
 type ReceiptData = {
   order: Order;
@@ -147,6 +148,116 @@ function printWhenReady(printWindow: Window, printDocument: Document) {
   window.setTimeout(doPrint, 700);
 }
 
+// ─── ESC/POS plain-text receipt (for RawBT → Bluetooth printers) ────────────
+// RawBT relays raw bytes to the printer and converts UTF-8 Thai to its code
+// page, so we render the receipt as a 58mm (32-column) ESC/POS text slip.
+const ESC = "\x1B";
+const GS = "\x1D";
+const ESCPOS = {
+  init: ESC + "@",
+  alignLeft: ESC + "a" + "\x00",
+  alignCenter: ESC + "a" + "\x01",
+  boldOn: ESC + "E" + "\x01",
+  boldOff: ESC + "E" + "\x00",
+  doubleOn: GS + "!" + "\x11",
+  doubleOff: GS + "!" + "\x00",
+  cut: GS + "V" + "\x42" + "\x00"
+};
+const RECEIPT_COLS = 32;
+
+// Thai vowels/tone marks stack on the base glyph → zero printed columns.
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    const zeroWidth = code === 0x0e31 || (code >= 0x0e34 && code <= 0x0e3a) || (code >= 0x0e47 && code <= 0x0e4e);
+    if (!zeroWidth) width += 1;
+  }
+  return width;
+}
+
+function padRow(left: string, right: string, cols = RECEIPT_COLS): string {
+  const rightWidth = displayWidth(right);
+  let leftStr = left;
+  while (displayWidth(leftStr) + rightWidth + 1 > cols && leftStr.length > 0) {
+    leftStr = leftStr.slice(0, -1);
+  }
+  const gap = Math.max(1, cols - displayWidth(leftStr) - rightWidth);
+  return leftStr + " ".repeat(gap) + right;
+}
+
+function escposSlip(data: ReceiptData, branchName: string, copyLabel?: string): string {
+  const ss = data.storeSetting ?? null;
+  const shopName = ss?.shopName?.trim() || "Big B Coffee";
+  const hasTaxId = Boolean(ss?.taxId?.trim());
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
+  const timeStr = now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+  const div = "-".repeat(RECEIPT_COLS) + "\n";
+
+  let out = ESCPOS.init + ESCPOS.alignCenter;
+  out += ESCPOS.doubleOn + shopName + ESCPOS.doubleOff + "\n";
+  out += branchName + "\n";
+  if (ss?.branchLabel?.trim()) out += ss.branchLabel.trim() + "\n";
+  if (ss?.addressLine?.trim()) out += ss.addressLine.trim() + "\n";
+  if (ss?.phone?.trim()) out += "โทร. " + ss.phone.trim() + "\n";
+  if (hasTaxId) out += "เลขภาษี " + ss!.taxId.trim() + "\n";
+  if (ss?.receiptHeader?.trim()) out += ss.receiptHeader.trim() + "\n";
+  out += (hasTaxId ? "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" : "ใบเสร็จรับเงิน") + "\n";
+  if (copyLabel) out += "[" + copyLabel + "]\n";
+
+  out += ESCPOS.alignLeft;
+  out += padRow("บิล #" + data.order.id, dateStr + " " + timeStr) + "\n" + div;
+
+  for (const item of data.cart) {
+    const modTotal = item.modifiers.reduce((s, m) => s + (m.price || 0), 0);
+    const unit = item.basePrice + modTotal;
+    out += padRow(item.name, formatMoney(unit * item.qty)) + "\n";
+    let detail = "  x" + item.qty + " @ " + formatMoney(unit);
+    const mods = item.modifiers.map((m) => m.value).filter(Boolean).join(" ");
+    if (mods) detail += " " + mods;
+    out += detail + "\n";
+    if (item.note) out += "  * " + item.note + "\n";
+  }
+
+  out += div;
+  out += padRow("ยอดรวม", formatMoney(data.subtotal)) + "\n";
+  if (data.discountAmount > 0) out += padRow("ส่วนลด", "-" + formatMoney(data.discountAmount)) + "\n";
+  if (data.pointsUsed > 0) out += padRow("แลกแต้ม", "-" + formatMoney(data.pointsUsed)) + "\n";
+  out += ESCPOS.boldOn + padRow("ยอดสุทธิ", "฿" + formatMoney(data.total)) + ESCPOS.boldOff + "\n";
+
+  const vatMode = ss?.vatMode ?? "INCLUSIVE";
+  const vatRate = ss?.vatRate ?? 0;
+  if (vatMode !== "NONE" && vatRate > 0 && data.total > 0) {
+    const vat = Math.round((data.total * vatRate / (100 + vatRate)) * 100) / 100;
+    const base = Math.round((data.total - vat) * 100) / 100;
+    out += padRow("มูลค่าสินค้า", formatMoney2(base)) + "\n";
+    out += padRow("VAT " + vatRate + "%", formatMoney2(vat)) + "\n";
+  }
+
+  out += div;
+  out += padRow("ชำระโดย", paymentLabel(data.paymentMethod)) + "\n";
+  if (data.cashReceived != null && data.changeAmount != null) {
+    out += padRow("รับเงิน", formatMoney(data.cashReceived)) + "\n";
+    out += padRow("เงินทอน", formatMoney(data.changeAmount)) + "\n";
+  }
+
+  out += "\n" + ESCPOS.alignCenter;
+  out += (ss?.receiptFooter?.trim() || "ขอบคุณที่ใช้บริการ") + "\n";
+  out += shopName + "\n\n\n";
+  return out;
+}
+
+export function buildReceiptEscPos(data: ReceiptData, branchName: string): string {
+  const copies = Math.max(1, Math.floor(data.copies ?? 1));
+  const labels = data.copyLabels ?? [];
+  let out = "";
+  for (let i = 0; i < copies; i++) {
+    out += escposSlip(data, branchName, labels[i]) + ESCPOS.cut;
+  }
+  return out;
+}
+
 export function printReceipt(data: ReceiptData, branchName: string, targetWindow?: Window | null) {
   const copies = Math.max(1, Math.floor(data.copies ?? 1));
   const labels = data.copyLabels ?? [];
@@ -165,23 +276,23 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
     @page { margin: 0; size: 58mm auto; }
     * { box-sizing: border-box; }
     body { margin: 0; padding: 0; font-family: 'IBM Plex Sans Thai', 'Sarabun', 'Prompt', sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .r-slip { width: 58mm; padding: 4mm 3mm 7mm; }
+    .r-slip { width: 58mm; padding: 4mm 2mm 7mm; }
     .r-slip--break { page-break-after: always; }
     .r-logo { display: block; width: 18mm; height: auto; margin: 0 auto 1mm; image-rendering: auto; }
-    .r-shop { text-align: center; font-size: 16px; font-weight: 700; line-height: 1.2; }
-    .r-sub { text-align: center; font-size: 10px; line-height: 1.35; }
-    .r-title { text-align: center; font-size: 11px; font-weight: 700; margin-top: 2mm; }
-    .r-copy { text-align: center; font-size: 12px; font-weight: 800; border: 1.5px solid #000; border-radius: 4px; padding: 1mm 0; margin: 1.5mm 0 0; letter-spacing: 1px; }
-    .r-meta { display: flex; justify-content: space-between; font-size: 10px; margin-top: 1.5mm; }
+    .r-shop { text-align: center; font-size: 18px; font-weight: 700; line-height: 1.2; }
+    .r-sub { text-align: center; font-size: 11px; line-height: 1.35; }
+    .r-title { text-align: center; font-size: 12px; font-weight: 700; margin-top: 2mm; }
+    .r-copy { text-align: center; font-size: 13px; font-weight: 800; border: 1.5px solid #000; border-radius: 4px; padding: 1mm 0; margin: 1.5mm 0 0; letter-spacing: 1px; }
+    .r-meta { display: flex; justify-content: space-between; font-size: 11px; margin-top: 1.5mm; }
     .r-div { border-top: 1px dashed #000; margin: 1.5mm 0; }
     .r-item { margin: 1.2mm 0; }
-    .r-item-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; font-weight: 600; }
+    .r-item-top { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; font-weight: 600; }
     .r-item-name { overflow-wrap: anywhere; }
-    .r-item-sub { font-size: 9.5px; color: #333; margin-top: 0.3mm; }
-    .r-row { display: flex; justify-content: space-between; font-size: 11px; line-height: 1.5; }
-    .r-muted { color: #444; font-size: 10px; }
-    .r-total { display: flex; justify-content: space-between; align-items: center; font-size: 16px; font-weight: 800; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 1.2mm 0; margin: 1.2mm 0; }
-    .r-foot { text-align: center; font-size: 10px; margin-top: 3mm; line-height: 1.5; }
+    .r-item-sub { font-size: 10.5px; color: #333; margin-top: 0.3mm; }
+    .r-row { display: flex; justify-content: space-between; font-size: 12.5px; line-height: 1.5; }
+    .r-muted { color: #444; font-size: 11px; }
+    .r-total { display: flex; justify-content: space-between; align-items: center; font-size: 18px; font-weight: 800; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 1.2mm 0; margin: 1.2mm 0; }
+    .r-foot { text-align: center; font-size: 11px; margin-top: 3mm; line-height: 1.5; }
     @media screen { body { background: #f3f4f6; } .r-slip { background: #fff; margin: 12px auto; box-shadow: 0 1px 6px rgba(0,0,0,0.15); } }
   </style>
 </head>
@@ -194,6 +305,18 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
   if (isNativePrintAvailable()) {
     const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
     const sent = sendReceiptToNative({ type: "receipt", html, widthMm: 58, copies, baseUrl, billId: data.order.id });
+    if (sent) {
+      targetWindow?.close();
+      return true;
+    }
+  }
+
+  // Android + Bluetooth printer: hand the receipt to RawBT as ESC/POS text. The
+  // OS-paired BT printer is invisible to the browser, so window.print() can't see
+  // it — RawBT is the bridge. Falls through to the normal path if the hand-off
+  // can't be attempted (e.g. not actually on Android).
+  if (isRawbtEnabled()) {
+    const sent = sendRawbtText(buildReceiptEscPos(data, branchName));
     if (sent) {
       targetWindow?.close();
       return true;
@@ -246,13 +369,14 @@ export function printReceipt(data: ReceiptData, branchName: string, targetWindow
 type CashDrawerProps = {
   total: number;
   isSubmitting?: boolean;
+  errorMessage?: string | null;
   onConfirm: (cashReceived: number, change: number) => void | Promise<void>;
   onCancel: () => void;
 };
 
 const QUICK_AMOUNTS = [20, 50, 100, 500, 1000];
 
-export function CashDrawerModal({ total, isSubmitting = false, onConfirm, onCancel }: CashDrawerProps) {
+export function CashDrawerModal({ total, isSubmitting = false, errorMessage = null, onConfirm, onCancel }: CashDrawerProps) {
   const [received, setReceived] = useState("");
   const receivedNum = Number(received) || 0;
   const change = Math.max(0, receivedNum - total);
@@ -311,6 +435,11 @@ export function CashDrawerModal({ total, isSubmitting = false, onConfirm, onCanc
           </strong>
         </div>
 
+        {errorMessage && (
+          <div role="alert" style={{ margin: "4px 0 12px", padding: "10px 12px", borderRadius: 8, background: "#fef3f2", border: "1px solid #fda29b", color: "#b42318", fontSize: 14, lineHeight: 1.45 }}>
+            ⚠️ ชำระเงินไม่สำเร็จ: {errorMessage}
+          </div>
+        )}
         <div className="cash-modal__actions">
           <button className="btn btn--ghost btn--full" onClick={onCancel} disabled={isSubmitting}>ยกเลิก</button>
           <button className="btn btn--primary btn--full" onClick={submitPayment} disabled={!isValid || isSubmitting}>

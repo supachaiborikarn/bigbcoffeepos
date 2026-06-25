@@ -257,6 +257,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Q3WBPTHLFQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
@@ -287,6 +288,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Q3WBPTHLFQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
@@ -313,20 +315,20 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		BB000000000000000000000D /* Build configuration list for PBXProject "BBPOSWrapper" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				BB000000000000000000000F /* Debug */,
-				BB0000000000000000000010 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		BB0000000000000000000009 /* Build configuration list for PBXNativeTarget "BBPOSWrapper" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				BB0000000000000000000011 /* Debug */,
 				BB0000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BB000000000000000000000D /* Build configuration list for PBXProject "BBPOSWrapper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB000000000000000000000F /* Debug */,
+				BB0000000000000000000010 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

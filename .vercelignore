@@ -1,9 +1,11 @@
-*
-!apps
-!apps/web
-!apps/web/**
-
-apps/web/.env
-apps/web/.vercel
-apps/web/dist
-apps/web/node_modules
+# Intentionally empty — do NOT ignore anything at the repository root.
+#
+# A previous version of this file kept only `apps/web` and excluded everything
+# else. Because `.vercelignore` is shared by every Vercel project in this repo,
+# it also stripped `apps/api` from the API project's deployment, so its build
+# failed with: ENOENT apps/api/package.json (npm install).
+#
+# Both the web and api projects build fine with the full repo present (this was
+# the state before the file was added). If the web deployment ever needs to be
+# slimmed down, do it via that project's Vercel settings (Root Directory /
+# ignored build step), not this shared root file.

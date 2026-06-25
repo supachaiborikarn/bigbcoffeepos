@@ -599,15 +599,18 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
    full-screen payment sheet instead (.pos-cart-sheet). */
 .pos-cart-side { display: contents; }
 
-/* Compact: floating "cart" button pinned to the bottom of the product area. */
+/* Compact: floating "cart" button. Pinned to the viewport (position: fixed) at
+   the bottom-right so it can never be pushed off-screen by the product panel's
+   height and never overlaps the left nav sidebar. */
 .pos-cart-fab {
-  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 5;
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 14px 18px; border: none; border-radius: 14px;
+  position: fixed; right: 16px; bottom: 16px; z-index: 50;
+  display: flex; align-items: center; gap: 14px;
+  padding: 15px 22px; border: none; border-radius: 999px;
   background: var(--brand); color: #fff; font-size: 16px; font-weight: 700;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22); cursor: pointer;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.30); cursor: pointer;
+  max-width: calc(100vw - 32px);
 }
-.pos-cart-fab__info { display: flex; align-items: center; gap: 8px; }
+.pos-cart-fab__info { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .pos-cart-fab__pay { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 /* Compact: full-screen cart/payment sheet opened from the floating button. */

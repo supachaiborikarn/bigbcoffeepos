@@ -13,6 +13,7 @@ import {
   ShoppingBag,
   ClipboardList,
   Database,
+  Sparkles,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import BrandLogo from "../BrandLogo";
 const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
 
 const navItems = [
+  { to: "/admin", label: "ศูนย์แอดมิน", icon: Sparkles, minRole: 3 },
   { to: "/dashboard", label: "แดชบอร์ด", icon: LayoutDashboard, minRole: 2 },
   { to: "/pos", label: "ขายสินค้า", icon: Store, minRole: 1 },
   { to: "/orders", label: "ออเดอร์/เดลิเวอรี่", icon: ShoppingBag, minRole: 1 },

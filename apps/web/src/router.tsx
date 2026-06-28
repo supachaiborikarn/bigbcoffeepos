@@ -5,6 +5,7 @@ import AppLayout from "./components/layout/AppLayout";
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const BranchSelectPage = lazy(() => import("./pages/BranchSelectPage"));
 const DashboardPage = lazy(() => import("./components/DashboardPage"));
+const AdminDashboardPage = lazy(() => import("./pages/AdminDashboardPage"));
 const POSPage = lazy(() => import("./pages/POSPage"));
 const InventoryPage = lazy(() => import("./pages/InventoryPage"));
 const StaffPage = lazy(() => import("./pages/StaffPage"));
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { path: "/dashboard", element: routeElement(<DashboardPage branchId={null} />) },
+      { path: "/admin", element: routeElement(<AdminDashboardPage />) },
       { path: "/pos", element: routeElement(<POSPage />) },
       { path: "/queue", element: routeElement(<OrderQueuePage />) },
       { path: "/orders", element: routeElement(<OrdersPage />) },

@@ -7,6 +7,7 @@ import type {
   Customer,
   CustomerInsights,
   CupStockSetting,
+  CashEntry,
   CustomerImportInput,
   DailyCloseReport,
   Ingredient,
@@ -693,6 +694,24 @@ export async function closeShift(shiftId: number, closingCash: number, details?:
     body: JSON.stringify({ closingCash, ...details })
   });
   return payload;
+}
+
+export async function getCashEntries(shiftId: number) {
+  const payload = await fetchJson<{ items: CashEntry[] }>(`${API_URL}/shifts/${shiftId}/cash-entries`);
+  return payload.items;
+}
+
+export async function getCashEntryCategories() {
+  return fetchJson<{ out: string[]; in: string[] }>(`${API_URL}/cash-entry-categories`);
+}
+
+export async function addCashEntry(shiftId: number, input: { type: "OUT" | "IN"; amount: number; category: string; note?: string }) {
+  const payload = await fetchJson<{ entry: CashEntry }>(`${API_URL}/shifts/${shiftId}/cash-entries`, { method: "POST", body: JSON.stringify(input) });
+  return payload.entry;
+}
+
+export async function voidCashEntry(id: number) {
+  await fetchJson<{ ok: boolean }>(`${API_URL}/cash-entries/${id}/void`, { method: "POST" });
 }
 
 export async function getShiftSummary(shiftId: number) {

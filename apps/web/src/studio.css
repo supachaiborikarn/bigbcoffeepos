@@ -486,3 +486,14 @@
 .seg-paper { display:inline-flex; border:1px solid var(--border); border-radius:10px; padding:3px; background:var(--bg-surface); }
 .seg-paper button { border:0; background:transparent; color:var(--text-secondary); border-radius:8px; padding:7px 12px; font-size:13px; white-space:nowrap; }
 .seg-paper button.is-active { background:var(--brand); color:var(--studio-cta-text); }
+
+/* ═══ Cash drawer pay-outs (components/shift/CashDrawerDialog.tsx) ═══ */
+.cash-dialog { width:min(560px,100%); }
+.cash-modes { grid-template-columns:1fr 1fr; }
+.cash-entry-amount { display:flex; align-items:center; gap:8px; white-space:nowrap; }
+.cash-void { min-height:32px !important; padding:4px 10px; font-size:12px; }
+.stk-log__row.is-voided { opacity:.55; }
+.stk-log__row.is-voided .cash-entry-amount strong { text-decoration:line-through; }
+.topbar-cash-btn { display:inline-flex; align-items:center; gap:6px; }
+.shift-cash-link { display:inline-flex; align-items:center; gap:6px; justify-content:center; margin-top:4px; font-size:13px; }
+@media(max-width:768px) { .topbar-cash-btn span { display:none; } }

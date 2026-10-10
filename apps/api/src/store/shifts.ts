@@ -1,4 +1,5 @@
 import prisma from "../prisma.js";
+import { cashTotalsByShift, listCashEntries } from "./cashDrawer.js";
 
 const PAYMENT_METHODS = ["CASH", "QR", "CARD", "EWALLET"] as const;
 const REVERSED_ORDER_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
@@ -85,7 +86,7 @@ export async function closeShift(id: number, closingCash: number, details?: Shif
   if (shift.status !== "OPEN") throw new Error("กะนี้ปิดไปแล้ว");
 
   const summary = await getShiftSummary(id);
-  const expectedCash = shift.openingCash + (summary?.cash.cashSales ?? shift.cashSales);
+  const expectedCash = summary?.cash.expectedCash ?? shift.openingCash + shift.cashSales;
   const difference = closingCash - expectedCash;
 
   await prisma.shift.update({
@@ -170,7 +171,9 @@ export async function getShiftSummary(id: number) {
     total: Math.round(payment.total * 100) / 100
   }));
   const cashSales = payments.find((payment) => payment.method === "CASH")?.total ?? shift.cashSales;
-  const expectedCash = Math.round((shift.openingCash + cashSales) * 100) / 100;
+  const cashEntries = await listCashEntries([id]).catch(() => []);
+  const drawer = (await cashTotalsByShift([id]).catch(() => new Map())).get(id) ?? { paidOut: 0, paidIn: 0 };
+  const expectedCash = Math.round((shift.openingCash + cashSales + drawer.paidIn - drawer.paidOut) * 100) / 100;
   const difference = shift.closingCash == null ? null : Math.round((shift.closingCash - expectedCash) * 100) / 100;
   const closeDetails = shift.status === "CLOSED"
     ? await getShiftCloseDetails(id).catch(() => ({ cashCounts: {}, note: null, closedBy: null }))
@@ -232,6 +235,9 @@ export async function getShiftSummary(id: number) {
     cash: {
       openingCash: shift.openingCash,
       cashSales,
+      paidOut: drawer.paidOut,
+      paidIn: drawer.paidIn,
+      entries: cashEntries,
       expectedCash,
       closingCash: shift.closingCash,
       difference

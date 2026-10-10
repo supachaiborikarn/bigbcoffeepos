@@ -37,8 +37,11 @@ function cashReconciliation(report: DailyCloseReport) {
   const counted = closed.reduce((sum, s) => sum + (s.closingCash ?? 0), 0);
   const opening = closed.reduce((sum, s) => sum + s.openingCash, 0);
   const cashSales = closed.reduce((sum, s) => sum + s.cashSales, 0);
-  const net = counted - opening;
-  return { closed, openShifts: report.shifts.filter((s) => !s.closedAt), counted, opening, net, cashSales, diff: Math.round((net - cashSales) * 100) / 100 };
+  const paidOut = closed.reduce((sum, s) => sum + (s.paidOut ?? 0), 0);
+  const paidIn = closed.reduce((sum, s) => sum + (s.paidIn ?? 0), 0);
+  // Money that left the drawer for expenses was still taken from sales, so add it back.
+  const net = counted - opening + paidOut - paidIn;
+  return { closed, openShifts: report.shifts.filter((s) => !s.closedAt), counted, opening, paidOut, paidIn, net, cashSales, diff: Math.round((net - cashSales) * 100) / 100 };
 }
 
 /**
@@ -174,10 +177,14 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   ${cash.closed.length ? `
   ${row("นับเงินในลิ้นชักได้", money(cash.counted))}
   ${row("หัก เงินทอนตอนเปิดกะ", money(-cash.opening))}
+  ${cash.paidOut > 0 ? row("บวก จ่ายออกจากลิ้นชัก", `+${money(cash.paidOut)}`) : ""}
+  ${cash.paidIn > 0 ? row("หัก เติมเข้าลิ้นชัก", money(-cash.paidIn)) : ""}
   ${row("= เงินสดจากการขาย", money(cash.net), "strong")}
   ${row("ยอดขายเงินสดตามระบบ", money(cash.cashSales))}
   <div class="row boxed"><span><b>ส่วนต่าง · ${cashStatus(cash.diff)}</b></span><b>${signed(cash.diff)}</b></div>` : `<p class="muted">ยังไม่มีกะที่ปิด · ขายเงินสดวันนี้ ${money(report.cash.cashSales)}</p>`}
   ${cash.openShifts.length ? `<p class="note">* กะ ${cash.openShifts.map((s) => `#${s.id}`).join(", ")} ยังไม่ปิด ไม่นับรวมในส่วนนี้</p>` : ""}
+  ${(report.cashEntries ?? []).length ? `<h2>เงินเข้า / ออกลิ้นชัก <small>ออก ${money(report.cash.paidOut ?? 0)}${(report.cash.paidIn ?? 0) > 0 ? ` · เข้า ${money(report.cash.paidIn ?? 0)}` : ""}</small></h2>
+  ${(report.cashEntries ?? []).map((e) => row(`${thaiTime(e.createdAt)} ${e.category}${e.note ? ` · ${e.note}` : ""}`, `${e.type === "OUT" ? "-" : "+"}${money(e.amount).replace("-", "")}`)).join("")}` : ""}
 
   <h2>รายละเอียดกะ <small>${num(report.shifts.length)} กะ</small></h2>
   ${shifts || `<p class="muted">ไม่มีข้อมูลกะ</p>`}
@@ -235,11 +242,17 @@ export function buildDailySummaryEscPos(report: DailyCloseReport, widthMm: 58 | 
   if (cash.closed.length) {
     out += row("นับเงินในลิ้นชักได้", money(cash.counted));
     out += row("หัก เงินทอนตอนเปิดกะ", money(-cash.opening));
+    if (cash.paidOut > 0) out += row("บวก จ่ายออกจากลิ้นชัก", "+" + money(cash.paidOut));
+    if (cash.paidIn > 0) out += row("หัก เติมเข้าลิ้นชัก", money(-cash.paidIn));
     out += ESCPOS.boldOn + row("= เงินสดจากการขาย", money(cash.net)) + ESCPOS.boldOff;
     out += row("ยอดขายเงินสดตามระบบ", money(cash.cashSales));
     out += ESCPOS.boldOn + row(`ส่วนต่าง (${cashStatus(cash.diff)})`, signed(cash.diff)) + ESCPOS.boldOff;
   } else out += `ยังไม่มีกะที่ปิด · ขายเงินสด ${money(report.cash.cashSales)}\n`;
   if (cash.openShifts.length) out += `* กะ ${cash.openShifts.map((s) => `#${s.id}`).join(", ")} ยังไม่ปิด ไม่นับรวม\n`;
+  if (report.cashEntries?.length) {
+    out += section("เงินเข้า / ออกลิ้นชัก");
+    report.cashEntries.forEach((e) => { out += row(`${thaiTime(e.createdAt)} ${e.category}`, `${e.type === "OUT" ? "-" : "+"}${money(e.amount)}`); });
+  }
 
   out += section("รายละเอียดกะ");
   if (!report.shifts.length) out += "ไม่มีข้อมูลกะ\n";

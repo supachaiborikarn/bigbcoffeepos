@@ -2,6 +2,7 @@ import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
 import { ensureShiftCloseDetailsTable } from "./shifts.js";
 import { getCupStockSettings } from "./cupStockSettings.js";
+import { cashTotalsByShift, listCashEntries } from "./cashDrawer.js";
 
 export type ReportSource = "system" | "pospos" | "all";
 
@@ -390,6 +391,8 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
       ])
     : [[], [], []] as const;
   const detailByShift = new Map(detailRows.map((row) => [row.shift_id, row]));
+  const drawerByShift = await cashTotalsByShift(shiftIds).catch(() => new Map<number, { paidOut: number; paidIn: number }>());
+  const cashEntries = await listCashEntries(shiftIds).catch(() => []);
   const shiftTotalsById = new Map(
     shiftTotalRows
       .filter((row) => row.shiftId !== null)
@@ -421,7 +424,8 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
     const shiftTotals = shiftTotalsById.get(shift.id) ?? { totalSales: 0, totalOrders: 0 };
     const shiftPayments = shiftPaymentsById.get(shift.id) ?? { cashSales: 0, qrSales: 0, cardSales: 0 };
     const cashSales = roundMoney(shiftPayments.cashSales);
-    const expectedCash = roundMoney(shift.openingCash + cashSales);
+    const drawer = drawerByShift.get(shift.id) ?? { paidOut: 0, paidIn: 0 };
+    const expectedCash = roundMoney(shift.openingCash + cashSales + drawer.paidIn - drawer.paidOut);
     const difference = shift.closingCash == null ? null : roundMoney(shift.closingCash - expectedCash);
     return {
       id: shift.id,
@@ -433,6 +437,8 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
       closedAt: shift.closedAt?.toISOString() ?? null,
       openingCash: roundMoney(shift.openingCash),
       cashSales,
+      paidOut: drawer.paidOut,
+      paidIn: drawer.paidIn,
       qrSales: roundMoney(shiftPayments.qrSales),
       cardSales: roundMoney(shiftPayments.cardSales),
       totalSales: roundMoney(shiftTotals.totalSales),
@@ -471,8 +477,11 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
       cashSales: payments.find((payment) => payment.method === "CASH")?.total ?? 0,
       expectedCash: cashExpected,
       countedCash: cashCounted,
-      difference: roundMoney(cashCounted - cashExpected)
+      difference: roundMoney(cashCounted - cashExpected),
+      paidOut: roundMoney(shiftSummaries.reduce((sum, shift) => sum + shift.paidOut, 0)),
+      paidIn: roundMoney(shiftSummaries.reduce((sum, shift) => sum + shift.paidIn, 0))
     },
+    cashEntries,
     shifts: shiftSummaries,
     cups: input.branchId ? await getCupUsage(input.branchId, range) : [],
     topItems: topItemsRaw.map((item) => ({

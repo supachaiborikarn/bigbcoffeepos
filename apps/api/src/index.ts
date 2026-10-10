@@ -130,6 +130,7 @@ log("info", "db_mode", { mode: isProduction ? "production" : "development", prov
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 import { requireAuth, requireAdmin, requireRole, requireBranchAccess, generateToken, type AuthRequest } from "./middleware/auth.js";
+import { addCashEntry, CASH_IN_CATEGORIES, CASH_OUT_CATEGORIES, getCashEntryBranch, listCashEntries, voidCashEntry } from "./store/cashDrawer.js";
 
 const pinAttempts = new Map<string, { count: number; resetAt: number }>();
 function enforcePinRateLimit(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -755,6 +756,33 @@ app.post("/api/shifts/:id/close", requireRecordBranch(async (req) => prisma.shif
     const summary = await getShiftSummary(id);
     audit("shift.closed", req, { shiftId: id, closingCash: Number(req.body?.closingCash) || 0, difference: summary?.cash.difference ?? null });
     return res.json({ shift, summary });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+/* ─── Cash drawer pay-outs / pay-ins (per open shift) ─── */
+const shiftBranch = async (req: AuthRequest) => prisma.shift.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } });
+app.get("/api/cash-entry-categories", (_req, res) => res.json({ out: CASH_OUT_CATEGORIES, in: CASH_IN_CATEGORIES }));
+app.get("/api/shifts/:id/cash-entries", requireRecordBranch(shiftBranch), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  return res.json({ items: await listCashEntries([id], { includeVoided: true }) });
+});
+app.post("/api/shifts/:id/cash-entries", requireRecordBranch(shiftBranch), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const entry = await addCashEntry({ shiftId: id, type: req.body?.type, amount: Number(req.body?.amount), category: req.body?.category, note: req.body?.note, userId: req.user?.id });
+    audit("cash_drawer.entry_added", req, { shiftId: id, entryId: entry.id, type: entry.type, amount: entry.amount, category: entry.category });
+    return res.status(201).json({ entry });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+app.post("/api/cash-entries/:id/void", requireRole("admin", "manager"), requireRecordBranch(async (req) => getCashEntryBranch(Number(req.params.id) || 0)), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    await voidCashEntry(id, req.user?.id);
+    audit("cash_drawer.entry_voided", req, { entryId: id });
+    return res.json({ ok: true });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 

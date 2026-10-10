@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Menu, Moon, Sun, MapPin, Printer } from "lucide-react";
+import { Menu, Moon, Sun, MapPin, Printer, Wallet } from "lucide-react";
 import { businessProfile, roleLabels } from "../../utils/business";
 import { getShiftSummary } from "../../api";
 import { useAuth } from "../../contexts/AuthContext";
@@ -9,6 +9,7 @@ import { useToast } from "../../contexts/ToastContext";
 import type { ShiftSummary } from "../../types";
 import Numpad from "../ui/Numpad";
 import OfflineStatus from "../OfflineStatus";
+import CashDrawerDialog from "../shift/CashDrawerDialog";
 
 const formatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -71,6 +72,8 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
   const [shiftSummary, setShiftSummary] = useState<ShiftSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [closedSummary, setClosedSummary] = useState<PrintableShiftSummary | null>(null);
+  const [showCashDrawer, setShowCashDrawer] = useState(false);
+  const reloadCloseSummary = () => { if (showShiftModal === "close" && activeShift) getShiftSummary(activeShift.id).then(setShiftSummary).catch(() => {}); };
 
   const countedCash = useMemo(() => {
     return cashCountLines(closeCounts).reduce((sum, line) => sum + line.total, 0);
@@ -172,6 +175,11 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
             </div>
           </div>
 
+          {activeShift && (
+            <button className="btn btn--ghost topbar-cash-btn" onClick={() => setShowCashDrawer(true)} title="บันทึกเงินจ่ายออก / เติมเข้าลิ้นชัก">
+              <Wallet size={17} /><span>เงินเข้า/ออก</span>
+            </button>
+          )}
           {activeShift ? (
             <button className="btn btn--ghost" onClick={openCloseModal}>
               ปิดกะ
@@ -250,6 +258,9 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
                 <div className="shift-money-panel">
                   <div><span>เงินต้นกะ</span><strong>{formatMoney(activeShift.openingCash)}</strong></div>
                   <div><span>เงินสดจากยอดขาย</span><strong>{formatMoney(shiftSummary?.cash.cashSales ?? activeShift.cashSales)}</strong></div>
+                  <div><span>จ่ายออกจากลิ้นชัก</span><strong className={(shiftSummary?.cash.paidOut ?? 0) > 0 ? "negative" : ""}>−{formatMoney(shiftSummary?.cash.paidOut ?? 0)}</strong></div>
+                  {(shiftSummary?.cash.paidIn ?? 0) > 0 && <div><span>เติมเข้าลิ้นชัก</span><strong>+{formatMoney(shiftSummary?.cash.paidIn ?? 0)}</strong></div>}
+                  <button type="button" className="btn btn--ghost shift-cash-link" onClick={() => setShowCashDrawer(true)}><Wallet size={15} /> บันทึก/ดูรายการเงินเข้า-ออก</button>
                   <div><span>เงินสดที่ควรมี</span><strong>{formatMoney(expectedCash)}</strong></div>
                   <div><span>นับเงินจริง</span><strong>{formatMoney(countedCash)}</strong></div>
                   <div className="shift-money-panel__total">
@@ -387,6 +398,9 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
           <hr />
           <div className="shift-print__row"><span>เงินต้นกะ</span><strong>{formatMoney(closedSummary.cash.openingCash)}</strong></div>
           <div className="shift-print__row"><span>เงินสดรับ</span><strong>{formatMoney(closedSummary.cash.cashSales)}</strong></div>
+          <div className="shift-print__row"><span>จ่ายออกจากลิ้นชัก</span><strong>-{formatMoney(closedSummary.cash.paidOut ?? 0)}</strong></div>
+          {(closedSummary.cash.paidIn ?? 0) > 0 && <div className="shift-print__row"><span>เติมเข้าลิ้นชัก</span><strong>+{formatMoney(closedSummary.cash.paidIn ?? 0)}</strong></div>}
+          {(closedSummary.cash.entries ?? []).map((entry) => <div className="shift-print__row" key={entry.id}><span>· {entry.category}{entry.note ? ` (${entry.note})` : ""}</span><strong>{entry.type === "OUT" ? "-" : "+"}{formatMoney(entry.amount)}</strong></div>)}
           <div className="shift-print__row"><span>เงินสดที่ควรมี</span><strong>{formatMoney(closedSummary.cash.expectedCash)}</strong></div>
           <div className="shift-print__row"><span>นับเงินจริง</span><strong>{formatMoney(closedSummary.cash.closingCash ?? 0)}</strong></div>
           <div className="shift-print__row shift-print__total"><span>ส่วนต่าง</span><strong>{formatMoney(closedSummary.cash.difference ?? 0)}</strong></div>
@@ -415,6 +429,7 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
           </div>
         </section>
       )}
+      {showCashDrawer && activeShift && <CashDrawerDialog shiftId={activeShift.id} onClose={() => setShowCashDrawer(false)} onChanged={reloadCloseSummary} />}
     </>
   );
 }

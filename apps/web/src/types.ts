@@ -83,6 +83,10 @@ export type ShiftSummary = {
   cash: {
     openingCash: number;
     cashSales: number;
+    /** Cash paid out of / put into the drawer during the shift (non-voided). */
+    paidOut?: number;
+    paidIn?: number;
+    entries?: CashEntry[];
     expectedCash: number;
     closingCash: number | null;
     difference: number | null;
@@ -449,6 +453,19 @@ export type SalesSummary = {
   daily: Array<{ date: string; orders: number; revenue: number }>;
 };
 
+export type CashEntry = {
+  id: number;
+  branchId: number;
+  shiftId: number;
+  type: "OUT" | "IN";
+  amount: number;
+  category: string;
+  note: string | null;
+  userName: string | null;
+  createdAt: string;
+  voided: boolean;
+};
+
 export type DailyCloseReport = {
   date: string;
   generatedAt: string;
@@ -473,7 +490,10 @@ export type DailyCloseReport = {
     expectedCash: number;
     countedCash: number;
     difference: number;
+    paidOut?: number;
+    paidIn?: number;
   };
+  cashEntries?: CashEntry[];
   shifts: Array<{
     id: number;
     branchName: string;
@@ -484,6 +504,8 @@ export type DailyCloseReport = {
     closedAt: string | null;
     openingCash: number;
     cashSales: number;
+    paidOut?: number;
+    paidIn?: number;
     qrSales: number;
     cardSales: number;
     totalSales: number;

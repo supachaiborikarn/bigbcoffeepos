@@ -97,7 +97,7 @@ async function seedTestData(): Promise<TestData> {
     })
   ]);
   const cupIngredients: Array<{ id: number; created: boolean }> = [];
-  for (const name of ["แก้วพลาสติก 16oz", "แก้วร้อนแยก"]) {
+  for (const name of ["แก้วเย็น cold", "แก้วร้อน HOT"]) {
     let ingredient = await prisma.ingredient.findFirst({ where: { name }, select: { id: true } });
     let created = false;
     if (!ingredient) {

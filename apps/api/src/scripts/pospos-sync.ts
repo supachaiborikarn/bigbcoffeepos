@@ -2,6 +2,7 @@ import { chromium as playwrightChromium, type Browser, type Page } from "playwri
 import type { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { classifyMenuItem } from "../utils/menu-data-cleaning.js";
+import { CUP_STOCK_INGREDIENT_NAMES } from "../store/cupStockSettings.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -341,16 +342,17 @@ export async function syncPosposData(branchId: number) {
       }
     }
     if (stockData.length > 0) {
-      const syncedIds = [...syncedIngredientIds];
-      const zeroedStock = syncedIds.length > 0
-        ? await prisma.ingredientStock.updateMany({
-            where: { branchId, ingredientId: { notIn: syncedIds } },
-            data: { stockQty: 0 },
-          })
-        : await prisma.ingredientStock.updateMany({
-            where: { branchId },
-            data: { stockQty: 0 },
-          });
+      // Cups are toppings in POSPOS (not on the stock page) and their stock is
+      // managed in BB POS, so never zero them here.
+      const cupIngredients = await prisma.ingredient.findMany({
+        where: { OR: [{ name: { in: CUP_STOCK_INGREDIENT_NAMES } }, { cupStockSettingItems: { some: {} } }] },
+        select: { id: true },
+      });
+      const keepIds = [...syncedIngredientIds, ...cupIngredients.map((item) => item.id)];
+      const zeroedStock = await prisma.ingredientStock.updateMany({
+        where: { branchId, ...(keepIds.length > 0 ? { ingredientId: { notIn: keepIds } } : {}) },
+        data: { stockQty: 0 },
+      });
       results.zeroedStockItems = zeroedStock.count;
     }
     console.log(`  ✓ Saved ${results.ingredients} ingredients/stock, zeroed ${results.zeroedStockItems} missing stock rows`);

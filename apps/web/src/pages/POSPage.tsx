@@ -14,6 +14,7 @@ import { useDialogFocus } from "../utils/useDialogFocus";
 import ProductGrid from "../components/pos/ProductGrid";
 import CartPanel from "../components/pos/CartPanel";
 import ModifierModal from "../components/pos/ModifierModal";
+import CupStockStrip, { useCupStock } from "../components/pos/CupStockStrip";
 import { businessProfile } from "../utils/business";
 import { shouldUseModifierModal } from "../utils/menuRules";
 
@@ -112,6 +113,7 @@ export default function POSPage() {
   const { activeBranch } = useBranch();
   const { activeShift } = useShift();
   const profile = businessProfile(activeBranch?.branchType);
+  const cupStock = useCupStock(profile.type === "coffee" ? activeBranch?.id : undefined, lastOrder?.id);
   const BusinessIcon = profile.icon;
   const { user } = useAuth();
   const toast = useToast();
@@ -462,6 +464,7 @@ export default function POSPage() {
         <div className="studio-counter-strip">
           <div><span className={`studio-live-dot${activeShift ? " is-live" : ""}`} /><span>{activeShift ? "พร้อมรับรายการ" : "เปิดกะเพื่อเริ่มขาย"}</span></div>
           <span>{activeShift ? `${activeShift.totalOrders} บิลในกะนี้` : "ยังไม่มีกะที่เปิดอยู่"}</span>
+          <CupStockStrip cups={cupStock} />
           <Link to="/orders">ดูรายการ <ArrowUpRight size={14} /></Link>
         </div>
         {profile.type === "oil_service" && <div className="studio-service-note"><CarFront size={22} /><label htmlFor="service-note"><span>รายละเอียดรถ / งานบริการ</span><input id="service-note" value={orderNote} maxLength={300} onChange={(e) => setOrderNote(e.target.value)} placeholder="ทะเบียนรถ · เลขไมล์ · งานที่ลูกค้าแจ้ง" /></label></div>}
@@ -571,6 +574,7 @@ export default function POSPage() {
       {modifierProduct && (
         <ModifierModal
           item={modifierProduct}
+          cupStock={cupStock}
           onClose={() => setModifierProduct(null)}
           onAdd={(item, qty, mods) => {
             addCartItem(item, qty, mods);

@@ -452,3 +452,22 @@
   .stk-backdrop { align-items:flex-end; }
   .stk-drawer { width:100%; height:auto; max-height:92dvh; border-radius:18px 18px 0 0; animation:none; }
 }
+
+/* ═══ Cup stock on the POS (components/pos/CupStockStrip.tsx) ═══ */
+.cup-strip { display:flex; gap:6px; flex-wrap:wrap; }
+.cup-chip { display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:999px; border:1px solid var(--border); background:var(--bg-surface); color:var(--text-secondary); font-size:11px; white-space:nowrap; }
+.cup-chip strong { color:var(--text-primary); font-variant-numeric:tabular-nums; }
+.cup-chip.is-low { border-color:#e3b55c; background:#fdf4e3; color:#8a5a0b; }
+.cup-chip.is-low strong { color:#8a5a0b; }
+.cup-chip.is-out { border-color:#f0a59d; background:#fdecea; color:#b42318; }
+.cup-chip.is-out strong { color:#b42318; }
+.studio-app[data-appearance="dark"] .cup-chip.is-low { background:#3d331e; border-color:#7a5d24; color:#f2c46d; }
+.studio-app[data-appearance="dark"] .cup-chip.is-low strong { color:#f2c46d; }
+.studio-app[data-appearance="dark"] .cup-chip.is-out { background:#432624; border-color:#7d3a33; color:#f4a29b; }
+.studio-app[data-appearance="dark"] .cup-chip.is-out strong { color:#f4a29b; }
+.cup-option-stock { font-size:11px; font-weight:600; color:var(--text-secondary); }
+.cup-option-stock.is-low { color:#b7791f; }
+.cup-option-stock.is-out { color:#b42318; }
+.studio-app[data-appearance="dark"] .cup-option-stock.is-low { color:#f2c46d; }
+.studio-app[data-appearance="dark"] .cup-option-stock.is-out { color:#f4a29b; }
+@media(max-width:768px) { .studio-counter-strip { flex-wrap:wrap; row-gap:8px; } }

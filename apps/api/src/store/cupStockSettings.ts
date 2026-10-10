@@ -4,12 +4,19 @@ export const CUP_OPTIONS = ["แก้วเย็น", "แก้วเดิ�
 export type CupOption = typeof CUP_OPTIONS[number];
 
 const CUP_OPTION_SET = new Set<string>(CUP_OPTIONS);
+// Used only when a branch hasn't saved its cup settings. Names follow the cup
+// toppings in POSPOS ("แก้วเย็น cold" = the 20oz cold cup, "แก้วร้อน HOT" =
+// hot take-away cup). Cup stock itself is managed in BB POS. The old names stay
+// as fallbacks so checkout keeps working while the stock rows are renamed.
 const DEFAULT_CUP_STOCK_INGREDIENTS: Record<CupOption, string[]> = {
-  "แก้วเย็น": ["แก้วพลาสติก 16oz", "แก้วกาแฟป่าว"],
-  "แก้วเดินทาง": ["แก้วร้อนแยก"],
+  "แก้วเย็น": ["แก้วเย็น cold", "แก้วพลาสติก 16oz"],
+  "แก้วเดินทาง": ["แก้วร้อน HOT", "แก้วร้อน", "แก้วร้อนแยก"],
   "แก้วทานร้าน": [],
   "แก้วมาเอง": []
 };
+
+/** Every name the cup lookup may resolve to — the POSPOS sync must not zero these. */
+export const CUP_STOCK_INGREDIENT_NAMES = Array.from(new Set(Object.values(DEFAULT_CUP_STOCK_INGREDIENTS).flat()));
 
 type CupStockSettingInput = {
   cupOption: string;

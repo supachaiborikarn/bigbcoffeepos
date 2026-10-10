@@ -3,9 +3,11 @@ import { X, Check } from "lucide-react";
 import type { MenuItem, Modifier } from "../../types";
 import { useDialogFocus } from "../../utils/useDialogFocus";
 import { shouldUseModifierModal } from "../../utils/menuRules";
+import { cupStockText, type CupStockMap } from "./CupStockStrip";
 
 type Props = {
   item: MenuItem;
+  cupStock?: CupStockMap;
   onClose: () => void;
   onAdd: (item: MenuItem, qty: number, modifiers: Modifier[]) => void;
 };
@@ -39,7 +41,7 @@ const HOT_CUP_OPTIONS = [
   { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ลูกค้านำแก้วมาเอง" },
 ];
 
-export default function ModifierModal({ item, onClose, onAdd }: Props) {
+export default function ModifierModal({ item, cupStock, onClose, onAdd }: Props) {
   const dialogRef = useDialogFocus(onClose);
   const usesModifiers = shouldUseModifierModal(item);
 
@@ -132,6 +134,7 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
                     }}>
                       <span>{option.label}</span>
                       <small style={{ color: "var(--text-muted)", fontWeight: 500, lineHeight: 1.25 }}>{option.stockNote}</small>
+                      {cupStock?.[option.value] && <small className={`cup-option-stock is-${cupStock[option.value]!.status}`}>{cupStockText(cupStock[option.value]!)}</small>}
                     </button>
                   ))}
                 </div>

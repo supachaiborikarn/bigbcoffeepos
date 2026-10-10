@@ -64,11 +64,11 @@ async function main() {
 
     await prisma.recipe.create({ data: { menuItemId, ingredientId, qty: 2 } });
     await prisma.ingredientStock.create({ data: { branchId, ingredientId, stockQty: 10, reorderLevel: 2 } });
-    const existingCup = await prisma.ingredient.findFirst({ where: { name: "แก้วพลาสติก 16oz" }, select: { id: true } });
+    const existingCup = await prisma.ingredient.findFirst({ where: { name: "แก้วเย็น cold" }, select: { id: true } });
     if (existingCup) {
       cupIngredientId = existingCup.id;
     } else {
-      const cup = await prisma.ingredient.create({ data: { name: "แก้วพลาสติก 16oz", unit: "ใบ", costPerUnit: 1 } });
+      const cup = await prisma.ingredient.create({ data: { name: "แก้วเย็น cold", unit: "ใบ", costPerUnit: 1 } });
       cupIngredientId = cup.id;
       createdCupIngredientId = cup.id;
     }

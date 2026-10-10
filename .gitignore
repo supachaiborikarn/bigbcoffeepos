@@ -19,3 +19,6 @@ transcripts_test/
 native/ios-wrapper/.derivedData/
 xcuserdata/
 *.xcuserstate
+
+# Local data backups written by one-off maintenance scripts
+apps/api/backups/

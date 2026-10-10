@@ -81,8 +81,12 @@ export function posposCupToppings(item: MenuItem): string[] {
   }
 }
 
+/** Add-ons ("เพิ่ม…") and desserts that happen to contain a drink word (e.g. เต้าฮวยนมสด). */
+const NOT_A_DRINK = (name: string) => name.trim().startsWith("เพิ่ม") || name.includes("เต้าฮวย");
+
 export function shouldUseModifierModal(item: MenuItem) {
   if (item.basePrice <= 0) return false;
+  if (NOT_A_DRINK(item.name)) return false;
   // POSPOS says this menu needs a cup choice → it's a prepared drink, no guessing.
   if (posposCupToppings(item).length > 0) return true;
 
@@ -94,6 +98,7 @@ export function shouldUseModifierModal(item: MenuItem) {
 }
 
 export function isCupVariantMenuItem(item: MenuItem) {
+  if (NOT_A_DRINK(item.name)) return false;
   const { nameText, isPreparedCategory, isPreparedVariant, looksLikePreparedDrink } = preparedMenuInfo(item);
   const isPreparedDrink = (isPreparedCategory && looksLikePreparedDrink) || (isPreparedVariant && looksLikePreparedDrink);
   return isPreparedDrink && CUP_VARIANT_PATTERNS.some((pattern) => nameText.includes(pattern));

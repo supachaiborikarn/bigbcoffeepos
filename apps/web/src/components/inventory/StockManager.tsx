@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { AlertTriangle, ArrowLeftRight, ClipboardCheck, ClipboardList, History, Minus, Package, Plus, Search, Settings2, X } from "lucide-react";
-import { createIngredient, createStockAdjustment, getInventory, getStockMovements, updateInventoryItem } from "../../api";
+import { createIngredient, createStockAdjustment, getInventory, getMenu, getRecipes, getStockMovements, updateInventoryItem } from "../../api";
 import type { InventoryItem, StockMovement } from "../../types";
 import { useBranch } from "../../contexts/BranchContext";
 import { useToast } from "../../contexts/ToastContext";
 import { useDialogFocus } from "../../utils/useDialogFocus";
 import StockCountSheet from "./StockCountSheet";
+import { useCupStock } from "../pos/CupStockStrip";
+import { isCupVariantMenuItem, shouldUseModifierModal } from "../../utils/menuRules";
 import StockTransfers from "./StockTransfers";
 
 // Branch stock screen shared by admins (InventoryPage) and branch managers
@@ -59,6 +61,9 @@ export function describeMovement(reason: string): { label: string; note?: string
   return { label: reason };
 }
 
+/** Changes whenever the item list reloads, so cup counts refresh with it. */
+const loadedAtKey = (items: InventoryItem[]) => items.length + ":" + items.reduce((sum, item) => sum + item.stockQty, 0);
+
 export default function StockManager({ canEditDetails, onChanged }: { canEditDetails: boolean; onChanged?: () => void }) {
   const { activeBranch } = useBranch();
   const toast = useToast();
@@ -73,16 +78,29 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [history, setHistory] = useState<StockMovement[] | null>(null);
+  // Prepared drinks (ลาเต้เย็น, คาปูเย็น …) are limited by cups, not by their own
+  // stock. Their old per-menu stock rows (999.x imported from POSPOS) are hidden.
+  const [drinkNames, setDrinkNames] = useState<Set<string>>(new Set());
+  const [recipeIngredientIds, setRecipeIngredientIds] = useState<Set<number>>(new Set());
+  const [showDrinks, setShowDrinks] = useState(false);
+  const cups = useCupStock(activeBranch?.branchType === "coffee" ? branchId : undefined, loadedAtKey(items));
 
   const load = useCallback(async () => {
     if (!branchId) return;
     try {
-      setItems(await getInventory(branchId));
+      const [inventory, menu, recipes] = await Promise.all([getInventory(branchId), getMenu().catch(() => []), getRecipes().catch(() => [])]);
+      setRecipeIngredientIds(new Set(recipes.flatMap((r) => r.ingredients.map((i) => i.ingredientId))));
+      setDrinkNames(new Set(menu.filter((m) => (!activeBranch?.branchType || m.branchType === activeBranch.branchType) && (shouldUseModifierModal(m) || isCupVariantMenuItem(m))).map((m) => m.name.trim())));
+      setItems(inventory);
       setLoadedAt(new Date());
       setError("");
     } catch (err) { setError((err as Error).message); } finally { setLoading(false); }
-  }, [branchId]);
+  }, [branchId, activeBranch?.branchType]);
   useEffect(() => { setLoading(true); void load(); }, [load]);
+  // Never hide something a recipe still deducts — that stock is real.
+  const isDrink = useCallback((item: InventoryItem) => drinkNames.has(item.name.trim()) && !recipeIngredientIds.has(item.ingredientId), [drinkNames, recipeIngredientIds]);
+  const stockItems = useMemo(() => showDrinks ? items : items.filter((item) => !isDrink(item)), [items, isDrink, showDrinks]);
+  const hiddenDrinks = useMemo(() => items.filter(isDrink).length, [items, isDrink]);
 
   useEffect(() => {
     if (view !== "history" || !branchId) return;
@@ -96,22 +114,22 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
 
   const counts = useMemo(() => {
     let low = 0, out = 0, value = 0;
-    items.forEach((item) => {
+    stockItems.forEach((item) => {
       const s = stockStatus(item);
       if (s === "low") low += 1;
       if (s === "out") out += 1;
       value += Math.max(0, item.stockQty) * item.costPerUnit;
     });
     return { low, out, value };
-  }, [items]);
+  }, [stockItems]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return items.filter((item) => {
+    return stockItems.filter((item) => {
       if (filter !== "all" && stockStatus(item) !== filter) return false;
       return !q || `${item.name} ${item.unit}`.toLowerCase().includes(q);
     });
-  }, [items, filter, search]);
+  }, [stockItems, filter, search]);
 
   const nameById = useMemo(() => new Map(items.map((item) => [item.ingredientId, item])), [items]);
   const selected = selectedId == null ? null : nameById.get(selectedId) ?? null;
@@ -141,8 +159,13 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
     </header>
 
     {view === "stock" ? <>
+      {hiddenDrinks > 0 && <div className="stk-drink-note" role="note">
+        <div><strong>เมนูชง {fmtQty(hiddenDrinks)} รายการ ขายตามยอดแก้ว ไม่นับสต็อกแยก</strong>
+          <span>{[cups["แก้วเย็น"] && `แก้วเย็นเหลือ ${fmtQty(cups["แก้วเย็น"]!.qty)} ${cups["แก้วเย็น"]!.unit}`, cups["แก้วเดินทาง"] && `แก้วร้อนเหลือ ${fmtQty(cups["แก้วเดินทาง"]!.qty)} ${cups["แก้วเดินทาง"]!.unit}`].filter(Boolean).join(" · ") || "ดูยอดแก้วได้ที่รายการแก้วเย็น cold / แก้วร้อน HOT"}</span></div>
+        <button type="button" className="btn btn--ghost" onClick={() => setShowDrinks((v) => !v)}>{showDrinks ? "ซ่อนเมนูชง" : "แสดงเมนูชง"}</button>
+      </div>}
       <div className="stk-kpis">
-        <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}><span>ทั้งหมด</span><strong>{fmtQty(items.length)}</strong><small>รายการ</small></button>
+        <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}><span>ทั้งหมด</span><strong>{fmtQty(stockItems.length)}</strong><small>รายการ</small></button>
         <button aria-pressed={filter === "low"} className="is-low" onClick={() => setFilter(filter === "low" ? "all" : "low")}><span><AlertTriangle size={13} /> ใกล้หมด</span><strong>{fmtQty(counts.low)}</strong><small>ถึงจุดแจ้งเตือน</small></button>
         <button aria-pressed={filter === "out"} className="is-out" onClick={() => setFilter(filter === "out" ? "all" : "out")}><span>หมดแล้ว</span><strong>{fmtQty(counts.out)}</strong><small>คงเหลือ 0</small></button>
         <div><span>มูลค่าสต็อก</span><strong>{fmtMoney(counts.value)}</strong><small>คงเหลือ × ต้นทุน</small></div>
@@ -162,8 +185,8 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
         </div>
         {visible.map((item) => {
           const status = stockStatus(item);
-          return <div className={`stk-row is-${status}`} role="row" key={item.ingredientId} onClick={() => setSelectedId(item.ingredientId)}>
-            <span role="cell" className="stk-name"><strong>{item.name}</strong><small>หน่วย: {item.unit}</small></span>
+          return <div className={`stk-row is-${status}${isDrink(item) ? " is-drink" : ""}`} role="row" key={item.ingredientId} onClick={() => setSelectedId(item.ingredientId)}>
+            <span role="cell" className="stk-name"><strong>{item.name}</strong><small>{isDrink(item) ? "เมนูชง · ขายตามยอดแก้ว (ตัวเลขนี้ไม่ใช้แล้ว)" : `หน่วย: ${item.unit}`}</small></span>
             <span role="cell" className="stk-cell stk-qty" data-label="คงเหลือ"><strong>{fmtQty(item.stockQty)}</strong> {item.unit}</span>
             <span role="cell" className="stk-cell" data-label="แจ้งเตือนเมื่อเหลือ">{item.reorderLevel > 0 ? `${fmtQty(item.reorderLevel)} ${item.unit}` : <em>ไม่ได้ตั้ง</em>}</span>
             <span role="cell" className="stk-cell" data-label="ต้นทุน / หน่วย">{fmtMoney(item.costPerUnit)}</span>
@@ -173,8 +196,8 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
         })}
         {!visible.length && <div className="empty">{items.length ? "ไม่มีรายการที่ตรงกับการค้นหา" : "ยังไม่มีสินค้าในสต็อกสาขานี้"}</div>}
       </div>}
-    </> : view === "count" && branchId ? <StockCountSheet branchId={branchId} items={items} onPosted={() => { void load(); onChanged?.(); }} />
-    : view === "transfer" && branchId ? <StockTransfers branchId={branchId} items={items} onChanged={() => { void load(); onChanged?.(); }} />
+    </> : view === "count" && branchId ? <StockCountSheet branchId={branchId} items={items.filter((item) => !isDrink(item))} onPosted={() => { void load(); onChanged?.(); }} />
+    : view === "transfer" && branchId ? <StockTransfers branchId={branchId} items={items.filter((item) => !isDrink(item))} onChanged={() => { void load(); onChanged?.(); }} />
     : <div className="stk-history">
       <p className="stk-hint">การรับเข้า ตัดออก นับสต็อก โอน และรับจากใบสั่งซื้อ ล่าสุด 60 รายการ (ไม่รวมการตัดสต็อกจากการขาย)</p>
       {history === null ? <div className="empty">กำลังโหลดประวัติ...</div> : history.length ? <ul className="stk-log">

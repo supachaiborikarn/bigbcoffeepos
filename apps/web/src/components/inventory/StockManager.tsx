@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { AlertTriangle, ClipboardCheck, History, Minus, Package, Plus, Search, Settings2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, ClipboardCheck, ClipboardList, History, Minus, Package, Plus, Search, Settings2, X } from "lucide-react";
 import { createIngredient, createStockAdjustment, getInventory, getStockMovements, updateInventoryItem } from "../../api";
 import type { InventoryItem, StockMovement } from "../../types";
 import { useBranch } from "../../contexts/BranchContext";
 import { useToast } from "../../contexts/ToastContext";
 import { useDialogFocus } from "../../utils/useDialogFocus";
+import StockCountSheet from "./StockCountSheet";
+import StockTransfers from "./StockTransfers";
 
 // Branch stock screen shared by admins (InventoryPage) and branch managers
 // (BranchInventoryPage). Every number carries a label, and stock changes go
@@ -50,6 +52,7 @@ export function describeMovement(reason: string): { label: string; note?: string
   if (reason.startsWith("RESTOCK_RECEIVE#")) return { label: `รับของจากคลัง #${ref("RESTOCK_RECEIVE#")}` };
   if (reason === "RESTOCK_DISPATCH") return { label: "ส่งของจากคลัง" };
   if (reason === "STOCK_EDIT") return { label: "แก้ยอดคงเหลือ" };
+  if (reason.startsWith("STOCKTAKE#")) return { label: `นับสต็อก (รอบ #${ref("STOCKTAKE#")})` };
   if (reason === "ADJUSTMENT") return { label: "ปรับสต็อก" };
   const match = /^(RECEIVE|OUT|COUNT)(?::\s*(.*))?$/.exec(reason);
   if (match) return { label: { RECEIVE: "รับเข้า", OUT: "ตัดออก", COUNT: "นับสต็อก" }[match[1] as "RECEIVE" | "OUT" | "COUNT"], note: match[2] || undefined };
@@ -64,7 +67,7 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
-  const [view, setView] = useState<"stock" | "history">("stock");
+  const [view, setView] = useState<"stock" | "count" | "transfer" | "history">("stock");
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -129,6 +132,8 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
       <div className="stk-head__actions">
         <div className="stk-seg" role="tablist" aria-label="มุมมองสต็อก">
           <button role="tab" aria-selected={view === "stock"} className={view === "stock" ? "is-active" : ""} onClick={() => setView("stock")}><Package size={15} /> รายการสต็อก</button>
+          <button role="tab" aria-selected={view === "count"} className={view === "count" ? "is-active" : ""} onClick={() => setView("count")}><ClipboardList size={15} /> นับสต็อก</button>
+          <button role="tab" aria-selected={view === "transfer"} className={view === "transfer" ? "is-active" : ""} onClick={() => setView("transfer")}><ArrowLeftRight size={15} /> โอนสต็อก</button>
           <button role="tab" aria-selected={view === "history"} className={view === "history" ? "is-active" : ""} onClick={() => setView("history")}><History size={15} /> ประวัติการปรับ</button>
         </div>
         {canEditDetails && <button className="btn btn--primary" onClick={() => setCreating(true)}><Plus size={16} /> เพิ่มรายการใหม่</button>}
@@ -168,7 +173,9 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
         })}
         {!visible.length && <div className="empty">{items.length ? "ไม่มีรายการที่ตรงกับการค้นหา" : "ยังไม่มีสินค้าในสต็อกสาขานี้"}</div>}
       </div>}
-    </> : <div className="stk-history">
+    </> : view === "count" && branchId ? <StockCountSheet branchId={branchId} items={items} onPosted={() => { void load(); onChanged?.(); }} />
+    : view === "transfer" && branchId ? <StockTransfers branchId={branchId} items={items} onChanged={() => { void load(); onChanged?.(); }} />
+    : <div className="stk-history">
       <p className="stk-hint">การรับเข้า ตัดออก นับสต็อก โอน และรับจากใบสั่งซื้อ ล่าสุด 60 รายการ (ไม่รวมการตัดสต็อกจากการขาย)</p>
       {history === null ? <div className="empty">กำลังโหลดประวัติ...</div> : history.length ? <ul className="stk-log">
         {history.map((m) => <MovementRow key={m.id} movement={m} unit={nameById.get(m.ingredientId)?.unit} name={nameById.get(m.ingredientId)?.name ?? `สินค้า #${m.ingredientId}`} />)}

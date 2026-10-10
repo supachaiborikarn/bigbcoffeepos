@@ -41,8 +41,15 @@ const recipes = await prisma.recipe.findMany({
   include: { menuItem: true, ingredient: { select: { name: true } } }
 });
 const selfRecipes = recipes.filter((r) => r.menuItem.name.trim() === r.ingredient.name.trim());
+// Owner-reviewed overrides (2026-10-10): the rule misses these drinks, and these
+// two are not cup drinks (add-on / dessert) so their stock stays tracked.
+const FORCE_DRINK = new Set(["ออเรนจิโน่", "บลูฮาวายปั่น", "บลูฮาวายปั่นแก้วมาเอง", "นมชมพู", "นมชมพูปั่นแก้วมาเอง", "โก้โกปั่นแก้วมาเอง"]);
+const FORCE_KEEP = new Set(["เพิ่มนมสด", "เต้าฮวยนมสด"]);
 const isDrink = (r: (typeof selfRecipes)[number]) => {
   const item = r.menuItem as any;
+  const name = r.menuItem.name.trim();
+  if (FORCE_KEEP.has(name)) return false;
+  if (FORCE_DRINK.has(name)) return true;
   return shouldUseModifierModal(item) || isCupVariantMenuItem(item);
 };
 const remove = selfRecipes.filter(isDrink);

@@ -99,7 +99,12 @@ function scheduleBackgroundTask(name: string, task: Promise<unknown>, meta: Reco
     // Local Express has no Vercel request context, but the promise has already started.
   }
 }
-async function readAuditRows(input: { limit?: number; action?: string } = {}) {
+async function readAuditRows(input: { limit?: number; action?: string; branchId?: number } = {}) {
+  try {
+    return await listAuditEvents(input);
+  } catch (error) {
+    log("warn", "audit_db_read_failed", { message: (error as Error).message });
+  }
   const auditLogFile = process.env.AUDIT_LOG_FILE || path.resolve(process.cwd(), "data", "audit.log");
   const limit = Math.min(Math.max(Math.floor(input.limit ?? 100), 1), 1000);
   try {
@@ -130,6 +135,7 @@ log("info", "db_mode", { mode: isProduction ? "production" : "development", prov
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 import { requireAuth, requireAdmin, requireRole, requireBranchAccess, generateToken, type AuthRequest } from "./middleware/auth.js";
+import { listAuditEvents } from "./store/auditEvents.js";
 import { addCashEntry, CASH_IN_CATEGORIES, CASH_OUT_CATEGORIES, getCashEntryBranch, listCashEntries, voidCashEntry } from "./store/cashDrawer.js";
 
 const pinAttempts = new Map<string, { count: number; resetAt: number }>();
@@ -173,7 +179,8 @@ app.get("/api/auth/me", (req: AuthRequest, res) => res.json({ user: req.user }))
 app.get("/api/audit", requireAdmin, async (req, res) => {
   const limit = req.query.limit ? Number(req.query.limit) : undefined;
   const action = isStr(req.query.action) ? String(req.query.action) : undefined;
-  return res.json({ items: await readAuditRows({ limit, action }) });
+  const branchId = parseId(req.query.branchId as string) ?? undefined;
+  return res.json({ items: await readAuditRows({ limit, action, branchId }) });
 });
 
 app.get("/api/audit.csv", requireAdmin, async (req, res) => {

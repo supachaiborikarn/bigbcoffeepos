@@ -696,6 +696,25 @@ export async function closeShift(shiftId: number, closingCash: number, details?:
   return payload;
 }
 
+export type AuditEvent = {
+  id: number;
+  ts: string;
+  action: string;
+  actor: { id: number; role: string | null; name: string | null } | null;
+  branchId: number | null;
+  requestId: string | null;
+  [detail: string]: unknown;
+};
+
+export async function getAuditEvents(params: { limit?: number; action?: string; branchId?: number } = {}) {
+  const query = new URLSearchParams();
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.action) query.set("action", params.action);
+  if (params.branchId) query.set("branchId", String(params.branchId));
+  const payload = await fetchJson<{ items: AuditEvent[] }>(`${API_URL}/audit?${query.toString()}`);
+  return payload.items;
+}
+
 export async function getCashEntries(shiftId: number) {
   const payload = await fetchJson<{ items: CashEntry[] }>(`${API_URL}/shifts/${shiftId}/cash-entries`);
   return payload.items;

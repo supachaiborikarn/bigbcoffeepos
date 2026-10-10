@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useBranch } from "../../contexts/BranchContext";
 import { businessProfile, roleLabels } from "../../utils/business";
-import { LayoutDashboard, Package, Users, BarChart3, Settings, LogOut, UserCircle, ShoppingBag, ClipboardList, Database, PanelsTopLeft, PanelLeftClose, PanelLeftOpen, X, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Package, Users, BarChart3, Settings, LogOut, UserCircle, ShoppingBag, ClipboardList, Database, PanelsTopLeft, PanelLeftClose, PanelLeftOpen, X, ShieldCheck, History } from "lucide-react";
 
 interface SidebarProps { collapsed?: boolean; onToggle?: () => void; mobileOpen?: boolean; onClose?: () => void }
 
@@ -22,6 +22,7 @@ export default function Sidebar({ collapsed = false, onToggle, mobileOpen, onClo
     { to: "/reports", label: "รายงานยอดขาย", icon: BarChart3, min: 2, group: "จัดการร้าน" },
     { to: "/admin", label: "ภาพรวมทุกสาขา", icon: PanelsTopLeft, min: 3, group: "ระบบ" },
     { to: "/staff", label: "พนักงานและสิทธิ์", icon: Users, min: 3, group: "ระบบ" },
+    { to: "/activity", label: "บันทึกกิจกรรม", icon: History, min: 3, group: "ระบบ" },
     { to: "/parity", label: "งานหลังร้าน", icon: ClipboardList, min: 3, group: "ระบบ" },
     { to: "/migration", label: "นำเข้าข้อมูล", icon: Database, min: 3, group: "ระบบ" },
     { to: "/settings", label: "ตั้งค่าระบบ", icon: Settings, min: 3, group: "ระบบ" }

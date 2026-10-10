@@ -7,6 +7,7 @@ const LoginPage = lazy(() => import("./pages/LoginPage"));
 const BranchSelectPage = lazy(() => import("./pages/BranchSelectPage"));
 const DashboardPage = lazy(() => import("./components/DashboardPage"));
 const AdminDashboardPage = lazy(() => import("./pages/AdminDashboardPage"));
+const ActivityLogPage = lazy(() => import("./pages/ActivityLogPage"));
 const POSPage = lazy(() => import("./pages/POSPage"));
 const InventoryPage = lazy(() => import("./pages/InventoryPage"));
 const BranchInventoryPage = lazy(() => import("./pages/BranchInventoryPage"));
@@ -48,6 +49,7 @@ export const router = createBrowserRouter([
       { path: "/marketing", element: <Navigate to="/pos" replace /> },
       { path: "/migration", element: routeElement(<MigrationPage />) },
       { path: "/settings", element: routeElement(<SettingsPage />) },
+      { path: "/activity", element: routeElement(<ActivityLogPage />) },
     ],
   },
   { path: "*", element: <Navigate to="/login" replace /> },

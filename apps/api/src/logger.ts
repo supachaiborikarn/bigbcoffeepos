@@ -127,6 +127,11 @@ export function audit(action: string, req: AuthRequest | express.Request, detail
   const line = JSON.stringify(entry);
   console.log(line);
 
+  // Durable copy (the file below doesn't survive on serverless hosts).
+  import("./store/auditEvents.js")
+    .then(({ saveAuditEvent }) => saveAuditEvent(entry))
+    .catch((err) => log("warn", "audit_db_write_failed", { message: err instanceof Error ? err.message : String(err) }));
+
   fs.promises.mkdir(path.dirname(auditLogFile), { recursive: true })
     .then(() => fs.promises.appendFile(auditLogFile, `${line}\n`))
     .catch((err) => {

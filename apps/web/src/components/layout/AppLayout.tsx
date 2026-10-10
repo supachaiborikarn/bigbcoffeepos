@@ -7,7 +7,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useBranch } from "../../contexts/BranchContext";
 import { businessProfile } from "../../utils/business";
 
-const ADMIN_ROUTES = ["/admin", "/staff", "/migration", "/settings", "/parity"];
+const ADMIN_ROUTES = ["/admin", "/staff", "/migration", "/settings", "/parity", "/activity"];
 const MANAGER_ROUTES = ["/dashboard", "/reports", "/customers", "/inventory"];
 
 export default function AppLayout() {

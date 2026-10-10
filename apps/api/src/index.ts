@@ -16,7 +16,7 @@ import {
   getBranches, getCustomers, getCustomerInsights, addCustomer, updateCustomer,
   getMenu, addMenuItem, setMenuGroupActive, updateMenuItem,
   getIngredients, addIngredient, updateIngredient,
-  getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
+  getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, normalizeBarcode, assertBarcodeFree,
   getCentralWarehouses, ensureCentralWarehouse, getWarehouseInventory, adjustWarehouseStock,
   listRestockRequests, createRestockRequest, submitRestockRequest, startRestockPicking, dispatchRestockShipment, receiveRestockShipment,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
@@ -397,7 +397,14 @@ app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req
 });
 
 /* ─── Ingredients & Inventory ─── */
-app.get("/api/ingredients", async (req: AuthRequest, res) => res.json({ items: await prisma.ingredient.findMany({ where: req.branchScope ? { stocks: { some: { branchId: req.branchScope.id } } } : {}, orderBy: { id: "asc" } }) }));
+app.get("/api/ingredients", async (req: AuthRequest, res) => {
+  const scope = req.branchScope;
+  // scope=receivable also lists items this branch sells (via recipes) but has never stocked, so they can be received
+  const where = !scope ? {} : req.query.scope === "receivable"
+    ? { OR: [{ stocks: { some: { branchId: scope.id } } }, { recipes: { some: { menuItem: { branchType: scope.branchType } } } }] }
+    : { stocks: { some: { branchId: scope.id } } };
+  res.json({ items: await prisma.ingredient.findMany({ where, orderBy: { id: "asc" } }) });
+});
 app.post("/api/ingredients", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
@@ -405,16 +412,22 @@ app.post("/api/ingredients", requireRole("admin", "manager"), requireBranchAcces
   const unit = isStr(req.body?.unit) ? req.body.unit.trim() : "";
   const costPerUnit = parseMoney(req.body?.costPerUnit);
   if (!name || !unit || costPerUnit === null) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
-  const ingredient = await addIngredient({ name, unit, costPerUnit, stockQty: Number(req.body?.stockQty) || 0, reorderLevel: Number(req.body?.reorderLevel) || 0, branchId });
+  let barcode: string | null | undefined;
+  try { barcode = normalizeBarcode(req.body?.barcode); await assertBarcodeFree(barcode); }
+  catch (e) { return res.status(409).json({ error: (e as Error).message }); }
+  const ingredient = await addIngredient({ name, unit, costPerUnit, barcode, stockQty: Number(req.body?.stockQty) || 0, reorderLevel: Number(req.body?.reorderLevel) || 0, branchId });
   audit("ingredient.created", req, { ingredientId: ingredient?.id, branchId });
   return res.status(201).json({ ingredient });
 });
 app.put("/api/ingredients/:id", requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
-  const ingredient = await updateIngredient(id, { name: req.body?.name?.trim(), unit: req.body?.unit?.trim(), costPerUnit: req.body?.costPerUnit !== undefined ? parseMoney(req.body.costPerUnit) ?? undefined : undefined });
+  let barcode: string | null | undefined;
+  try { barcode = normalizeBarcode(req.body?.barcode); await assertBarcodeFree(barcode, id); }
+  catch (e) { return res.status(409).json({ error: (e as Error).message }); }
+  const ingredient = await updateIngredient(id, { name: req.body?.name?.trim(), unit: req.body?.unit?.trim(), costPerUnit: req.body?.costPerUnit !== undefined ? parseMoney(req.body.costPerUnit) ?? undefined : undefined, barcode });
   if (!ingredient) return res.status(404).json({ error: "ไม่พบวัตถุดิบ" });
-  audit("ingredient.updated", req, { ingredientId: id });
+  audit("ingredient.updated", req, { ingredientId: id, changedFields: Object.keys(req.body ?? {}) });
   return res.json({ ingredient });
 });
 app.get("/api/inventory", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
@@ -434,6 +447,9 @@ app.put("/api/inventory/:ingredientId", requireRole("admin", "manager"), require
   if (req.body?.costPerUnit !== undefined && costPerUnit === null) return res.status(400).json({ error: "ต้นทุนไม่ถูกต้อง" });
   if (req.body?.stockQty !== undefined && stockQty === null) return res.status(400).json({ error: "จำนวนคงเหลือไม่ถูกต้อง" });
   if (req.body?.reorderLevel !== undefined && reorderLevel === null) return res.status(400).json({ error: "จุดสั่งซื้อไม่ถูกต้อง" });
+  let barcode: string | null | undefined;
+  try { barcode = normalizeBarcode(req.body?.barcode); await assertBarcodeFree(barcode, ingredientId); }
+  catch (e) { return res.status(409).json({ error: (e as Error).message }); }
 
   const normalizedCostPerUnit = costPerUnit === null ? undefined : costPerUnit;
   const normalizedStockQty = stockQty === null ? undefined : stockQty;
@@ -445,6 +461,7 @@ app.put("/api/inventory/:ingredientId", requireRole("admin", "manager"), require
     name: req.body?.name?.trim(),
     unit: req.body?.unit?.trim(),
     costPerUnit: normalizedCostPerUnit,
+    barcode,
     stockQty: normalizedStockQty,
     reorderLevel: normalizedReorderLevel
   });
@@ -956,8 +973,10 @@ app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess(
     return res.status(400).json({ error: "รายการรับของเข้าไม่ถูกต้อง" });
   }
   try {
-    const po = await createPurchase(branchId, supplier || "ไม่ระบุผู้ขาย", note, normalizedItems as { ingredientId: number; qty: number; unitCost: number }[]);
-    audit("purchase.created", req, { purchaseId: po?.id, branchId, total: po?.totalCost });
+    // cost is shared master data (see protectSharedConfiguration), so only an admin's receipt moves it
+    const updateCost = req.body?.updateCost !== false && (req as AuthRequest).user?.role === "admin";
+    const po = await createPurchase(branchId, supplier || "ไม่ระบุผู้ขาย", note, normalizedItems as { ingredientId: number; qty: number; unitCost: number }[], { updateCost });
+    audit("purchase.created", req, { purchaseId: po?.id, branchId, total: po?.totalCost, costChanges: po?.costChanges });
     return res.status(201).json({ purchase: po });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });

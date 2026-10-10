@@ -111,6 +111,7 @@ model Ingredient {
   name        String
   unit        String   @default("ชิ้น")
   costPerUnit Float    @default(0) @map("cost_per_unit")
+  barcode     String?  @unique
   createdAt   DateTime @default(now()) @map("created_at")
 
   stocks         IngredientStock[]

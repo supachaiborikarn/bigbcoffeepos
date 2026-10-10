@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, EyeOff, PackageCheck, Plus, Printer, RotateCcw, Save, Search, X } from "lucide-react";
 import {
   createMenuItem,
-  createPurchase,
   deactivateMenuItem,
   getCupStockSettings,
   getIngredients,
@@ -19,11 +18,12 @@ import {
   updateMenuItem,
   updateRecipe
 } from "../api";
-import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrder, PurchaseOrderItem, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient, StockMovement } from "../types";
+import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrder, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient, StockMovement } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 import { printBarcodeLabels } from "../utils/barcode";
 import StockManager, { describeMovement } from "../components/inventory/StockManager";
+import PurchaseReceiving from "../components/inventory/PurchaseReceiving";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -255,8 +255,6 @@ export default function InventoryPage() {
   const [recipeCoverage, setRecipeCoverage] = useState<RecipeCoverageReport | null>(null);
 
   const [menuForm, setMenuForm] = useState<ProductFormState>(() => createBlankProductForm(defaultBranchType));
-  const [purchaseForm, setPurchaseForm] = useState({ supplier: "", note: "", ingredientId: "", qty: "", unitCost: "" });
-  const [purchaseItems, setPurchaseItems] = useState<PurchaseOrderItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [productSearch, setProductSearch] = useState("");
@@ -929,50 +927,6 @@ export default function InventoryPage() {
     }
   };
 
-  const handleAddPurchaseLine = () => {
-    const ingredientId = Number(purchaseForm.ingredientId);
-    const qty = Number(purchaseForm.qty);
-    const unitCost = Number(purchaseForm.unitCost);
-    const ingredient = ingredients.find((item) => item.id === ingredientId);
-    if (!ingredient || !qty || !unitCost) return toast.error("เลือกสินค้าเข้าและกรอกจำนวน/ต้นทุน");
-
-    setPurchaseItems((prev) => [
-      ...prev,
-      {
-        ingredientId,
-        ingredientName: ingredient.name,
-        unit: ingredient.unit,
-        qty,
-        unitCost,
-        lineTotal: qty * unitCost
-      }
-    ]);
-    setPurchaseForm((prev) => ({ ...prev, ingredientId: "", qty: "", unitCost: "" }));
-  };
-
-  const handleReceivePurchase = async () => {
-    if (!activeBranch) return toast.error("เลือกสาขาก่อน");
-    if (!purchaseItems.length) return toast.error("เพิ่มรายการรับเข้าก่อน");
-
-    setIsSubmitting(true);
-    try {
-      await createPurchase({
-        branchId: activeBranch.id,
-        supplier: purchaseForm.supplier,
-        note: purchaseForm.note,
-        items: purchaseItems
-      });
-      setPurchaseForm({ supplier: "", note: "", ingredientId: "", qty: "", unitCost: "" });
-      setPurchaseItems([]);
-      await refreshInventory();
-      toast.success("รับสินค้าเข้าสต็อกเรียบร้อย");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return (
     <main className="inventory-workspace">
       <section className="inventory-summary">
@@ -1606,6 +1560,27 @@ export default function InventoryPage() {
       {/* MOVEMENTS TAB */}
       {activeTab === "movements" && (
         <section className="inventory-layout" style={{ animation: "slideUp 0.2s ease-out" }}>
+          <section className="panel panel--receive">
+            <div className="panel__header">
+              <div>
+                <h2>รับสินค้าเข้า</h2>
+                <p className="muted">สแกนหรือค้นหาสินค้าตามบิล แล้วรับเข้าสต็อกสาขานี้ทีเดียว</p>
+              </div>
+            </div>
+            <div className="panel__body">
+              {activeBranch ? (
+                <PurchaseReceiving
+                  branchId={activeBranch.id}
+                  branchType={activeBranch.branchType}
+                  inventory={inventory}
+                  menu={menu}
+                  purchases={purchases}
+                  onReceived={refreshInventory}
+                />
+              ) : <p className="stk-hint">เลือกสาขาก่อนรับสินค้าเข้า</p>}
+            </div>
+          </section>
+
           <section className="panel">
             <div className="panel__header">
               <div>
@@ -1630,46 +1605,6 @@ export default function InventoryPage() {
                     </div>
                   );
                 })}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel__header">
-              <div>
-                <h2>รับสินค้าเข้า</h2>
-                <p className="muted">ทำรายการซื้อและเพิ่มสต็อกทันที</p>
-              </div>
-            </div>
-            <div className="panel__body">
-              <div className="inventory-form-grid inventory-form-grid--compact">
-                <input className="input" value={purchaseForm.supplier} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplier: e.target.value })} placeholder="ผู้ขาย/ซัพพลายเออร์" />
-                <input className="input" value={purchaseForm.note} onChange={(e) => setPurchaseForm({ ...purchaseForm, note: e.target.value })} placeholder="หมายเหตุ" />
-                <select className="input" value={purchaseForm.ingredientId} onChange={(e) => setPurchaseForm({ ...purchaseForm, ingredientId: e.target.value })}>
-                  <option value="">เลือกวัตถุดิบ</option>
-                  {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
-                <input className="input" type="number" value={purchaseForm.qty} onChange={(e) => setPurchaseForm({ ...purchaseForm, qty: e.target.value })} placeholder="จำนวน" min="0" step="0.001" />
-                <input className="input" type="number" value={purchaseForm.unitCost} onChange={(e) => setPurchaseForm({ ...purchaseForm, unitCost: e.target.value })} placeholder="ต้นทุน" min="0" step="0.01" />
-                <button type="button" className="btn btn--ghost" onClick={handleAddPurchaseLine}>เพิ่มรายการ</button>
-              </div>
-              <div className="purchase-lines">
-                {purchaseItems.map((item, index) => (
-                  <div key={`${item.ingredientId}-${index}`} className="purchase-line">
-                    <span>{item.ingredientName} · {item.qty} {item.unit}</span>
-                    <strong>{formatMoney(item.lineTotal ?? item.qty * item.unitCost)}</strong>
-                  </div>
-                ))}
-              </div>
-              <button type="button" className="btn btn--primary" disabled={isSubmitting || !purchaseItems.length} onClick={handleReceivePurchase}>รับสินค้าเข้า</button>
-              <div className="movement-list">
-                <strong>ประวัติรับเข้า</strong>
-                {purchases.slice(0, 5).map((purchase) => (
-                  <div key={purchase.id} className="movement-row">
-                    <span>{purchase.supplier || "ไม่ระบุผู้ขาย"}<small>{purchase.itemCount} รายการ</small></span>
-                    <strong>{formatMoney(purchase.totalCost)}</strong>
-                  </div>
-                ))}
               </div>
             </div>
           </section>

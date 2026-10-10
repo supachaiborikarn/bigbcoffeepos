@@ -417,8 +417,8 @@ export async function setMenuGroupActive(input: {
   return payload.items;
 }
 
-export async function getIngredients() {
-  const payload = await fetchJson<{ items: Ingredient[] }>(`${API_URL}/ingredients`);
+export async function getIngredients(options: { receivable?: boolean } = {}) {
+  const payload = await fetchJson<{ items: Ingredient[] }>(`${API_URL}/ingredients${options.receivable ? "?scope=receivable" : ""}`);
   return payload.items;
 }
 
@@ -434,6 +434,7 @@ export async function updateInventoryItem(
     name: string;
     unit: string;
     costPerUnit: number;
+    barcode: string | null;
     stockQty: number;
     reorderLevel: number;
   }>
@@ -451,6 +452,7 @@ export async function createIngredient(input: {
   name: string;
   unit: string;
   costPerUnit: number;
+  barcode?: string | null;
   stockQty: number;
   reorderLevel: number;
   branchId: number;
@@ -464,7 +466,7 @@ export async function createIngredient(input: {
 
 export async function updateIngredient(
   id: number,
-  input: Partial<{ name: string; unit: string; costPerUnit: number }>
+  input: Partial<{ name: string; unit: string; costPerUnit: number; barcode: string | null }>
 ) {
   const payload = await fetchJson<{ ingredient: Ingredient }>(`${API_URL}/ingredients/${id}`,
     {
@@ -791,6 +793,8 @@ export async function createPurchase(input: {
   supplier: string;
   note: string;
   items: PurchaseOrderItem[];
+  /** Admin only (server enforces): set each item's cost to this receipt's price. */
+  updateCost?: boolean;
 }) {
   const payload = await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases`, {
     method: "POST",

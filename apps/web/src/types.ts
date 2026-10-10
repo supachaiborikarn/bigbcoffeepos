@@ -177,6 +177,7 @@ export type Ingredient = {
   name: string;
   unit: string;
   costPerUnit: number;
+  barcode?: string | null;
   createdAt: string;
 };
 
@@ -185,6 +186,7 @@ export type InventoryItem = {
   name: string;
   unit: string;
   costPerUnit: number;
+  barcode?: string | null;
   stockQty: number;
   reorderLevel: number;
 };
@@ -310,6 +312,8 @@ export type PurchaseOrder = {
   createdAt: string;
   itemCount?: number;
   items?: PurchaseOrderItem[];
+  /** Only on create: stock items whose cost moved to this receipt's price. */
+  costChanges?: { ingredientId: number; from: number; to: number }[];
 };
 
 export type TaxInvoice = {

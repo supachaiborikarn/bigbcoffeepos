@@ -127,7 +127,7 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
     const q = search.trim().toLowerCase();
     return stockItems.filter((item) => {
       if (filter !== "all" && stockStatus(item) !== filter) return false;
-      return !q || `${item.name} ${item.unit}`.toLowerCase().includes(q);
+      return !q || `${item.name} ${item.unit} ${item.barcode ?? ""}`.toLowerCase().includes(q);
     });
   }, [stockItems, filter, search]);
 
@@ -171,7 +171,7 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
         <div><span>มูลค่าสต็อก</span><strong>{fmtMoney(counts.value)}</strong><small>คงเหลือ × ต้นทุน</small></div>
       </div>
 
-      <label className="studio-search stk-search"><Search size={18} /><input aria-label="ค้นหาสินค้าในสต็อก" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อสินค้า / วัตถุดิบ" /></label>
+      <label className="studio-search stk-search"><Search size={18} /><input aria-label="ค้นหาสินค้าในสต็อก" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อสินค้า / วัตถุดิบ / บาร์โค้ด" /></label>
 
       {error && <p role="alert" className="negative">{error}</p>}
       {loading ? <div className="empty">กำลังโหลดสต็อก...</div> : <div className="stk-table" role="table" aria-label="รายการสต็อก">
@@ -186,7 +186,7 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
         {visible.map((item) => {
           const status = stockStatus(item);
           return <div className={`stk-row is-${status}${isDrink(item) ? " is-drink" : ""}`} role="row" key={item.ingredientId} onClick={() => setSelectedId(item.ingredientId)}>
-            <span role="cell" className="stk-name"><strong>{item.name}</strong><small>{isDrink(item) ? "เมนูชง · ขายตามยอดแก้ว (ตัวเลขนี้ไม่ใช้แล้ว)" : `หน่วย: ${item.unit}`}</small></span>
+            <span role="cell" className="stk-name"><strong>{item.name}</strong><small>{isDrink(item) ? "เมนูชง · ขายตามยอดแก้ว (ตัวเลขนี้ไม่ใช้แล้ว)" : `หน่วย: ${item.unit}${item.barcode ? ` · ${item.barcode}` : ""}`}</small></span>
             <span role="cell" className="stk-cell stk-qty" data-label="คงเหลือ"><strong>{fmtQty(item.stockQty)}</strong> {item.unit}</span>
             <span role="cell" className="stk-cell" data-label="แจ้งเตือนเมื่อเหลือ">{item.reorderLevel > 0 ? `${fmtQty(item.reorderLevel)} ${item.unit}` : <em>ไม่ได้ตั้ง</em>}</span>
             <span role="cell" className="stk-cell" data-label="ต้นทุน / หน่วย">{fmtMoney(item.costPerUnit)}</span>
@@ -228,7 +228,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<StockMovement[] | null>(null);
-  const [details, setDetails] = useState({ name: item.name, unit: item.unit, costPerUnit: String(item.costPerUnit), reorderLevel: String(item.reorderLevel) });
+  const [details, setDetails] = useState({ name: item.name, unit: item.unit, costPerUnit: String(item.costPerUnit), barcode: item.barcode ?? "", reorderLevel: String(item.reorderLevel) });
   const status = stockStatus(item);
 
   useEffect(() => {
@@ -278,7 +278,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
     setSaving(true);
     try {
       const updated = await updateInventoryItem(item.ingredientId, canEditDetails
-        ? { branchId, name: details.name.trim(), unit: details.unit.trim(), costPerUnit, reorderLevel }
+        ? { branchId, name: details.name.trim(), unit: details.unit.trim(), costPerUnit, barcode: details.barcode.trim() || null, reorderLevel }
         : { branchId, reorderLevel });
       toast.success("บันทึกการตั้งค่าแล้ว");
       onSaved(updated);
@@ -324,12 +324,13 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
       </form>
 
       <details className="stk-settings">
-        <summary><Settings2 size={15} /> ตั้งค่าสินค้านี้{canEditDetails ? " (ชื่อ หน่วย ต้นทุน จุดแจ้งเตือน)" : " (จุดแจ้งเตือน)"}</summary>
+        <summary><Settings2 size={15} /> ตั้งค่าสินค้านี้{canEditDetails ? " (ชื่อ หน่วย ต้นทุน บาร์โค้ด จุดแจ้งเตือน)" : " (จุดแจ้งเตือน)"}</summary>
         <form onSubmit={saveDetails} className="stk-settings__grid">
           {canEditDetails && <>
             <label className="stk-field stk-field--wide"><span>ชื่อสินค้า / วัตถุดิบ</span><input className="input" value={details.name} onChange={(e) => setDetails({ ...details, name: e.target.value })} /></label>
             <label className="stk-field"><span>หน่วยนับ</span><input className="input" value={details.unit} onChange={(e) => setDetails({ ...details, unit: e.target.value })} /></label>
             <label className="stk-field"><span>ต้นทุนต่อหน่วย (บาท)</span><input className="input" type="number" min="0" step="0.01" value={details.costPerUnit} onChange={(e) => setDetails({ ...details, costPerUnit: e.target.value })} /></label>
+            <label className="stk-field stk-field--wide"><span>บาร์โค้ด</span><input className="input" value={details.barcode} maxLength={64} autoComplete="off" spellCheck={false} onChange={(e) => setDetails({ ...details, barcode: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} placeholder="ยิงหรือพิมพ์บาร์โค้ด" /><small>ใช้ยิงตอนรับสินค้าเข้า · เว้นว่าง = ไม่มี</small></label>
           </>}
           <label className="stk-field"><span>แจ้งเตือนเมื่อเหลือ ({item.unit})</span><input className="input" type="number" min="0" step="any" value={details.reorderLevel} onChange={(e) => setDetails({ ...details, reorderLevel: e.target.value })} /><small>ใส่ 0 = ไม่แจ้งเตือน</small></label>
           <button className="btn btn--ghost stk-field--wide" disabled={saving}>บันทึกการตั้งค่า</button>
@@ -349,7 +350,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
 function CreateDialog({ branchId, onClose, onCreated }: { branchId: number; onClose: () => void; onCreated: () => void }) {
   const toast = useToast();
   const ref = useDialogFocus(onClose);
-  const [form, setForm] = useState({ name: "", unit: "ชิ้น", costPerUnit: "", stockQty: "", reorderLevel: "" });
+  const [form, setForm] = useState({ name: "", unit: "ชิ้น", costPerUnit: "", barcode: "", stockQty: "", reorderLevel: "" });
   const [saving, setSaving] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -358,7 +359,7 @@ function CreateDialog({ branchId, onClose, onCreated }: { branchId: number; onCl
     if ([costPerUnit, stockQty, reorderLevel].some((n) => !Number.isFinite(n) || n < 0)) return toast.error("ตัวเลขต้องตั้งแต่ 0 ขึ้นไป");
     setSaving(true);
     try {
-      await createIngredient({ name: form.name.trim(), unit: form.unit.trim(), costPerUnit, stockQty, reorderLevel, branchId });
+      await createIngredient({ name: form.name.trim(), unit: form.unit.trim(), costPerUnit, barcode: form.barcode.trim() || null, stockQty, reorderLevel, branchId });
       toast.success(`เพิ่ม ${form.name.trim()} แล้ว`);
       onCreated();
     } catch (err) { toast.error((err as Error).message); } finally { setSaving(false); }
@@ -373,6 +374,7 @@ function CreateDialog({ branchId, onClose, onCreated }: { branchId: number; onCl
           <input className="input" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} aria-label="หน่วยนับ (พิมพ์เอง)" />
         </div>
         <label className="stk-field"><span>ต้นทุนต่อหน่วย (บาท)</span><input className="input" type="number" min="0" step="0.01" value={form.costPerUnit} onChange={(e) => setForm({ ...form, costPerUnit: e.target.value })} placeholder="0" /></label>
+        <label className="stk-field"><span>บาร์โค้ด</span><input className="input" value={form.barcode} maxLength={64} autoComplete="off" spellCheck={false} onChange={(e) => setForm({ ...form, barcode: e.target.value })} onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} placeholder="ไม่บังคับ" /></label>
         <label className="stk-field"><span>จำนวนเริ่มต้น ({form.unit || "หน่วย"})</span><input className="input" type="number" min="0" step="any" value={form.stockQty} onChange={(e) => setForm({ ...form, stockQty: e.target.value })} placeholder="0" /></label>
         <label className="stk-field"><span>แจ้งเตือนเมื่อเหลือ ({form.unit || "หน่วย"})</span><input className="input" type="number" min="0" step="any" value={form.reorderLevel} onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })} placeholder="0 = ไม่แจ้งเตือน" /></label>
         <button className="btn btn--primary stk-field--wide" disabled={saving}>{saving ? "กำลังบันทึก..." : "บันทึกรายการใหม่"}</button>

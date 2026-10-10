@@ -3,6 +3,23 @@ import { Prisma } from "@prisma/client";
 
 const SALES_ONLY_ITEM_NAME = "POSPOS sales-only record";
 
+/** Trimmed barcode, null to clear; undefined when the field was not sent. Throws on unusable input. */
+export function normalizeBarcode(raw: unknown): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const code = String(raw).trim();
+  if (!code) return null;
+  if (code.length > 64 || !/^[\x21-\x7E]+$/.test(code)) throw new Error("บาร์โค้ดต้องเป็นตัวอักษรอังกฤษ/ตัวเลข ไม่เกิน 64 ตัว");
+  return code;
+}
+
+/** A barcode belongs to at most one stock item; name the owner so the user knows what to fix. */
+export async function assertBarcodeFree(code: string | null | undefined, exceptIngredientId?: number) {
+  if (!code) return;
+  const owner = await prisma.ingredient.findFirst({ where: { barcode: code, ...(exceptIngredientId ? { id: { not: exceptIngredientId } } : {}) }, select: { name: true } });
+  if (owner) throw new Error(`บาร์โค้ด ${code} ผูกกับ "${owner.name}" อยู่แล้ว`);
+}
+
 export async function getIngredients() {
   return prisma.ingredient.findMany({
     orderBy: { id: "asc" }
@@ -13,6 +30,7 @@ export async function addIngredient(input: {
   name: string;
   unit: string;
   costPerUnit: number;
+  barcode?: string | null;
   stockQty: number;
   reorderLevel: number;
   branchId: number;
@@ -21,7 +39,8 @@ export async function addIngredient(input: {
     data: {
       name: input.name,
       unit: input.unit,
-      costPerUnit: input.costPerUnit
+      costPerUnit: input.costPerUnit,
+      ...(input.barcode ? { barcode: input.barcode } : {})
     }
   });
 
@@ -43,9 +62,9 @@ export async function addIngredient(input: {
 
 export async function updateIngredient(
   id: number,
-  input: Partial<{ name: string; unit: string; costPerUnit: number }>
+  input: Partial<{ name: string; unit: string; costPerUnit: number; barcode: string | null }>
 ) {
-  const hasUpdates = input.name !== undefined || input.unit !== undefined || input.costPerUnit !== undefined;
+  const hasUpdates = input.name !== undefined || input.unit !== undefined || input.costPerUnit !== undefined || input.barcode !== undefined;
   if (!hasUpdates) return null;
 
   try {
@@ -54,7 +73,8 @@ export async function updateIngredient(
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.unit !== undefined ? { unit: input.unit } : {}),
-        ...(input.costPerUnit !== undefined ? { costPerUnit: input.costPerUnit } : {})
+        ...(input.costPerUnit !== undefined ? { costPerUnit: input.costPerUnit } : {}),
+        ...(input.barcode !== undefined ? { barcode: input.barcode } : {})
       }
     });
     return updated;
@@ -81,6 +101,7 @@ export async function getInventoryItems(branchId: number) {
       name: i.name,
       unit: i.unit,
       costPerUnit: i.costPerUnit,
+      barcode: i.barcode,
       stockQty: stock ? stock.stockQty : 0,
       reorderLevel: stock ? stock.reorderLevel : 0
     };
@@ -93,6 +114,7 @@ export async function updateInventoryItem(input: {
   name?: string;
   unit?: string;
   costPerUnit?: number;
+  barcode?: string | null;
   stockQty?: number;
   reorderLevel?: number;
 }) {
@@ -113,7 +135,8 @@ export async function updateInventoryItem(input: {
   const hasIngredientUpdates =
     input.name !== undefined ||
     input.unit !== undefined ||
-    input.costPerUnit !== undefined;
+    input.costPerUnit !== undefined ||
+    input.barcode !== undefined;
   const hasStockUpdates =
     input.stockQty !== undefined ||
     input.reorderLevel !== undefined;
@@ -125,7 +148,8 @@ export async function updateInventoryItem(input: {
         data: {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.unit !== undefined ? { unit: input.unit } : {}),
-          ...(input.costPerUnit !== undefined ? { costPerUnit: input.costPerUnit } : {})
+          ...(input.costPerUnit !== undefined ? { costPerUnit: input.costPerUnit } : {}),
+          ...(input.barcode !== undefined ? { barcode: input.barcode } : {})
         }
       });
     }

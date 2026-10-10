@@ -6,8 +6,9 @@ interface PurchaseItemInput {
   unitCost: number;
 }
 
-export async function createPurchase(branchId: number, supplier: string, note: string, items: PurchaseItemInput[]) {
+export async function createPurchase(branchId: number, supplier: string, note: string, items: PurchaseItemInput[], options: { updateCost?: boolean } = {}) {
   const totalCost = items.reduce((sum, i) => sum + i.qty * i.unitCost, 0);
+  const costChanges: { ingredientId: number; from: number; to: number }[] = [];
 
   // Prisma transaction
   const purchase = await prisma.$transaction(async (tx: any) => {
@@ -62,10 +63,25 @@ export async function createPurchase(branchId: number, supplier: string, note: s
       });
     }
 
+    // Latest purchase price becomes the item's cost. Free (฿0) lines are skipped so a
+    // giveaway never wipes a real cost; if an item appears twice the last line wins.
+    if (options.updateCost) {
+      const latest = new Map<number, number>();
+      for (const item of items) if (item.unitCost > 0) latest.set(item.ingredientId, item.unitCost);
+      const current = await tx.ingredient.findMany({ where: { id: { in: [...latest.keys()] } }, select: { id: true, costPerUnit: true } });
+      for (const ing of current) {
+        const to = latest.get(ing.id)!;
+        if (Math.abs(to - ing.costPerUnit) < 1e-9) continue;
+        await tx.ingredient.update({ where: { id: ing.id }, data: { costPerUnit: to } });
+        costChanges.push({ ingredientId: ing.id, from: ing.costPerUnit, to });
+      }
+    }
+
     return po;
   });
 
-  return getPurchase(purchase.id);
+  const result = await getPurchase(purchase.id);
+  return result ? { ...result, costChanges } : null;
 }
 
 export async function getPurchase(id: number) {
@@ -120,6 +136,7 @@ export async function getPurchases(branchId?: number) {
     where: branchId ? { branchId } : undefined,
     include: {
       branch: true,
+      items: true,
       _count: {
         select: { items: true }
       }
@@ -127,6 +144,11 @@ export async function getPurchases(branchId?: number) {
     orderBy: { id: "desc" },
     take: 50
   });
+
+  // PurchaseItem has no relation to Ingredient, so names are looked up once for the page
+  const ingredientIds = [...new Set(pos.flatMap((po: any) => po.items.map((i: any) => i.ingredientId)).filter(Boolean))] as number[];
+  const ingredients = ingredientIds.length ? await prisma.ingredient.findMany({ where: { id: { in: ingredientIds } }, select: { id: true, name: true, unit: true } }) : [];
+  const ingMap = new Map(ingredients.map((i: any) => [i.id, i]));
 
   return pos.map((po: any) => ({
     id: po.id,
@@ -138,6 +160,18 @@ export async function getPurchases(branchId?: number) {
     status: po.status,
     receivedAt: po.createdAt.toISOString(),
     createdAt: po.createdAt.toISOString(),
-    itemCount: po._count.items
+    itemCount: po._count.items,
+    items: po.items.map((pi: any) => {
+      const ing: any = pi.ingredientId ? ingMap.get(pi.ingredientId) : null;
+      return {
+        id: pi.id,
+        ingredientId: pi.ingredientId,
+        ingredientName: ing ? ing.name : "Unknown",
+        unit: ing ? ing.unit : "-",
+        qty: pi.qty,
+        unitCost: pi.unitCost,
+        lineTotal: pi.lineTotal
+      };
+    })
   }));
 }

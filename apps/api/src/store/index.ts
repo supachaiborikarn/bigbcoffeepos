@@ -1,7 +1,7 @@
 export { getBranches, getBranch } from "./branches.js";
 export { getCustomers, getCustomer, getCustomerInsights, addCustomer, updateCustomer, updateCustomerPoints } from "./customers.js";
 export { getMenu, getMenuItem, setMenuGroupActive, addMenuItem, updateMenuItem } from "./menu.js";
-export { getIngredients, addIngredient, updateIngredient, getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, getRecipes, getRecipeCoverage, getRecipe, setRecipe } from "./inventory.js";
+export { getIngredients, addIngredient, updateIngredient, normalizeBarcode, assertBarcodeFree, getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, getRecipes, getRecipeCoverage, getRecipe, setRecipe } from "./inventory.js";
 export { getCentralWarehouses, ensureCentralWarehouse, getWarehouseInventory, adjustWarehouseStock, listRestockRequests, createRestockRequest, submitRestockRequest, startRestockPicking, dispatchRestockShipment, receiveRestockShipment } from "./restock.js";
 export { CUP_OPTIONS, getCupStockSettings, setCupStockSettings } from "./cupStockSettings.js";
 export { getOrders, getOrder, getOrderByIdempotencyKey, updateOrderStatus, updateOrderStatusWithContext, createOrder } from "./orders.js";

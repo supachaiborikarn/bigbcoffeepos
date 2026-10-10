@@ -1,11 +1,28 @@
-# Intentionally empty — do NOT ignore anything at the repository root.
-#
-# A previous version of this file kept only `apps/web` and excluded everything
-# else. Because `.vercelignore` is shared by every Vercel project in this repo,
-# it also stripped `apps/api` from the API project's deployment, so its build
-# failed with: ENOENT apps/api/package.json (npm install).
-#
-# Both the web and api projects build fine with the full repo present (this was
-# the state before the file was added). If the web deployment ever needs to be
-# slimmed down, do it via that project's Vercel settings (Root Directory /
-# ignored build step), not this shared root file.
+# Keep source files for both Vercel projects because this file is shared by the
+# web and api deployments. Only exclude local secrets, runtime data, logs, and
+# bulky generated artifacts.
+
+# Local secrets must never be uploaded. Vercel uses project env vars instead.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local runtime data and generated outputs.
+apps/api/data/
+apps/api/debug_screenshots/
+apps/api/dist/
+apps/web/dist/
+data/
+debug_screenshots/
+downloads/
+graphify-out/
+
+# Local inspection/test artifacts.
+.playwright-cli/
+transcripts_test/
+course_videos/
+secondbrain/
+awesome-design-md/
+
+# Native build outputs are large and not needed by web/api deployments.
+native/ios-wrapper/.derivedData/

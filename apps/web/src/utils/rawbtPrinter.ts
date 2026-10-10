@@ -20,7 +20,7 @@ function isAndroid(): boolean {
  * a paired Bluetooth printer + RawBT live — while desktops keep window.print().
  */
 export function isRawbtEnabled(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined" || !isAndroid()) return false;
   try {
     const v = window.localStorage.getItem(STORAGE_KEY);
     if (v === "1") return true;
@@ -53,7 +53,7 @@ function base64Utf8(text: string): string {
  * Returns false only when we couldn't even attempt the hand-off.
  */
 export function sendRawbtText(escposText: string): boolean {
-  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  if (typeof window === "undefined" || typeof document === "undefined" || !isAndroid()) return false;
   try {
     const data = "data:text/plain;base64," + base64Utf8(escposText);
     const intentUrl =

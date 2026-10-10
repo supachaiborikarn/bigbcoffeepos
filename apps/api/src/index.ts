@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { waitUntil } from "@vercel/functions";
 import { audit, log, requestLogger, sendAlert } from "./logger.js";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -16,6 +17,8 @@ import {
   getMenu, addMenuItem, setMenuGroupActive, updateMenuItem,
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements,
+  getCentralWarehouses, ensureCentralWarehouse, getWarehouseInventory, adjustWarehouseStock,
+  listRestockRequests, createRestockRequest, submitRestockRequest, startRestockPicking, dispatchRestockShipment, receiveRestockShipment,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
   getCupStockSettings, setCupStockSettings,
   getOrders, getOrder, getOrderByIdempotencyKey, createOrder, updateOrderStatusWithContext,
@@ -24,6 +27,7 @@ import {
   getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows, getDailyCloseReport,
   createPurchase, getPurchases,
   getIntegrationStatus, getIntegrationOutboxSummary, getIntegrationEvents, retryIntegrationEvent, processOutboxQueue,
+  enqueuePosposSync, getLatestPosposSyncJobsByBranch, getPosposSyncJob, runPosposSyncJob,
   importProducts, importCustomers, importHistoricalOrders,
   getStoreSetting, updateStoreSetting,
   listTaxInvoices, createTaxInvoice,
@@ -42,6 +46,9 @@ import {
   getCustomerDisplay,
   listMarketplaceConnections, saveMarketplaceConnection, enqueueMarketplaceSync
 } from "./store/index.js";
+import prisma from "./prisma.js";
+import { customerHasBranch, getUnassignedCustomers, assignCustomerBranch } from "./store/customers.js";
+import { resolveBranchScope, requireRecordBranch, protectSharedConfiguration } from "./middleware/branchScope.js";
 import type { StoreSettingInput, VatMode } from "./store/index.js";
 
 const app = express();
@@ -78,6 +85,19 @@ function sendExcelXml(res: express.Response, filename: string, rows: Record<stri
   res.setHeader("Content-Type", "application/vnd.ms-excel; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   return res.send(xml);
+}
+function scheduleBackgroundTask(name: string, task: Promise<unknown>, meta: Record<string, unknown> = {}) {
+  const tracked = task.catch((error) => {
+    const details = { ...meta, message: error instanceof Error ? error.message : String(error) };
+    log("error", `${name}_failed`, details);
+    sendAlert("critical", `${name}_failed`, details);
+  });
+
+  try {
+    waitUntil(tracked);
+  } catch {
+    // Local Express has no Vercel request context, but the promise has already started.
+  }
 }
 async function readAuditRows(input: { limit?: number; action?: string } = {}) {
   const auditLogFile = process.env.AUDIT_LOG_FILE || path.resolve(process.cwd(), "data", "audit.log");
@@ -145,7 +165,8 @@ app.post("/api/auth/pin", enforcePinRateLimit, async (req, res) => {
 });
 
 /* ─── Protect All Routes Below ─── */
-app.use("/api", requireAuth);
+app.use("/api", requireAuth, resolveBranchScope, protectSharedConfiguration);
+app.get("/api/auth/me", (req: AuthRequest, res) => res.json({ user: req.user }));
 
 /* ─── Audit ─── */
 app.get("/api/audit", requireAdmin, async (req, res) => {
@@ -234,28 +255,42 @@ app.delete("/api/users/:id", requireAdmin, async (req, res) => {
 });
 
 /* ─── Branches ─── */
-app.get("/api/branches", async (_req, res) => res.json({ items: await getBranches() }));
+app.get("/api/branches", async (req: AuthRequest, res) => res.json({ items: (await getBranches()).filter((branch) => branch.active && (req.user?.role === "admin" || branch.id === req.user?.branchId)) }));
 
 /* ─── Customers ─── */
-app.get("/api/customers", async (req, res) => {
-  const search = isStr(req.query.search) ? String(req.query.search).trim() : undefined;
-  res.json({ items: await getCustomers(search) });
+app.get("/api/customers/unassigned", requireRole("admin"), async (_req, res) => {
+  res.json({ items: await getUnassignedCustomers() });
 });
-app.get("/api/customers/insights", async (req, res) => {
+app.put("/api/customers/:id/branch", requireRole("admin"), async (req, res) => {
+  const id = parseId(req.params.id);
+  const branchId = parseId(req.body?.branchId);
+  if (id === null || branchId === null) return res.status(400).json({ error: "กรุณาเลือกสมาชิกและสาขา" });
+  try {
+    const customer = await assignCustomerBranch(id, branchId);
+    audit("customer.branch_assigned", req, { customerId: id, branchId });
+    return res.json({ customer });
+  } catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+});
+app.get("/api/customers", async (req: AuthRequest, res) => {
+  const search = isStr(req.query.search) ? String(req.query.search).trim() : undefined;
+  res.json({ items: await getCustomers(search, req.branchScope?.id) });
+});
+app.get("/api/customers/insights", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const inactiveDays = parseId(req.query.inactiveDays as string) ?? undefined;
   const limit = parseId(req.query.limit as string) ?? undefined;
-  res.json({ insights: await getCustomerInsights({ inactiveDays, limit }) });
+  res.json({ insights: await getCustomerInsights({ inactiveDays, limit, branchId: req.branchScope?.id }) });
 });
-app.post("/api/customers", async (req, res) => {
+app.post("/api/customers", async (req: AuthRequest, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const phone = isStr(req.body?.phone) ? req.body.phone.trim() : "";
   if (!name || !phone) return res.status(400).json({ error: "กรุณากรอกชื่อและเบอร์โทร" });
-  try { return res.status(201).json({ customer: await addCustomer({ name, phone }) }); }
+  try { return res.status(201).json({ customer: await addCustomer({ name, phone, branchId: req.branchScope?.id }) }); }
   catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
-app.put("/api/customers/:id", async (req, res) => {
+app.put("/api/customers/:id", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
+  if (req.user?.role !== "admin" && !(await customerHasBranch(id, req.user!.branchId!))) return res.status(403).json({ error: "คุณไม่มีสิทธิ์แก้ไขสมาชิกของสาขานี้" });
   try {
     const c = await updateCustomer(id, {
       name: req.body?.name?.trim(),
@@ -276,7 +311,7 @@ app.put("/api/customers/:id", async (req, res) => {
 });
 
 /* ─── Menu ─── */
-app.get("/api/menu", async (_req, res) => res.json({ items: await getMenu() }));
+app.get("/api/menu", async (req: AuthRequest, res) => res.json({ items: await getMenu(req.branchScope?.branchType) }));
 app.post("/api/menu", requireRole("admin", "manager"), async (req, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const category = isStr(req.body?.category) ? req.body.category.trim() : "";
@@ -353,7 +388,7 @@ app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req
 });
 
 /* ─── Ingredients & Inventory ─── */
-app.get("/api/ingredients", async (_req, res) => res.json({ items: await getIngredients() }));
+app.get("/api/ingredients", async (req: AuthRequest, res) => res.json({ items: await prisma.ingredient.findMany({ where: req.branchScope ? { stocks: { some: { branchId: req.branchScope.id } } } : {}, orderBy: { id: "asc" } }) }));
 app.post("/api/ingredients", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
   const branchId = parseId(req.body?.branchId);
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
@@ -424,6 +459,133 @@ app.get("/api/stock-movements", requireBranchAccess((req) => parseId(req.query.b
   res.json({ items: await getStockMovements(branchId) });
 });
 
+/* ─── Central Warehouse & Restock ─── */
+app.get("/api/warehouses", requireRole("admin", "manager"), async (_req, res) => {
+  return res.json({ items: await getCentralWarehouses() });
+});
+
+app.post("/api/warehouses/setup", requireAdmin, async (req, res) => {
+  const managerBranchId = req.body?.managerBranchId === null ? null : parseId(req.body?.managerBranchId);
+  try {
+    const warehouse = await ensureCentralWarehouse({ name: isStr(req.body?.name) ? req.body.name.trim() : undefined, managerBranchId });
+    audit("warehouse.configured", req, { warehouseId: warehouse.id, managerBranchId });
+    return res.json({ warehouse });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/warehouses/:id/inventory", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const warehouseId = parseId(req.params.id);
+  if (warehouseId === null) return res.status(400).json({ error: "Invalid warehouse" });
+  const warehouse = await prisma.centralWarehouse.findUnique({ where: { id: warehouseId } });
+  if (!warehouse) return res.status(404).json({ error: "ไม่พบสต็อกกลาง" });
+  if (req.user?.role !== "admin" && warehouse.managerBranchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ดูสต็อกกลาง" });
+  return res.json({ items: await getWarehouseInventory(warehouseId) });
+});
+
+app.post("/api/warehouses/:id/adjustments", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const warehouseId = parseId(req.params.id);
+  const ingredientId = parseId(req.body?.ingredientId);
+  const qty = Number(req.body?.qty);
+  if (warehouseId === null || ingredientId === null || !Number.isFinite(qty) || qty === 0) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+  const warehouse = await prisma.centralWarehouse.findUnique({ where: { id: warehouseId } });
+  if (!warehouse) return res.status(404).json({ error: "ไม่พบสต็อกกลาง" });
+  if (req.user?.role !== "admin" && warehouse.managerBranchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ปรับสต็อกกลาง" });
+  try {
+    const result = await adjustWarehouseStock({ warehouseId, ingredientId, qty, reorderLevel: req.body?.reorderLevel !== undefined ? Number(req.body.reorderLevel) : undefined, reason: isStr(req.body?.reason) ? req.body.reason.trim() : "WAREHOUSE_ADJUSTMENT", actorUserId: req.user?.id });
+    audit("warehouse.stock_adjusted", req, { warehouseId, ingredientId, qty });
+    return res.status(201).json(result);
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.get("/api/restock-requests", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const warehouseId = parseId(req.query.warehouseId as string) ?? undefined;
+  const requestedBranchId = parseId(req.query.branchId as string) ?? undefined;
+  let branchId = requestedBranchId;
+  if (req.user?.role !== "admin") {
+    const warehouse = warehouseId ? await prisma.centralWarehouse.findUnique({ where: { id: warehouseId } }) : null;
+    const managesWarehouse = Boolean(warehouse && warehouse.managerBranchId === req.user?.branchId);
+    if (!managesWarehouse) branchId = req.user?.branchId ?? undefined;
+  }
+  return res.json({ items: await listRestockRequests({ branchId, warehouseId }) });
+});
+
+app.post("/api/restock-requests", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req: AuthRequest, res) => {
+  const warehouseId = parseId(req.body?.warehouseId);
+  const branchId = parseId(req.body?.branchId);
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (warehouseId === null || branchId === null) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+  try {
+    const request = await createRestockRequest({ warehouseId, branchId, note: String(req.body?.note ?? ""), requestedByUserId: req.user?.id, items: items.map((item: any) => ({ ingredientId: parseId(item?.ingredientId) ?? 0, requestedQty: Number(item?.requestedQty) })) });
+    audit("restock_request.created", req, { requestId: request.id, warehouseId, branchId });
+    return res.status(201).json({ request });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+app.post("/api/restock-requests/:id/submit", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const row = await prisma.restockRequest.findUnique({ where: { id }, include: { warehouse: true } });
+  if (!row) return res.status(404).json({ error: "ไม่พบใบเบิก" });
+  if (req.user?.role !== "admin" && row.branchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ส่งใบเบิกนี้" });
+  try {
+    const request = await submitRestockRequest(id);
+    audit("restock_request.submitted", req, { requestId: id, branchId: row.branchId });
+    return res.json({ request });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+async function requireWarehouseOperator(req: AuthRequest, requestId: number) {
+  const row = await prisma.restockRequest.findUnique({ where: { id: requestId }, include: { warehouse: true } });
+  if (!row) throw new Error("NOT_FOUND");
+  if (req.user?.role !== "admin" && row.warehouse.managerBranchId !== req.user?.branchId) throw new Error("FORBIDDEN");
+  return row;
+}
+
+app.post("/api/restock-requests/:id/picking", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    await requireWarehouseOperator(req, id);
+    const request = await startRestockPicking(id);
+    audit("restock_request.picking_started", req, { requestId: id });
+    return res.json({ request });
+  } catch (e) {
+    if ((e as Error).message === "NOT_FOUND") return res.status(404).json({ error: "ไม่พบใบเบิก" });
+    if ((e as Error).message === "FORBIDDEN") return res.status(403).json({ error: "คุณไม่มีสิทธิ์จัดของจากคลังกลาง" });
+    return res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/restock-requests/:id/dispatch", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    await requireWarehouseOperator(req, id);
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const shipment = await dispatchRestockShipment({ requestId: id, dispatchedByUserId: req.user?.id, note: String(req.body?.note ?? ""), items: items.map((item: any) => ({ requestItemId: parseId(item?.requestItemId) ?? 0, qty: Number(item?.qty) })) });
+    audit("restock_shipment.dispatched", req, { requestId: id, shipmentId: shipment?.id });
+    return res.status(201).json({ shipment });
+  } catch (e) {
+    if ((e as Error).message === "NOT_FOUND") return res.status(404).json({ error: "ไม่พบใบเบิก" });
+    if ((e as Error).message === "FORBIDDEN") return res.status(403).json({ error: "คุณไม่มีสิทธิ์ออกของจากคลังกลาง" });
+    return res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/api/restock-shipments/:id/receive", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const row = await prisma.restockShipment.findUnique({ where: { id }, include: { request: true } });
+  if (!row) return res.status(404).json({ error: "ไม่พบรายการส่ง" });
+  if (req.user?.role !== "admin" && row.request.branchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์รับของรายการนี้" });
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const shipment = await receiveRestockShipment({ shipmentId: id, receivedByUserId: req.user?.id, items: items.map((item: any) => ({ shipmentItemId: parseId(item?.shipmentItemId) ?? 0, receivedQty: Number(item?.receivedQty) })) });
+    audit("restock_shipment.received", req, { shipmentId: id, requestId: row.restockRequestId, status: shipment?.status });
+    return res.json({ shipment });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
 /* ─── Cup Stock Settings ─── */
 app.get("/api/cup-stock-settings", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string);
@@ -453,14 +615,15 @@ app.put("/api/cup-stock-settings", requireRole("admin", "manager"), requireBranc
 });
 
 /* ─── Recipes ─── */
-app.get("/api/recipes", async (_req, res) => res.json({ items: await getRecipes() }));
+app.get("/api/recipes", async (req: AuthRequest, res) => res.json({ items: await getRecipes(req.branchScope?.branchType) }));
 app.get("/api/recipes/coverage", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
   return res.json({ report: await getRecipeCoverage({ branchId, from, to }) });
 });
-app.get("/api/recipes/:menuItemId", async (req, res) => {
+app.get("/api/recipes/:menuItemId", async (req: AuthRequest, res) => {
+  if (req.branchScope && !(await prisma.menuItem.findFirst({ where: { id: Number(req.params.menuItemId) || 0, branchType: req.branchScope.branchType } }))) return res.status(403).json({ error: "ไม่พบเมนูในสาขานี้" });
   const id = parseId(req.params.menuItemId);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const recipe = await getRecipe(id);
@@ -484,7 +647,7 @@ app.get("/api/orders/idempotency/:key", requireRole("admin", "manager", "cashier
   if (!key) return res.status(400).json({ error: "Invalid idempotency key" });
   const order = await getOrderByIdempotencyKey(key);
   if (!order) return res.status(404).json({ error: "ยังไม่พบบิลนี้" });
-  if (req.user?.role === "cashier" && req.user.branchId !== order.branchId) {
+  if (req.user?.role !== "admin" && req.user?.branchId !== order.branchId) {
     return res.status(403).json({ error: "ไม่มีสิทธิ์ดูออเดอร์ของสาขาอื่น" });
   }
   return res.json({ order });
@@ -494,7 +657,7 @@ app.get("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (re
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const order = await getOrder(id);
   if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
-  if (req.user?.role === "cashier" && req.user.branchId !== order.branchId) {
+  if (req.user?.role !== "admin" && req.user?.branchId !== order.branchId) {
     return res.status(403).json({ error: "ไม่มีสิทธิ์ดูออเดอร์ของสาขาอื่น" });
   }
   return res.json({ order });
@@ -505,7 +668,7 @@ app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (
   try {
     const current = await getOrder(id);
     if (!current) return res.status(404).json({ error: "ไม่พบออเดอร์" });
-    if (req.user?.role === "cashier" && req.user.branchId !== current.branchId) {
+    if (req.user?.role !== "admin" && req.user?.branchId !== current.branchId) {
       return res.status(403).json({ error: "ไม่มีสิทธิ์แก้ไขออเดอร์ของสาขาอื่น" });
     }
     const order = await updateOrderStatusWithContext(id, {
@@ -521,6 +684,8 @@ app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (
 app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)), async (req: AuthRequest, res) => {
   const branchId = parseId(req.body?.branchId);
   if (branchId === null || !Array.isArray(req.body?.items) || !req.body.items.length) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+  if (!parseId(req.body.shiftId)) return res.status(400).json({ error: "กรุณาเปิดกะของสาขานี้ก่อนขาย" });
+  if (req.body.customerId && req.user?.role !== "admin" && !(await customerHasBranch(Number(req.body.customerId), branchId))) return res.status(403).json({ error: "สมาชิกนี้ยังไม่ได้ผูกกับสาขาที่ขาย" });
   try {
     const order = await createOrder({
       branchId,
@@ -576,7 +741,7 @@ app.post("/api/shifts/open", requireBranchAccess((req) => parseId(req.body?.bran
     return res.status(201).json({ shift });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
-app.post("/api/shifts/:id/close", requireRole("admin", "manager"), async (req, res) => {
+app.post("/api/shifts/:id/close", requireRecordBranch(async (req) => prisma.shift.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
@@ -590,7 +755,7 @@ app.post("/api/shifts/:id/close", requireRole("admin", "manager"), async (req, r
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.get("/api/shifts/:id/summary", async (req, res) => {
+app.get("/api/shifts/:id/summary", requireRecordBranch(async (req) => prisma.shift.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   const summary = await getShiftSummary(id);
@@ -722,7 +887,7 @@ app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess(
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.post("/api/purchases/:id/approve", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+app.post("/api/purchases/:id/approve", requireRecordBranch(async (req) => prisma.purchase.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
@@ -738,7 +903,7 @@ app.get("/api/tax-invoices", requireRole("admin", "manager"), requireBranchAcces
   return res.json({ items: await listTaxInvoices(branchId) });
 });
 
-app.post("/api/tax-invoices", requireRole("admin", "manager", "cashier"), async (req, res) => {
+app.post("/api/tax-invoices", requireRecordBranch(async (req) => prisma.order.findUnique({ where: { id: Number(req.body?.orderId) || 0 }, select: { branchId: true } })), requireRole("admin", "manager", "cashier"), async (req, res) => {
   const orderId = parseId(req.body?.orderId);
   if (orderId === null) return res.status(400).json({ error: "กรุณาระบุออเดอร์" });
   try {
@@ -774,7 +939,7 @@ app.post("/api/stock-counts", requireRole("admin", "manager"), requireBranchAcce
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.post("/api/stock-counts/:id/post", requireRole("admin", "manager"), async (req, res) => {
+app.post("/api/stock-counts/:id/post", requireRecordBranch(async (req) => prisma.stockCount.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
@@ -806,7 +971,7 @@ app.post("/api/stock-transfers", requireRole("admin", "manager"), requireBranchA
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.post("/api/stock-transfers/:id/receive", requireRole("admin", "manager"), async (req, res) => {
+app.post("/api/stock-transfers/:id/receive", requireRecordBranch(async (req) => { const row = await prisma.stockTransfer.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { toBranchId: true } }); return row ? { branchId: row.toBranchId } : null; }), requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
@@ -816,9 +981,9 @@ app.post("/api/stock-transfers/:id/receive", requireRole("admin", "manager"), as
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.get("/api/product-units", requireRole("admin", "manager"), async (req, res) => {
+app.get("/api/product-units", async (req: AuthRequest, res) => {
   const menuItemId = parseId(req.query.menuItemId as string) ?? undefined;
-  return res.json({ items: await listProductUnits(menuItemId) });
+  return res.json({ items: await listProductUnits(menuItemId, req.branchScope?.branchType) });
 });
 
 app.post("/api/product-units", requireRole("admin", "manager"), async (req, res) => {
@@ -991,7 +1156,7 @@ app.get("/api/reports/tax-export.xls", requireRole("admin", "manager"), requireB
   ]);
 });
 
-app.get("/api/reports/compare", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchIdA as string)), async (req, res) => {
+app.get("/api/reports/compare", requireBranchAccess((req) => parseId(req.query.branchIdB as string)), requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchIdA as string)), async (req, res) => {
   const fromA = isStr(req.query.fromA) ? String(req.query.fromA) : "";
   const toA = isStr(req.query.toA) ? String(req.query.toA) : "";
   const fromB = isStr(req.query.fromB) ? String(req.query.fromB) : "";
@@ -1038,7 +1203,7 @@ app.put("/api/marketplaces", requireRole("admin", "manager"), requireBranchAcces
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 
-app.post("/api/marketplaces/:id/sync", requireRole("admin", "manager"), async (req, res) => {
+app.post("/api/marketplaces/:id/sync", requireRecordBranch(async (req) => prisma.marketplaceConnection.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager"), async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
@@ -1095,23 +1260,53 @@ if (Number.isFinite(outboxIntervalMs) && outboxIntervalMs >= 30_000) {
   }, outboxIntervalMs).unref();
 }
 
-// pospos-sync is dynamically imported on demand because it requires Playwright.
+// pospos-sync runs as a background job because Playwright scraping can outlive a normal HTTP request.
 
-app.post("/api/migration/sync", async (req, res) => {
-  const branchId = parseId(req.body?.branchId);
-  if (!branchId) return res.status(400).json({ error: "กรุณาเลือกสาขาที่จะนำเข้าข้อมูล" });
-  
-  try {
-    const { syncPosposData } = await import("./scripts/pospos-sync.js");
-    const result = await syncPosposData(branchId);
-    audit("migration.pospos_sync", req, { branchId, result });
-    return res.status(200).json(result);
-  } catch (e) {
-    const meta = { message: (e as Error).message, branchId };
-    log("error", "migration_sync_failed", meta);
-    sendAlert("critical", "migration_sync_failed", meta);
-    return res.status(500).json({ error: (e as Error).message });
+app.post(
+  "/api/migration/sync",
+  requireRole("admin", "manager"),
+  requireBranchAccess((req) => parseId(req.body?.branchId)),
+  async (req: AuthRequest, res) => {
+    const branchId = parseId(req.body?.branchId);
+    if (!branchId) return res.status(400).json({ error: "กรุณาเลือกสาขาที่จะนำเข้าข้อมูล" });
+
+    try {
+      const job = await enqueuePosposSync(branchId, req.user?.id);
+      if (!job) return res.status(500).json({ error: "สร้างงานดึงข้อมูลไม่สำเร็จ" });
+
+      if (job.status === "PENDING") {
+        const task = runPosposSyncJob(job.id).then((done) => {
+          if (done?.status === "SENT") {
+            log("info", "migration_pospos_sync_completed", { branchId, jobId: job.id, result: done.result });
+          } else if (done?.status === "FAILED") {
+            log("error", "migration_pospos_sync_failed", { branchId, jobId: job.id, message: done.lastError });
+          }
+        });
+        scheduleBackgroundTask("migration_pospos_sync", task, { branchId, jobId: job.id });
+      }
+
+      audit("migration.pospos_sync_queued", req, { branchId, jobId: job.id, status: job.status });
+      return res.status(202).json({ job });
+    } catch (e) {
+      const meta = { message: (e as Error).message, branchId };
+      log("error", "migration_sync_enqueue_failed", meta);
+      sendAlert("critical", "migration_sync_enqueue_failed", meta);
+      return res.status(500).json({ error: (e as Error).message });
+    }
   }
+);
+
+app.get("/api/migration/sync/latest", requireRole("admin", "manager"), async (_req, res) => {
+  return res.json({ items: await getLatestPosposSyncJobsByBranch() });
+});
+
+app.get("/api/migration/sync/:id", requireRole("admin", "manager"), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: "Invalid id" });
+
+  const job = await getPosposSyncJob(id);
+  if (!job) return res.status(404).json({ error: "ไม่พบงานดึงข้อมูล POSPOS" });
+  return res.json({ job });
 });
 
 /* ─── Store Settings ─── */

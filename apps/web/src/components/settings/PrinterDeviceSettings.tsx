@@ -1,39 +1,34 @@
 import { useState } from "react";
-import { isRawbtEnabled, setRawbtEnabled } from "../../utils/rawbtPrinter";
+import { getPaperWidth, getPrinterMode, isAndroidDevice, isIOSDevice, printerLabels, setPaperWidth, setPrinterMode, type PrinterMode } from "../../utils/printerSettings";
+import { printReceipt } from "../ReceiptPrinter";
+import { useBranch } from "../../contexts/BranchContext";
+import { useToast } from "../../contexts/ToastContext";
+import type { Order } from "../../types";
 
-// Per-device printing options (stored locally, not on the server). Lets the
-// Android tablet route receipts through RawBT to its Bluetooth printer while
-// other devices (e.g. a desktop with a USB 58mm printer) keep normal printing.
 export default function PrinterDeviceSettings() {
-  const [enabled, setEnabled] = useState(() => isRawbtEnabled());
-
-  const toggle = (value: boolean) => {
-    setRawbtEnabled(value);
-    setEnabled(value);
+  const [mode,setMode] = useState(getPrinterMode);
+  const [width,setWidth] = useState(getPaperWidth);
+  const {activeBranch} = useBranch();
+  const toast=useToast();
+  const test = () => {
+    if (!activeBranch) return;
+    const now=new Date().toISOString();
+    try {
+      const ok=printReceipt({order:{id:0,branchId:activeBranch.id,createdAt:now} as Order,cart:[{id:'test',menuItemId:0,name:'ทดสอบภาษาไทย · กาแฟ น้ำมันเครื่อง ๑๒๓',category:'',basePrice:65,qty:1,modifiers:[]}],discountRules:[],subtotal:65,discountAmount:0,total:65,pointsUsed:0,paymentMethod:'CASH',cashReceived:100,changeAmount:35,storeSetting:{shopName:activeBranch.name,receiptHeader:'ทดสอบเครื่องพิมพ์',receiptFooter:'ไม่มีการขายหรือรับเงินจริง',vatMode:'NONE'} as any},activeBranch.name);
+      if (!ok) toast.error('เปิดหน้าทดสอบพิมพ์ไม่ได้');
+    } catch { toast.error('เปิดหน้าทดสอบพิมพ์ไม่ได้'); }
   };
-
-  return (
-    <section className="panel" style={{ padding: 20, marginBottom: 16 }}>
-      <h3 style={{ marginTop: 0 }}>เครื่องพิมพ์ (เฉพาะอุปกรณ์นี้)</h3>
-      <p className="muted" style={{ marginTop: 4, marginBottom: 14 }}>
-        ตั้งค่าเฉพาะเครื่องที่กำลังเปิดใช้งานอยู่ — บันทึกไว้ในเครื่องนี้ ไม่กระทบอุปกรณ์อื่น
-      </p>
-      <label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => toggle(e.target.checked)}
-          style={{ marginTop: 4, width: 18, height: 18, flexShrink: 0 }}
-        />
-        <span>
-          <strong>พิมพ์ผ่าน RawBT (เครื่องพิมพ์บลูทูธบน Android)</strong>
-          <span className="muted" style={{ display: "block", fontSize: 13, marginTop: 4, lineHeight: 1.5 }}>
-            เปิดบนแท็บเล็ต/มือถือ Android ที่ต่อเครื่องพิมพ์บลูทูธไว้ เวลาเปิดบิลระบบจะส่งใบเสร็จเข้าแอป RawBT
-            ให้อัตโนมัติ (ต้องติดตั้งแอป RawBT และจับคู่เครื่องพิมพ์ในแอปก่อน) — บนคอมพิวเตอร์ให้ปิดไว้
-            เพื่อใช้การพิมพ์ปกติของเบราว์เซอร์
-          </span>
-        </span>
-      </label>
-    </section>
-  );
+  return <section className="printer-settings">
+    <p>ตั้งค่าเฉพาะอุปกรณ์นี้ และทดสอบก่อนเริ่มขาย</p>
+    <label>วิธีพิมพ์<select className="input" value={mode} disabled={mode==='native'} onChange={e=>{const value=e.target.value as PrinterMode;setPrinterMode(value);setMode(value);}}>
+      <option value="browser">{printerLabels.browser}</option>
+      {isIOSDevice() && <option value="passprnt">{printerLabels.passprnt}</option>}
+      {isAndroidDevice() && <option value="rawbt">{printerLabels.rawbt}</option>}
+      {mode==='native' && <option value="native">{printerLabels.native}</option>}
+    </select></label>
+    <label>ขนาดกระดาษ<select className="input" value={width} onChange={e=>{const value=Number(e.target.value)===80?80:58;setPaperWidth(value);setWidth(value);}}><option value={58}>58 มม.</option><option value={80}>80 มม.</option></select></label>
+    {isIOSDevice() && <p>Star TSP143IIIU ต่อ USB: ติดตั้ง Star PassPRNT บน iPad เลือกเครื่องพิมพ์ในแอป แล้วเลือกวิธีพิมพ์ Star PassPRNT ด้านบน; AirPrint ใช้กับเครื่องพิมพ์ที่รองรับ AirPrint บนเครือข่าย</p>}
+    {mode==='rawbt' && <p>ติดตั้ง RawBT และเลือกเครื่องพิมพ์ในแอปก่อนใช้งาน</p>}
+    <button className="btn btn--primary" onClick={test}>พิมพ์ทดสอบ · ไม่มีการขาย</button>
+  </section>;
 }

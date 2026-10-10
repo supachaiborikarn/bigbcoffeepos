@@ -278,6 +278,8 @@ export type Order = {
   tax: number;
   total: number;
   paymentMethod: PaymentMethod;
+  cashReceived?: number | null;
+  changeAmount?: number | null;
   items: OrderItem[];
 };
 
@@ -360,7 +362,7 @@ export type CompareReport = {
   diff: { orders: number; revenue: number };
 };
 
-export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman" | "email";
+export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman" | "email" | "pospos";
 
 export type IntegrationStatus = {
   provider: IntegrationProvider;
@@ -379,7 +381,7 @@ export type IntegrationEvent = {
   eventType: string;
   entityType: string;
   entityId: number | null;
-  status: "PENDING" | "SENT" | "FAILED" | "SKIPPED";
+  status: "PENDING" | "RUNNING" | "SENT" | "FAILED" | "SKIPPED";
   attempts: number;
   payload: Record<string, unknown>;
   lastError: string | null;
@@ -536,4 +538,33 @@ export type ImportResult = {
   updated: number;
   skipped: number;
   errors: string[];
+};
+
+export type PosposSyncJob = {
+  id: number;
+  branchId: number;
+  status: "PENDING" | "RUNNING" | "SENT" | "FAILED" | "SKIPPED";
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  isStale: boolean;
+  canRetry: boolean;
+  result: {
+    success: boolean;
+    menuItems: number;
+    ingredients: number;
+    customers: number;
+    sales: number;
+    replacedOrders: number;
+    replacedShifts: number;
+    zeroedStockItems: number;
+  } | null;
+};
+
+export type PosposBranchSyncStatus = {
+  branch: Pick<Branch, "id" | "name" | "location" | "branchType" | "active" | "createdAt">;
+  job: PosposSyncJob | null;
 };

@@ -17,20 +17,24 @@ final class StarPrintService: NSObject {
     private var discoveryManager: StarDeviceDiscoveryManager?
     private var discoveryDelegate: USBDiscoveryDelegate?
 
-    func printReceipt(_ payload: ReceiptPayload) async {
+    private var printing = false
+    func printReceipt(_ payload: ReceiptPayload) async -> (success: Bool, completedCopies: Int) {
+        guard !printing else { return (false, 0) }
+        printing = true
+        defer { printing = false }
+        var completed = 0
         do {
-            let image = try await ReceiptRenderer().render(
-                html: payload.html,
-                baseUrl: payload.baseUrl,
-                widthMm: payload.widthMm
-            )
             let settings = try await resolvePrinter()
-            // The web app already includes every requested copy in this HTML.
-            // Printing the rendered image again would multiply the copy count.
-            try await printImage(image, settings: settings, widthMm: payload.widthMm)
+            for document in payload.documents {
+                let image = try await ReceiptRenderer().render(html: document, baseUrl: payload.baseUrl, widthMm: payload.widthMm)
+                try await printImage(image, settings: settings, widthMm: payload.widthMm)
+                completed += 1
+            }
+            return (true, completed)
         } catch {
+            cachedSettings = nil
             print("[BBPOS] receipt print failed: \(error)")
-            // TODO: surface to the cashier (e.g. evaluateJavaScript a toast, or a UIAlert).
+            return (false, completed)
         }
     }
 
@@ -64,9 +68,9 @@ final class StarPrintService: NSObject {
     private func printImage(_ image: UIImage, settings: StarConnectionSettings, widthMm: Int) async throws {
         let printer = StarPrinter(settings)
         try await printer.open()
-        defer { Task { await printer.close() } }
+        do {
 
-        let dots = widthMm >= 80 ? 576 : 384
+        let dots = widthMm >= 80 ? 576 : 406
         let builder = StarXpandCommand.StarXpandCommandBuilder()
         _ = builder.addDocument(
             StarXpandCommand.DocumentBuilder().addPrinter(
@@ -77,6 +81,11 @@ final class StarPrintService: NSObject {
             )
         )
         try await printer.print(command: builder.getCommands())
+        await printer.close()
+        } catch {
+            await printer.close()
+            throw error
+        }
     }
 }
 

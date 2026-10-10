@@ -15,15 +15,18 @@ const BranchContext = createContext<BranchContextType | null>(null);
 const BRANCH_KEY = "bb_pos_branch_id";
 
 export function BranchProvider({ children }: { children: ReactNode }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [activeBranchId, setActiveBranchId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const accountKey = `${user?.id}:${user?.role}:${user?.branchId}`;
 
   useEffect(() => {
     if (!token) {
       setBranches([]);
       setActiveBranchId(null);
+      setLoadedFor(null);
       setLoading(false);
       return;
     }
@@ -33,35 +36,36 @@ export function BranchProvider({ children }: { children: ReactNode }) {
 
     getBranches().then((items) => {
       if (cancelled) return;
-      setBranches(items);
-      const savedId = localStorage.getItem(BRANCH_KEY);
-      if (savedId) {
-        const id = Number(savedId);
-        if (items.some((b) => b.id === id)) setActiveBranchId(id);
-        else setActiveBranchId(null);
-      }
+      const allowed = items.filter((b) => b.active && (user?.role === "admin" || b.id === user?.branchId));
+      setBranches(allowed);
+      if (allowed.length === 1) localStorage.setItem(`${BRANCH_KEY}:${user?.id}`, String(allowed[0].id));
+      const savedId = Number(localStorage.getItem(`${BRANCH_KEY}:${user?.id}`));
+      setActiveBranchId(allowed.length === 1 ? allowed[0].id : allowed.some((b) => b.id === savedId) ? savedId : null);
+      setLoadedFor(accountKey);
       setLoading(false);
     }).catch(() => {
       if (cancelled) return;
       setBranches([]);
       setActiveBranchId(null);
+      setLoadedFor(accountKey);
       setLoading(false);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, user?.id, user?.role, user?.branchId, accountKey]);
 
   const setBranchId = useCallback((id: number) => {
+    if (!branches.some((b) => b.id === id)) return;
     setActiveBranchId(id);
-    localStorage.setItem(BRANCH_KEY, String(id));
-  }, []);
+    localStorage.setItem(`${BRANCH_KEY}:${user?.id}`, String(id));
+  }, [branches, user?.id]);
 
   const activeBranch = branches.find((b) => b.id === activeBranchId) ?? null;
 
   return (
-    <BranchContext.Provider value={{ branches, activeBranch, setBranchId, loading }}>
+    <BranchContext.Provider value={{ branches, activeBranch, setBranchId, loading: loading || Boolean(token && loadedFor !== accountKey) }}>
       {children}
     </BranchContext.Provider>
   );

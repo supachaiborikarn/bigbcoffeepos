@@ -120,7 +120,7 @@ export default function OfflineStatus() {
             width: 320,
             maxHeight: 360,
             overflowY: "auto",
-            background: "#fff",
+            background: "var(--bg-surface)",
             border: "1px solid var(--border)",
             borderRadius: 12,
             boxShadow: "0 8px 24px rgba(0,0,0,0.12)",

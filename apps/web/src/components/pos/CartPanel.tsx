@@ -1,7 +1,8 @@
+import { modifierLabel } from "../../utils/modifierLabel";
 import { useState } from "react";
 import { useCart } from "../../contexts/CartContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { User, Tag, Plus, Minus, X, Search, UserPlus } from "lucide-react";
+import { User, Tag, Plus, Minus, X, Search, UserPlus, Banknote, QrCode, CreditCard, Wallet, ArrowRight, ReceiptText } from "lucide-react";
 import type { Customer, DiscountRule, PaymentMethod, CartItem, Shift } from "../../types";
 
 const formatter = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
@@ -34,6 +35,7 @@ const paymentLabels: Record<PaymentMethod, string> = {
 };
 
 interface CartPanelProps {
+  businessType?: string;
   cart: CartItem[];
   subtotal: number;
   discountAmount: number;
@@ -136,11 +138,11 @@ export default function CartPanel(props: CartPanelProps) {
   };
 
   return (
-    <section className="panel" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRadius: 0, borderTop: 0, borderRight: 0, borderBottom: 0 }}>
+    <section className="panel studio-cart" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRadius: 0, borderTop: 0, borderRight: 0, borderBottom: 0 }}>
       {/* Cart Header */}
       <div style={{ padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <div>
-          <h2 style={{ fontSize: "20px" }}>ออเดอร์ปัจจุบัน</h2>
+          <span className="studio-eyebrow">CURRENT ORDER</span><h2 style={{ fontSize: "20px" }}>{props.businessType === "oil_service" ? "รายการบริการ" : "บิลปัจจุบัน"}</h2>
           <p className="muted" style={{ fontSize: "13px" }}>{activeShift ? `กะ #${activeShift.id}` : "ยังไม่ได้เปิดกะ"}</p>
         </div>
         <button type="button" className="btn btn--ghost" onClick={clearCart} style={{ fontSize: "13px" }}>ล้าง (F8)</button>
@@ -151,9 +153,9 @@ export default function CartPanel(props: CartPanelProps) {
         {cart.length === 0 ? (
           <div className="empty" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, border: "2px dashed var(--border)", padding: "40px 20px" }}>
             <div style={{ background: "var(--bg-muted)", padding: "16px", borderRadius: "50%", color: "var(--text-muted)" }}>
-              <Search size={32} />
+              <ReceiptText size={32} strokeWidth={1.3} />
             </div>
-            <span>ไม่มีสินค้าในตะกร้า</span>
+            <strong>เริ่มรายการใหม่</strong><span>เลือกสินค้าจากเมนูด้านซ้าย<br />หรือสแกนบาร์โค้ดเพื่อเริ่มขาย</span>
           </div>
         ) : (
           <AnimatePresence>
@@ -173,7 +175,7 @@ export default function CartPanel(props: CartPanelProps) {
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px", marginTop: 4 }}>
                         {item.modifiers.map((mod, i) => (
                           <span key={i} style={{ fontSize: "12px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 2 }}>
-                            {mod.value} {mod.price > 0 && <span style={{ color: "var(--brand)" }}>(+฿{mod.price})</span>}
+                            {modifierLabel(mod.value)} {mod.price > 0 && <span style={{ color: "var(--brand)" }}>(+฿{mod.price})</span>}
                             {i < item.modifiers.length - 1 && <span style={{ color: "var(--border)" }}>|</span>}
                           </span>
                         ))}
@@ -204,7 +206,7 @@ export default function CartPanel(props: CartPanelProps) {
       </div>
 
       {/* Docked Checkout section at the bottom (never scrolls) */}
-      <div style={{
+      <div className="studio-checkout-dock" style={{
         borderTop: "1px solid var(--border)",
         background: "var(--bg-subtle)",
         padding: "16px 20px 20px",
@@ -343,7 +345,7 @@ export default function CartPanel(props: CartPanelProps) {
         {/* Member Point Summary Details */}
         {selectedMember && (
           <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "-4px", paddingLeft: "8px" }}>
-            แต้มสะม: <strong>{selectedMember.points.toLocaleString("th-TH")}</strong> แต้ม (ใช้ได้สูงสุด {maxRedeemablePoints.toLocaleString("th-TH")} แต้ม)
+            แต้มสะสม: <strong>{selectedMember.points.toLocaleString("th-TH")}</strong> แต้ม (ใช้ได้สูงสุด {maxRedeemablePoints.toLocaleString("th-TH")} แต้ม)
           </div>
         )}
 
@@ -382,11 +384,12 @@ export default function CartPanel(props: CartPanelProps) {
               <button
                 key={method}
                 type="button"
-                className={`btn ${paymentMethod === method ? "btn--primary" : "btn--ghost"}`}
+                aria-pressed={paymentMethod === method}
+                className={`btn studio-payment-method ${paymentMethod === method ? "btn--primary" : "btn--ghost"}`}
                 style={{ padding: "10px 2px", fontWeight: 600, fontSize: "13px", border: paymentMethod === method ? "none" : "1px solid var(--border)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}
                 onClick={() => setPaymentMethod(method)}
               >
-                {label}
+                {method === "CASH" ? <Banknote size={18} /> : method === "QR" ? <QrCode size={18} /> : method === "CARD" ? <CreditCard size={18} /> : <Wallet size={18} />}<span>{label}</span>
               </button>
             );
           })}
@@ -395,7 +398,7 @@ export default function CartPanel(props: CartPanelProps) {
         {/* Checkout Button */}
         <button
           type="button"
-          className="btn btn--primary"
+          className="btn btn--primary studio-pay-button"
           style={{
             padding: "16px",
             fontSize: "16px",
@@ -409,14 +412,14 @@ export default function CartPanel(props: CartPanelProps) {
           disabled={cart.length === 0 || isSubmitting || !activeShift}
           onClick={handleCheckoutClick}
         >
-          {!activeShift ? "กรุณาเปิดกะก่อนขาย" : isSubmitting ? "กำลังทำรายการ..." : `ชำระเงิน ${formatMoney(total)} (F12)`}
+          {!activeShift ? "กรุณาเปิดกะก่อนขาย" : isSubmitting ? "กำลังทำรายการ..." : <>ชำระเงิน {formatMoney(total)} <ArrowRight size={19} /></>}
         </button>
       </div>
 
       {/* ─── Member Selection Modal ─── */}
       {showMemberModal && (
         <div className="modal-backdrop" onClick={() => setShowMemberModal(false)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(460px, calc(100vw - 32px))", padding: "24px", borderRadius: "12px", background: "#fff" }}>
+          <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(460px, calc(100vw - 32px))", padding: "24px", borderRadius: "12px", background: "var(--bg-surface)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <h3 style={{ fontSize: "18px", margin: 0, color: "var(--ink)" }}>👤 ค้นหา / สมัครสมาชิก</h3>
               <button type="button" className="btn btn--ghost" style={{ padding: "4px 8px" }} onClick={() => setShowMemberModal(false)}>ปิด</button>
@@ -508,7 +511,7 @@ export default function CartPanel(props: CartPanelProps) {
       {/* ─── Discount Selection Modal ─── */}
       {showDiscountModal && (
         <div className="modal-backdrop" onClick={() => setShowDiscountModal(false)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(480px, calc(100vw - 32px))", padding: "24px", borderRadius: "12px", background: "#fff" }}>
+          <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(480px, calc(100vw - 32px))", padding: "24px", borderRadius: "12px", background: "var(--bg-surface)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <h3 style={{ fontSize: "18px", margin: 0, color: "var(--ink)" }}>🏷️ ส่วนลด / โปรโมชัน</h3>
               <button type="button" className="btn btn--ghost" style={{ padding: "4px 8px" }} onClick={() => setShowDiscountModal(false)}>ปิด</button>

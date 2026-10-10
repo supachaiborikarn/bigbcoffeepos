@@ -1,35 +1,64 @@
 import prisma from "../prisma.js";
+import { customerHomeBranch } from "./customerScope.js";
 
-export async function getCustomers(search?: string) {
-  if (!search) {
-    return prisma.customer.findMany({
-      orderBy: { id: "desc" }
-    });
-  }
-  return prisma.customer.findMany({
-    where: {
-      OR: [
-        { phone: { contains: search } },
-        { name: { contains: search } }
-      ]
-    },
+export async function getCustomers(search?: string, branchId?: number) {
+  const rows = await prisma.customer.findMany({
+    where: search ? { OR: [{ phone: { contains: search } }, { name: { contains: search } }] } : {},
+    include: { orders: { select: { branchId: true }, distinct: ["branchId"] } },
     orderBy: { id: "desc" }
+  });
+  return rows.filter((row) => !branchId || customerHomeBranch(row) === branchId).map(({ orders, ...customer }) => customer);
+}
+
+export async function customerHasBranch(id: number, branchId: number) {
+  const customer = await prisma.customer.findUnique({ where: { id }, include: { orders: { select: { branchId: true }, distinct: ["branchId"] } } });
+  return customer !== null && customerHomeBranch(customer) === branchId;
+}
+
+export async function getUnassignedCustomers() {
+  const rows = await prisma.customer.findMany({
+    include: { orders: { select: { branchId: true }, distinct: ["branchId"] } },
+    orderBy: { id: "desc" }
+  });
+  return rows.filter((row) => customerHomeBranch(row) === null).map(({ orders, ...customer }) => ({
+    ...customer, historicalBranchIds: orders.map((order) => order.branchId)
+  }));
+}
+
+/** Resolve legacy contacts explicitly; historical orders and points stay intact. */
+export async function assignCustomerBranch(id: number, branchId: number) {
+  return prisma.$transaction(async (tx) => {
+    const branch = await tx.branch.findFirst({ where: { id: branchId, active: true } });
+    if (!branch) throw new Error("สาขานี้ไม่เปิดใช้งาน");
+    const customer = await tx.customer.findUnique({ where: { id }, include: { orders: { select: { branchId: true }, distinct: ["branchId"] } } });
+    if (!customer) throw new Error("ไม่พบสมาชิก");
+    if (customerHomeBranch(customer) !== null) throw new Error("สมาชิกนี้มีสาขาประจำแล้ว กรุณาโหลดรายชื่อใหม่");
+    let metadata: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(customer.metadata);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) metadata = parsed;
+    } catch { metadata = { legacyMetadata: customer.metadata }; }
+    const updated = await tx.customer.updateMany({
+      where: { id, metadata: customer.metadata },
+      data: { metadata: JSON.stringify({ ...metadata, workspaceBranchId: branchId }) }
+    });
+    if (updated.count !== 1) throw new Error("ข้อมูลสมาชิกเปลี่ยนแล้ว กรุณาโหลดรายชื่อใหม่");
+    return tx.customer.findUniqueOrThrow({ where: { id } });
   });
 }
 
-export async function getCustomerInsights(input: { inactiveDays?: number; limit?: number } = {}) {
+export async function getCustomerInsights(input: { inactiveDays?: number; limit?: number; branchId?: number } = {}) {
   const inactiveDays = Number.isFinite(input.inactiveDays) && input.inactiveDays! > 0 ? input.inactiveDays! : 60;
   const limit = Number.isFinite(input.limit) && input.limit! > 0 ? Math.min(input.limit!, 50) : 10;
   const inactiveCutoff = new Date(Date.now() - inactiveDays * 24 * 60 * 60 * 1000);
   const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   const [customers, spendRows, recentRows] = await Promise.all([
-    prisma.customer.findMany({
-      select: { id: true, name: true, phone: true, points: true, createdAt: true }
-    }),
+    getCustomers(undefined, input.branchId),
     prisma.order.groupBy({
       by: ["customerId"],
       where: {
+        ...(input.branchId ? { branchId: input.branchId } : {}),
         customerId: { not: null },
         status: { notIn: ["CANCELLED", "REFUNDED"] }
       },
@@ -40,6 +69,7 @@ export async function getCustomerInsights(input: { inactiveDays?: number; limit?
     prisma.order.groupBy({
       by: ["customerId"],
       where: {
+        ...(input.branchId ? { branchId: input.branchId } : {}),
         customerId: { not: null },
         status: { notIn: ["CANCELLED", "REFUNDED"] },
         createdAt: { gte: recentCutoff }
@@ -102,11 +132,11 @@ export async function getCustomer(id: number) {
   return prisma.customer.findUnique({ where: { id } });
 }
 
-export async function addCustomer(input: { name: string; phone: string }) {
+export async function addCustomer(input: { name: string; phone: string; branchId?: number }) {
   const existing = await prisma.customer.findUnique({ where: { phone: input.phone } });
   if (existing) throw new Error("เบอร์โทรนี้เป็นสมาชิกอยู่แล้ว");
   return prisma.customer.create({
-    data: { name: input.name, phone: input.phone }
+    data: { name: input.name, phone: input.phone, metadata: JSON.stringify(input.branchId ? { workspaceBranchId: input.branchId } : {}) }
   });
 }
 
@@ -123,6 +153,10 @@ export async function updateCustomer(id: number, input: Partial<{
   lineUserId: string | null;
   metadata: Record<string, unknown>;
 }>) {
+  const current = await prisma.customer.findUnique({ where: { id } });
+  if (!current) return null;
+  let currentMetadata: Record<string, unknown> = {};
+  try { currentMetadata = JSON.parse(current.metadata); } catch {}
   if (input.phone) {
     const dup = await prisma.customer.findFirst({
       where: { phone: input.phone, id: { not: id } }
@@ -143,7 +177,7 @@ export async function updateCustomer(id: number, input: Partial<{
       ...(input.creditBalance !== undefined ? { creditBalance: input.creditBalance } : {}),
       ...(input.tags !== undefined ? { tags: JSON.stringify(input.tags) } : {}),
       ...(input.lineUserId !== undefined ? { lineUserId: input.lineUserId || null } : {}),
-      ...(input.metadata !== undefined ? { metadata: JSON.stringify(input.metadata) } : {})
+      ...(input.metadata !== undefined ? { metadata: JSON.stringify({ ...input.metadata, workspaceBranchId: currentMetadata.workspaceBranchId }) } : {})
     }
   });
 }

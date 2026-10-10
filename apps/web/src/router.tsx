@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
+import { useAuth } from "./contexts/AuthContext";
 import AppLayout from "./components/layout/AppLayout";
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
@@ -8,6 +9,7 @@ const DashboardPage = lazy(() => import("./components/DashboardPage"));
 const AdminDashboardPage = lazy(() => import("./pages/AdminDashboardPage"));
 const POSPage = lazy(() => import("./pages/POSPage"));
 const InventoryPage = lazy(() => import("./pages/InventoryPage"));
+const BranchInventoryPage = lazy(() => import("./pages/BranchInventoryPage"));
 const StaffPage = lazy(() => import("./pages/StaffPage"));
 const ReportsPage = lazy(() => import("./pages/ReportsPage"));
 const MigrationPage = lazy(() => import("./pages/MigrationPage"));
@@ -37,7 +39,7 @@ export const router = createBrowserRouter([
       { path: "/pos", element: routeElement(<POSPage />) },
       { path: "/queue", element: routeElement(<OrderQueuePage />) },
       { path: "/orders", element: routeElement(<OrdersPage />) },
-      { path: "/inventory", element: routeElement(<InventoryPage />) },
+      { path: "/inventory", element: routeElement(<InventoryRoute />) },
       { path: "/customers", element: routeElement(<CustomersPage />) },
       { path: "/staff", element: routeElement(<StaffPage />) },
       { path: "/reports", element: routeElement(<ReportsPage />) },
@@ -50,3 +52,8 @@ export const router = createBrowserRouter([
   },
   { path: "*", element: <Navigate to="/login" replace /> },
 ]);
+
+function InventoryRoute() {
+  const { user } = useAuth();
+  return user?.role === "admin" ? <InventoryPage /> : <BranchInventoryPage />;
+}

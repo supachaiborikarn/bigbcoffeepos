@@ -1,6 +1,6 @@
 import prisma from "../prisma.js";
 
-export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman" | "email";
+export type IntegrationProvider = "rd_tax" | "line_oa" | "lineman" | "email" | "pospos";
 
 type IntegrationDefinition = {
   provider: IntegrationProvider;
@@ -33,10 +33,17 @@ const DEFINITIONS: IntegrationDefinition[] = [
     label: "Daily Email",
     description: "ส่งอีเมลสรุปยอดขายรายวันผ่าน webhook หรือ email service",
     requiredEnv: ["EMAIL_WEBHOOK_URL"]
+  },
+  {
+    provider: "pospos",
+    label: "POSPOS",
+    description: "ดึงข้อมูลสินค้า สต็อก ลูกค้า และยอดขายจาก POSPOS",
+    requiredEnv: ["POSPOS_EMAIL", "POSPOS_PASSWORD"]
   }
 ];
 
 const MAX_OUTBOX_ATTEMPTS = 3;
+const POSPOS_RUNNING_STALE_MS = 20 * 60 * 1000;
 
 function missingEnv(requiredEnv: string[]) {
   return requiredEnv.filter((key) => !process.env[key]);
@@ -48,6 +55,71 @@ function parsePayload(value: unknown) {
   } catch {
     return {};
   }
+}
+
+function isActivePosposStatus(status: string) {
+  return status === "PENDING" || status === "RUNNING";
+}
+
+function isPosposJobStale(row: { status: string; updatedAt: Date }) {
+  return isActivePosposStatus(row.status) && Date.now() - row.updatedAt.getTime() > POSPOS_RUNNING_STALE_MS;
+}
+
+function getStalePosposMessage(status: string) {
+  if (status === "PENDING") return "งานดึงข้อมูลรอเริ่มนานเกินไป กรุณาสั่งดึงใหม่";
+  return "งานดึงข้อมูลค้างนานเกินไป กรุณาสั่งดึงใหม่";
+}
+
+function toReadablePosposError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/POSPOS_EMAIL|POSPOS_PASSWORD/i.test(message)) {
+    return "ยังไม่ได้ตั้งค่าอีเมลหรือรหัสผ่าน POSPOS ในระบบ";
+  }
+  if (/Branch not found/i.test(message)) {
+    return "ไม่พบสาขานี้ในระบบ";
+  }
+  if (/timeout|timed out|Timeout/i.test(message)) {
+    return "POSPOS ตอบช้าเกินไป กรุณาลองดึงใหม่อีกครั้ง";
+  }
+  if (/ECONN|ENOTFOUND|net::|fetch failed|network/i.test(message)) {
+    return "เชื่อมต่อ POSPOS ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ตหรือระบบ POSPOS";
+  }
+  return (message || "ดึงข้อมูล POSPOS ไม่สำเร็จ").slice(0, 500);
+}
+
+function toPosposSyncJob(row: Awaited<ReturnType<typeof prisma.integrationOutbox.findUnique>>) {
+  if (!row) return null;
+  const payload = parsePayload(row.payload) as Record<string, unknown>;
+  const result = payload.result && typeof payload.result === "object"
+    ? payload.result as Record<string, unknown>
+    : null;
+  const isStale = isPosposJobStale(row);
+
+  return {
+    id: row.id,
+    branchId: Number(payload.branchId ?? row.entityId ?? 0),
+    status: row.status,
+    attempts: row.attempts,
+    lastError: row.lastError ? toReadablePosposError(row.lastError) : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    startedAt: typeof payload.startedAt === "string" ? payload.startedAt : null,
+    finishedAt: typeof payload.finishedAt === "string" ? payload.finishedAt : null,
+    isStale,
+    canRetry: row.status === "FAILED" || row.status === "SKIPPED" || isStale,
+    result: result
+      ? {
+          menuItems: Number(result.menuItems ?? 0),
+          ingredients: Number(result.ingredients ?? 0),
+          customers: Number(result.customers ?? 0),
+          sales: Number(result.sales ?? 0),
+          replacedOrders: Number(result.replacedOrders ?? 0),
+          replacedShifts: Number(result.replacedShifts ?? 0),
+          zeroedStockItems: Number(result.zeroedStockItems ?? 0),
+          success: result.success === true
+        }
+      : null
+  };
 }
 
 async function assertProviderResponseOk(response: Response, provider: IntegrationProvider) {
@@ -189,6 +261,157 @@ export async function retryIntegrationEvent(id: number) {
   return getIntegrationEvent(id);
 }
 
+export async function enqueuePosposSync(branchId: number, requestedByUserId?: number) {
+  const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } });
+  if (!branch) throw new Error("Branch not found");
+
+  const activeJobs = await prisma.integrationOutbox.findMany({
+    where: {
+      provider: "pospos",
+      eventType: "POSPOS_SYNC",
+      entityType: "branch",
+      entityId: branchId,
+      status: { in: ["PENDING", "RUNNING"] }
+    },
+    orderBy: { id: "desc" },
+    take: 5
+  });
+
+  for (const activeJob of activeJobs) {
+    if (isPosposJobStale(activeJob)) {
+      await prisma.integrationOutbox.update({
+        where: { id: activeJob.id },
+        data: {
+          status: "FAILED",
+          lastError: getStalePosposMessage(activeJob.status),
+          updatedAt: new Date()
+        }
+      });
+      continue;
+    }
+    return toPosposSyncJob(activeJob);
+  }
+
+  const row = await prisma.integrationOutbox.create({
+    data: {
+      provider: "pospos",
+      eventType: "POSPOS_SYNC",
+      entityType: "branch",
+      entityId: branchId,
+      payload: JSON.stringify({
+        branchId,
+        requestedByUserId: requestedByUserId ?? null,
+        requestedAt: new Date().toISOString()
+      })
+    }
+  });
+
+  return toPosposSyncJob(row);
+}
+
+export async function getLatestPosposSyncJobsByBranch() {
+  const branches = await prisma.branch.findMany({
+    orderBy: { id: "asc" },
+    select: {
+      id: true,
+      name: true,
+      location: true,
+      branchType: true,
+      active: true,
+      createdAt: true
+    }
+  });
+
+  const items = await Promise.all(branches.map(async (branch) => {
+    const row = await prisma.integrationOutbox.findFirst({
+      where: {
+        provider: "pospos",
+        eventType: "POSPOS_SYNC",
+        entityType: "branch",
+        entityId: branch.id
+      },
+      orderBy: { id: "desc" }
+    });
+
+    return { branch, job: toPosposSyncJob(row) };
+  }));
+
+  return items;
+}
+
+export async function getPosposSyncJob(id: number) {
+  const row = await prisma.integrationOutbox.findUnique({ where: { id } });
+  if (!row || row.provider !== "pospos" || row.eventType !== "POSPOS_SYNC") return null;
+  return toPosposSyncJob(row);
+}
+
+export async function runPosposSyncJob(id: number) {
+  const row = await prisma.integrationOutbox.findUnique({ where: { id } });
+  if (!row || row.provider !== "pospos" || row.eventType !== "POSPOS_SYNC") return null;
+  if (row.status !== "PENDING") return toPosposSyncJob(row);
+
+  const payload = parsePayload(row.payload) as Record<string, unknown>;
+  const branchId = Number(payload.branchId ?? row.entityId);
+  if (!Number.isFinite(branchId) || branchId <= 0) {
+    const failed = await prisma.integrationOutbox.update({
+      where: { id },
+      data: {
+        status: "FAILED",
+        lastError: "Invalid branchId",
+        attempts: { increment: 1 },
+        updatedAt: new Date()
+      }
+    });
+    return toPosposSyncJob(failed);
+  }
+
+  const runPayload = { ...payload, branchId, startedAt: new Date().toISOString() };
+  const claimed = await prisma.integrationOutbox.updateMany({
+    where: { id, status: "PENDING" },
+    data: {
+      status: "RUNNING",
+      lastError: null,
+      attempts: { increment: 1 },
+      payload: JSON.stringify(runPayload),
+      updatedAt: new Date()
+    }
+  });
+  if (claimed.count === 0) return getPosposSyncJob(id);
+
+  try {
+    const { syncPosposData } = await import("../scripts/pospos-sync.js");
+    const result = await syncPosposData(branchId);
+    const done = await prisma.integrationOutbox.update({
+      where: { id },
+      data: {
+        status: "SENT",
+        lastError: null,
+        payload: JSON.stringify({
+          ...runPayload,
+          result,
+          finishedAt: new Date().toISOString()
+        }),
+        updatedAt: new Date()
+      }
+    });
+    return toPosposSyncJob(done);
+  } catch (err: any) {
+    const failed = await prisma.integrationOutbox.update({
+      where: { id },
+      data: {
+        status: "FAILED",
+        lastError: toReadablePosposError(err),
+        payload: JSON.stringify({
+          ...runPayload,
+          finishedAt: new Date().toISOString()
+        }),
+        updatedAt: new Date()
+      }
+    });
+    return toPosposSyncJob(failed);
+  }
+}
+
 export async function processOutboxQueue() {
   const pending = await prisma.integrationOutbox.findMany({
     where: { status: "PENDING", attempts: { lt: MAX_OUTBOX_ATTEMPTS } },
@@ -221,7 +444,13 @@ export async function processOutboxQueue() {
     }
 
     try {
-      if (event.provider === "rd_tax") {
+      if (event.provider === "pospos") {
+        const job = await runPosposSyncJob(event.id);
+        if (job?.status === "SENT") sent++;
+        else if (job?.status === "FAILED") failed++;
+        else skipped++;
+        continue;
+      } else if (event.provider === "rd_tax") {
         const endpoint = process.env.RD_TAX_ENDPOINT!;
         const response = await fetch(endpoint, {
           method: "POST",

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getOrders, updateOrderStatus, getStoreSetting } from "../api";
 import { printReceipt } from "../components/ReceiptPrinter";
-import { isNativePrintAvailable } from "../utils/nativePrinter";
+import { getPrinterMode } from "../utils/printerSettings";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
@@ -61,7 +61,7 @@ export default function OrdersPage() {
   async function reprint(order: Order) {
     // Open the print window inside the click gesture so it never blocks the page.
     // In the native wrapper the Star SDK prints directly, so skip the blank window.
-    const win = (!isNativePrintAvailable() && typeof window !== "undefined")
+    const win = (getPrinterMode() === "browser" && typeof window !== "undefined")
       ? window.open("", "bbpos_receipt", "width=380,height=640")
       : null;
     let storeSetting: StoreSetting | null = null;
@@ -77,6 +77,7 @@ export default function OrdersPage() {
       modifiers: it.modifiers ?? [],
       note: it.note
     }));
+    try {
     const printed = printReceipt({
       order,
       cart,
@@ -86,6 +87,8 @@ export default function OrdersPage() {
       total: order.total,
       pointsUsed: order.loyaltyPointsUsed,
       paymentMethod: order.paymentMethod,
+      cashReceived: order.cashReceived ?? undefined,
+      changeAmount: order.changeAmount ?? undefined,
       storeSetting,
       copies: isOil ? 3 : 1,
       copyLabels: isOil
@@ -94,7 +97,11 @@ export default function OrdersPage() {
     }, activeBranch?.name || "Big B Coffee", win);
     if (!printed) {
       win?.close();
-      toast.error("พิมพ์ใบเสร็จไม่สำเร็จ กรุณาอนุญาต pop-up ของเว็บนี้");
+      toast.error("เปิดใบเสร็จไม่ได้ กรุณาตรวจการตั้งค่าเครื่องพิมพ์");
+    }
+    } catch (error) {
+      win?.close();
+      toast.error((error as Error).message || "เปิดใบเสร็จไม่สำเร็จ บิลยังบันทึกอยู่");
     }
   }
 
@@ -148,7 +155,7 @@ export default function OrdersPage() {
 
   return (
     <main className="container" style={{ padding: "32px", maxWidth: "1200px", margin: "0 auto", height: "100%", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "24px" }}>
+      <div className="orders-heading">
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, display: "flex", alignItems: "center", gap: 12 }}>
             <ShoppingBag size={28} style={{ color: "var(--brand)" }} /> ศูนย์รวมออเดอร์
@@ -157,12 +164,13 @@ export default function OrdersPage() {
             {activeBranch?.name} · {activeShift ? `กะปัจจุบัน #${activeShift.id}` : "รายการของวันนี้"} · ติดตามบิลที่รอจัดเตรียม เสร็จสิ้น ยกเลิก และคืนเงิน
           </p>
         </div>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div className="orders-tools">
           <div style={{ position: "relative" }}>
             <Search size={18} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
             <input
               className="input"
               placeholder="ค้นหาเลขออเดอร์ / สินค้า"
+              aria-label="ค้นหาเลขออเดอร์หรือสินค้า"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ paddingLeft: 40, width: 260, borderRadius: 12 }}

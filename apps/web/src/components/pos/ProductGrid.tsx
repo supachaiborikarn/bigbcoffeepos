@@ -30,7 +30,7 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
       if (isCupVariantMenuItem(item)) return false;
       if (branchType && (item as Record<string, any>).branchType && (item as Record<string, any>).branchType !== branchType) return false;
       if (category !== "ทั้งหมด" && item.category !== category) return false;
-      if (q && !`${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.barcode ?? ""}`.toLowerCase().includes(q)) return false;
+      if (q && !`${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.barcode ?? ""} ${item.sku ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }, [menu, category, deferredSearch, branchType]);
@@ -67,16 +67,7 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
   const hiddenCount = Math.max(0, productTiles.length - renderedTiles.length);
 
   return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-      gridAutoRows: "max-content",
-      gap: "12px",
-      alignContent: "start",
-      padding: "16px",
-      flex: 1,
-      minHeight: 0
-    }}>
+    <div className="studio-product-grid">
       {productTiles.length === 0 ? (
         <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
           ไม่พบสินค้า

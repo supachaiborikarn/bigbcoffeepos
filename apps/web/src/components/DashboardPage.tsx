@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getInventory, getSalesSummary, getShifts, getUsers } from "../api";
+import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { Coffee, TrendingUp, ShoppingCart, Receipt, AlertTriangle, Users, Sparkles, ArrowUpRight, ArrowDownRight, Package } from "lucide-react";
@@ -33,6 +34,7 @@ function getTodayRange() {
 
 export default function DashboardPage({ branchId }: { branchId: number | null }) {
   const { activeBranch } = useBranch();
+  const { user } = useAuth();
   const { activeShift } = useShift();
   const [summary, setSummary] = useState<DashboardData | null>(null);
   const [todaySummary, setTodaySummary] = useState<DashboardData | null>(null);
@@ -48,7 +50,7 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
       .then(setSummary).catch(() => setSummary(null));
     getSalesSummary({ from: todayRange.from, to: todayRange.to, branchId: resolvedBranchId ?? undefined })
       .then(setTodaySummary).catch(() => setTodaySummary(null));
-    getUsers().then((users) => setStaffCount(users.filter((u) => u.active !== false).length)).catch(() => {});
+    if (user?.role === "admin") getUsers().then((users) => setStaffCount(users.filter((u) => u.active !== false && u.branchId === resolvedBranchId).length)).catch(() => {});
     if (resolvedBranchId) {
       getInventory(resolvedBranchId)
         .then((items) => setInventory(items.filter((i) => i.reorderLevel > 0 && i.stockQty <= i.reorderLevel)))
@@ -76,15 +78,15 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
   const kpis = [
     { label: "ยอดขายวันนี้", value: formatMoney(todayRevenue), icon: TrendingUp, change: revChange, color: "#10B981" },
     { label: "ออเดอร์วันนี้", value: String(todaySummary?.totalOrders ?? 0), icon: ShoppingCart, color: "#3B82F6" },
-    { label: "แก้วที่ขายได้", value: String(todayDrinks), icon: Coffee, color: "#8B5CF6" },
+    { label: activeBranch?.branchType === "oil_service" ? "สินค้าที่ขายได้" : "รายการที่ขายได้", value: String(todayDrinks), icon: Coffee, color: "#8B5CF6" },
     { label: "สต็อกต่ำ", value: String(inventory.length), icon: AlertTriangle, color: inventory.length > 0 ? "#F59E0B" : "#10B981" },
-    { label: "พนักงาน", value: String(staffCount), icon: Users, color: "#6366F1" },
+    ...(user?.role === "admin" ? [{ label: "พนักงานประจำสาขา", value: String(staffCount), icon: Users, color: "#6366F1" }] : []),
   ];
 
   // AI Insight cards
   const insights = [
     revChange > 0 && { icon: "📈", text: `รายได้ +${revChange}% เทียบกับเมื่อวาน`, type: "success" as const },
-    inventory.length > 0 && { icon: "⚠️", text: `เมล็ดกาแฟ/วัตถุดิบ ${inventory.length} รายการใกล้หมด`, type: "warning" as const },
+    inventory.length > 0 && { icon: "⚠️", text: `สต็อก ${inventory.length} รายการใกล้หมด`, type: "warning" as const },
     todaySummary && todaySummary.topItems.length > 0 && { icon: "☕", text: `${todaySummary.topItems[0]?.name} ยอดฮิตวันนี้`, type: "info" as const },
     activeShift && { icon: "🟢", text: `กะเปิดอยู่ · ยอดขาย ${formatMoney(activeShift.totalSales)}`, type: "success" as const },
   ].filter(Boolean) as { icon: string; text: string; type: "success" | "warning" | "info" }[];

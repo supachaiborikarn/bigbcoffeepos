@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { Menu, Moon, Sun, MapPin, Printer } from "lucide-react";
+import { businessProfile, roleLabels } from "../../utils/business";
 import { getShiftSummary } from "../../api";
 import { useAuth } from "../../contexts/AuthContext";
 import { useBranch } from "../../contexts/BranchContext";
@@ -56,9 +58,10 @@ function cashCountLines(counts: CashCounts) {
   }).filter((line) => line.count > 0);
 }
 
-export default function TopBar() {
+export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleAppearance }: { onOpenMenu: () => void; mobileOpen: boolean; appearance: string; onToggleAppearance: () => void }) {
   const { user } = useAuth();
   const { branches, activeBranch, setBranchId } = useBranch();
+  const profile = businessProfile(activeBranch?.branchType);
   const { activeShift, openShift, closeShift, loading } = useShift();
   const toast = useToast();
   const [showShiftModal, setShowShiftModal] = useState<"open" | "close" | null>(null);
@@ -141,15 +144,11 @@ export default function TopBar() {
     <>
       <header className="topbar">
         <div className="topbar__left">
-          <select
-            className="input topbar__branch-select"
-            value={activeBranch?.id ?? ""}
-            onChange={(e) => setBranchId(Number(e.target.value))}
-          >
-            {branches.map((branch) => (
-              <option key={branch.id} value={branch.id}>{branch.name}</option>
-            ))}
-          </select>
+          <button className="studio-menu-toggle" onClick={onOpenMenu} aria-label="เปิดเมนู" aria-expanded={mobileOpen} aria-controls="main-navigation"><Menu size={22} /></button>
+          <div className="studio-location"><MapPin size={17} /><div><small>{profile.title}</small>
+          {branches.length > 1 ? <select aria-label="เลือกสาขา" className="studio-branch-select" value={activeBranch?.id ?? ""} onChange={(e) => setBranchId(Number(e.target.value))}>
+            {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+          </select> : <strong>{activeBranch?.name}</strong>}</div></div>
           {activeShift && (
             <div className="shift-status-pill">
               <span className="shift-status-dot" />
@@ -161,10 +160,12 @@ export default function TopBar() {
 
         <div className="topbar__right">
           <OfflineStatus />
+          <button className="studio-icon-button" aria-label="ตั้งค่าเครื่องพิมพ์" title="ตั้งค่าเครื่องพิมพ์" onClick={() => window.dispatchEvent(new Event("bbpos-open-printer-settings"))}><Printer size={18} /></button>
+          <button className="studio-icon-button" onClick={onToggleAppearance} aria-label={appearance === "light" ? "ใช้โหมดมืด" : "ใช้โหมดสว่าง"} title={appearance === "light" ? "โหมดมืด" : "โหมดสว่าง"}>{appearance === "light" ? <Moon size={18} /> : <Sun size={18} />}</button>
           <div className="topbar__item" style={{ gap: 12, cursor: "default" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
               <strong style={{ fontSize: 14 }}>{user?.name}</strong>
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{user?.role}</span>
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{roleLabels[user?.role ?? ""]}</span>
             </div>
             <div style={{ width: 32, height: 32, background: "var(--brand-subtle)", color: "var(--brand-hover)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold" }}>
               {user?.name?.charAt(0) || "U"}

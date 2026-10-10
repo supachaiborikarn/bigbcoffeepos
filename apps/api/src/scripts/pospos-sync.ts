@@ -1,4 +1,5 @@
 import { chromium as playwrightChromium, type Browser, type Page } from "playwright";
+import type { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { classifyMenuItem } from "../utils/menu-data-cleaning.js";
 
@@ -79,6 +80,8 @@ function parseOptionalNumber(value: unknown) {
   return Number.isFinite(n) ? n : null;
 }
 
+const SALES_ONLY_ITEM_NAME = "POSPOS sales-only record";
+
 // ── Branch Mapping ───────────────────────────────────────────────────────────
 
 const BRANCH_MAP: Record<number, string> = {
@@ -98,6 +101,36 @@ const BRANCH_TYPE_MAP: Record<number, string> = {
   3: "coffee",
   4: "oil_service",
 };
+
+type PosposPreparedSale = {
+  userId: number | null;
+  subtotal: number;
+  discountAmount: number;
+  total: number;
+  paymentMethod: "CASH" | "QR" | "CARD";
+  createdAt: Date;
+  note: string;
+};
+
+async function deleteBranchOrdersForPospos(tx: Prisma.TransactionClient, branchId: number) {
+  const orders = await tx.order.findMany({
+    where: { branchId },
+    select: { id: true },
+  });
+  const orderIds = orders.map((order) => order.id);
+
+  if (orderIds.length > 0) {
+    await tx.integrationOutbox.deleteMany({ where: { entityType: "order", entityId: { in: orderIds } } });
+    await tx.taxInvoice.deleteMany({ where: { orderId: { in: orderIds } } });
+    await tx.payment.deleteMany({ where: { orderId: { in: orderIds } } });
+    await tx.orderEvent.deleteMany({ where: { orderId: { in: orderIds } } });
+    await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+    await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+  }
+  const deletedShifts = await tx.shift.deleteMany({ where: { branchId } });
+
+  return { orders: orderIds.length, shifts: deletedShifts.count };
+}
 
 // ── Main Sync Function ───────────────────────────────────────────────────────
 
@@ -130,7 +163,15 @@ export async function syncPosposData(branchId: number) {
   const context = await browser.newContext({ acceptDownloads: true });
   const page = await context.newPage();
 
-  const results = { menuItems: 0, ingredients: 0, customers: 0, sales: 0 };
+  const results = {
+    menuItems: 0,
+    ingredients: 0,
+    customers: 0,
+    sales: 0,
+    replacedOrders: 0,
+    replacedShifts: 0,
+    zeroedStockItems: 0,
+  };
 
   // Intercept product API response
   let productApiData: any[] | null = null;
@@ -271,6 +312,7 @@ export async function syncPosposData(branchId: number) {
       }).filter((c) => c.name);
     }, "Stock");
 
+    const syncedIngredientIds = new Set<number>();
     for (const row of stockData) {
       const name = row.name;
       let stock = 0, unit = "ชิ้น";
@@ -289,6 +331,7 @@ export async function syncPosposData(branchId: number) {
           const created = await prisma.ingredient.create({ data: { name, unit, costPerUnit: cost } });
           ingredientId = created.id;
         }
+        syncedIngredientIds.add(ingredientId);
         await prisma.ingredientStock.upsert({
           where: { branchId_ingredientId: { branchId, ingredientId } },
           update: { stockQty: stock },
@@ -297,7 +340,20 @@ export async function syncPosposData(branchId: number) {
         results.ingredients++;
       }
     }
-    console.log(`  ✓ Saved ${results.ingredients} ingredients/stock`);
+    if (stockData.length > 0) {
+      const syncedIds = [...syncedIngredientIds];
+      const zeroedStock = syncedIds.length > 0
+        ? await prisma.ingredientStock.updateMany({
+            where: { branchId, ingredientId: { notIn: syncedIds } },
+            data: { stockQty: 0 },
+          })
+        : await prisma.ingredientStock.updateMany({
+            where: { branchId },
+            data: { stockQty: 0 },
+          });
+      results.zeroedStockItems = zeroedStock.count;
+    }
+    console.log(`  ✓ Saved ${results.ingredients} ingredients/stock, zeroed ${results.zeroedStockItems} missing stock rows`);
 
     // ── 5. Scrape Customers ──
     console.log("[5/6] Scraping Customers...");
@@ -350,8 +406,10 @@ export async function syncPosposData(branchId: number) {
         };
       }).filter((c) => c.receiptNo);
     }, "Sales");
+
     const users = await prisma.user.findMany({ where: { active: true }, select: { id: true, name: true } });
     const userByStaffName = new Map(users.map((user) => [normalizeStaffName(user.name), user]));
+    const preparedSales: PosposPreparedSale[] = [];
 
     for (const row of salesData) {
       if (row.status !== "สำเร็จ") continue;
@@ -369,58 +427,82 @@ export async function syncPosposData(branchId: number) {
         : "POSPOS sales total only, no item detail";
       const staffUser = row.staff ? userByStaffName.get(normalizeStaffName(row.staff)) : undefined;
 
-      const existingOrder = await prisma.order.findFirst({
-        where: {
-          branchId, total,
-          createdAt: { gte: new Date(createdAt.getTime() - 60000), lte: new Date(createdAt.getTime() + 60000) },
+      preparedSales.push({
+        userId: staffUser?.id ?? null,
+        subtotal: total + discountAmount,
+        discountAmount,
+        total,
+        paymentMethod,
+        createdAt,
+        note: importNote,
+      });
+    }
+
+    if (salesData.length > 0 && preparedSales.length > 0) {
+      const salesOnlyItem = await prisma.menuItem.findFirst({
+        where: { name: SALES_ONLY_ITEM_NAME, branchType },
+        select: { id: true },
+      }) ?? await prisma.menuItem.create({
+        data: {
+          name: SALES_ONLY_ITEM_NAME,
+          category: "Imported POSPOS",
+          basePrice: 0,
+          cost: 0,
+          branchType,
+          active: false,
         },
+        select: { id: true },
       });
 
-      if (!existingOrder) {
-        const salesOnlyItem = await prisma.menuItem.findFirst({
-          where: { name: "POSPOS sales-only record", branchType },
-        }) ?? await prisma.menuItem.create({
-          data: {
-            name: "POSPOS sales-only record",
-            category: "Imported POSPOS",
-            basePrice: 0,
-            cost: 0,
-            branchType,
-            active: false,
-          },
-        });
+      const replaceResult = await prisma.$transaction(async (tx) => {
+        const deleted = await deleteBranchOrdersForPospos(tx, branchId);
+        let importedSales = 0;
 
-        await prisma.order.create({
-          data: {
-            branchId,
-            userId: staffUser?.id ?? null,
-            status: "READY",
-            subtotal: total + discountAmount,
-            discountAmount,
-            total,
-            paymentMethod,
-            createdAt,
-            items: {
-              create: [{
-                menuItemId: salesOnlyItem.id,
-                name: "POSPOS sales-only record",
-                qty: 1,
-                basePrice: total,
-                modifiers: "[]",
-                lineTotal: total,
-                note: importNote,
-              }],
+        for (const sale of preparedSales) {
+          await tx.order.create({
+            data: {
+              branchId,
+              userId: sale.userId,
+              status: "READY",
+              subtotal: sale.subtotal,
+              discountAmount: sale.discountAmount,
+              total: sale.total,
+              paymentMethod: sale.paymentMethod,
+              createdAt: sale.createdAt,
+              items: {
+                create: [{
+                  menuItemId: salesOnlyItem.id,
+                  name: SALES_ONLY_ITEM_NAME,
+                  qty: 1,
+                  basePrice: sale.total,
+                  modifiers: "[]",
+                  lineTotal: sale.total,
+                  note: sale.note,
+                }],
+              },
             },
-          },
-        });
-        results.sales++;
-      }
+          });
+          importedSales++;
+        }
+
+        return { replacedOrders: deleted.orders, replacedShifts: deleted.shifts, importedSales };
+      }, { maxWait: 10000, timeout: 120000 });
+
+      results.replacedOrders = replaceResult.replacedOrders;
+      results.replacedShifts = replaceResult.replacedShifts;
+      results.sales = replaceResult.importedSales;
+      console.log(`  ✓ Removed ${results.replacedOrders} existing branch orders and ${results.replacedShifts} shifts before POSPOS import`);
+    } else if (salesData.length === 0) {
+      console.log("  ⚠ No sales rows captured, keeping existing branch orders.");
+    } else {
+      console.log("  ⚠ No successful sales rows captured, keeping existing branch orders.");
     }
-    console.log(`  ✓ Saved ${results.sales} new sales`);
+
+    console.log(`  ✓ Replaced branch sales with ${results.sales} POSPOS sales`);
 
     console.log(`\n${"═".repeat(60)}`);
     console.log(`  ✅ Sync complete for branch ${branchId} (${branch.name})`);
-    console.log(`     Menu: ${results.menuItems} | Stock: ${results.ingredients} | Customers: ${results.customers} | Sales: ${results.sales}`);
+    console.log(`     Menu: ${results.menuItems} | Stock: ${results.ingredients} | Customers: ${results.customers} | Sales: ${results.sales} | Replaced orders: ${results.replacedOrders} | Replaced shifts: ${results.replacedShifts}`);
     console.log(`${"═".repeat(60)}\n`);
 
     return { success: true, ...results };

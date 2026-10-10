@@ -12,6 +12,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "bb_pos_secret_key_dev";
 if (!process.env.JWT_SECRET) console.warn("[Auth] JWT_SECRET not set - using dev fallback (unsafe outside local/test)");
 
 export interface AuthRequest extends Request {
+  branchScope?: { id: number; branchType: string };
   user?: {
     id: number;
     name: string;
@@ -63,7 +64,7 @@ export function requireRole(...roles: string[]) {
 export function requireBranchAccess(resolveBranchId: (req: AuthRequest) => number | null) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-    if (req.user.role === "admin" || req.user.role === "manager") return next();
+    if (req.user.role === "admin") return next();
 
     const requestedBranchId = resolveBranchId(req);
     if (requestedBranchId === null) return res.status(400).json({ error: "ระบุสาขา" });

@@ -223,8 +223,8 @@ export async function approvePurchase(id: number, userId?: number | null) {
   });
 }
 
-export async function listProductUnits(menuItemId?: number) {
-  return db.productUnit.findMany({ where: menuItemId ? { menuItemId } : undefined, include: { menuItem: true }, orderBy: { id: "desc" } });
+export async function listProductUnits(menuItemId?: number, branchType?: string) {
+  return db.productUnit.findMany({ where: { ...(menuItemId ? { menuItemId } : {}), ...(branchType ? { menuItem: { branchType } } : {}) }, include: { menuItem: true }, orderBy: { id: "desc" } });
 }
 
 export async function saveProductUnit(input: { menuItemId: number; unitName: string; factor: number; price?: number | null; barcode?: string }) {

@@ -1,7 +1,7 @@
 import prisma from "../prisma.js";
 
-export async function getMenu() {
-  return prisma.menuItem.findMany({ orderBy: { id: "asc" } });
+export async function getMenu(branchType?: string) {
+  return prisma.menuItem.findMany({ where: branchType ? { branchType } : {}, orderBy: { id: "asc" } });
 }
 
 export async function getMenuItem(id: number) {

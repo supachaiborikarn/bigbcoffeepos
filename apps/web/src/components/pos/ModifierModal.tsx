@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { X, Check } from "lucide-react";
 import type { MenuItem, Modifier } from "../../types";
+import { useDialogFocus } from "../../utils/useDialogFocus";
 import { shouldUseModifierModal } from "../../utils/menuRules";
 
 type Props = {
@@ -27,18 +28,19 @@ const ADD_ONS = [
 ];
 
 const COLD_CUP_OPTIONS = [
-  { value: "แก้วเย็น", label: "แก้วเย็น", stockNote: "ตัดสต็อกแก้วเย็น" },
-  { value: "แก้วทานร้าน", label: "แก้วทานร้าน", stockNote: "ไม่ตัดแก้วใช้แล้วทิ้ง" },
-  { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ไม่ตัดสต็อกแก้ว" },
+  { value: "แก้วเย็น", label: "แก้วเย็น", stockNote: "แก้วใช้แล้วทิ้ง" },
+  { value: "แก้วทานร้าน", label: "แก้วทานร้าน", stockNote: "เสิร์ฟในร้าน" },
+  { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ลูกค้านำแก้วมาเอง" },
 ];
 
 const HOT_CUP_OPTIONS = [
-  { value: "แก้วทานร้าน", label: "แก้วทานร้าน", stockNote: "ไม่ตัดแก้วใช้แล้วทิ้ง" },
-  { value: "แก้วเดินทาง", label: "แก้วเดินทาง", stockNote: "ตัดสต็อกแก้วร้อน" },
-  { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ไม่ตัดสต็อกแก้ว" },
+  { value: "แก้วทานร้าน", label: "แก้วทานร้าน", stockNote: "เสิร์ฟในร้าน" },
+  { value: "แก้วเดินทาง", label: "แก้วเดินทาง", stockNote: "แก้วสำหรับนำกลับ" },
+  { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ลูกค้านำแก้วมาเอง" },
 ];
 
 export default function ModifierModal({ item, onClose, onAdd }: Props) {
+  const dialogRef = useDialogFocus(onClose);
   const usesModifiers = shouldUseModifierModal(item);
 
   const [type, setType] = useState(item.name.includes("ร้อน") ? "Hot" : item.name.includes("ปั่น") ? "Frappe" : "Iced");
@@ -83,17 +85,17 @@ export default function ModifierModal({ item, onClose, onAdd }: Props) {
       position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
       background: "rgba(44,30,22,0.4)", backdropFilter: "blur(4px)", padding: "20px"
     }}>
-      <div style={{
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="modifier-title" style={{
         background: "var(--bg-surface)", width: "100%", maxWidth: 500, borderRadius: "24px",
         boxShadow: "var(--shadow-modal)", animation: "slideUp 250ms cubic-bezier(0.16, 1, 0.3, 1)",
         display: "flex", flexDirection: "column", maxHeight: "90vh"
       }}>
         <div style={{ padding: "24px 24px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <h2 style={{ fontSize: 24, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{item.name}</h2>
+            <h2 id="modifier-title" style={{ fontSize: 24, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{item.name}</h2>
             <p style={{ color: "var(--brand)", fontWeight: 600, fontSize: 18 }}>฿{item.basePrice}</p>
           </div>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 8, margin: -8 }}>
+          <button aria-label="ปิดตัวเลือกสินค้า" onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 8, margin: -8 }}>
             <X size={24} />
           </button>
         </div>

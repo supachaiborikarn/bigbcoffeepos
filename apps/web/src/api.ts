@@ -22,6 +22,8 @@ import type {
   Order,
   OrderStatus,
   PaymentMethod,
+  PosposBranchSyncStatus,
+  PosposSyncJob,
   PriceRule,
   ProductImportInput,
   ProductUnit,
@@ -68,13 +70,23 @@ type CreateOrderInput = {
   userId?: number;
   shiftId?: number;
 };
-type OfflineOrderInput = CreateOrderInput;
+type OfflineOrderInput = CreateOrderInput & { offlineQueueId?: string };
+
+function makeOfflineId() { return globalThis.crypto.randomUUID(); }
 
 const OFFLINE_FAILED_KEY = "bb_pos_offline_failed";
 type FailedOfflineOrder = { input: OfflineOrderInput; error: string; failedAt: string };
+function currentOfflineScope() {
+  try {
+    const user = JSON.parse(localStorage.getItem("bb_pos_user") || "null");
+    return user ? { userId: user.id, branchId: Number(localStorage.getItem(`bb_pos_branch_id:${user.id}`) || user.branchId) } : null;
+  } catch { return null; }
+}
+function belongsToScope(input: OfflineOrderInput, scope = currentOfflineScope()) { return !!scope && input.branchId === scope.branchId && input.userId === scope.userId; }
+
 
 export function getOfflinePendingCount(): number {
-  return getOfflineQueue().length;
+  return getOfflineQueue().filter((item) => belongsToScope(item)).length;
 }
 
 function getOfflineFailed(): FailedOfflineOrder[] {
@@ -92,23 +104,23 @@ function setOfflineFailed(items: FailedOfflineOrder[]) {
 }
 
 export function getOfflineFailedCount(): number {
-  return getOfflineFailed().length;
+  return getOfflineFailed().filter((item) => belongsToScope(item.input)).length;
 }
 
 export function getOfflineFailedDetails(): FailedOfflineOrder[] {
-  return getOfflineFailed();
+  return getOfflineFailed().filter((item) => belongsToScope(item.input));
 }
 
 export function discardFailedOfflineOrders() {
-  setOfflineFailed([]);
+  setOfflineFailed(getOfflineFailed().filter((item) => !belongsToScope(item.input)));
 }
 
 /** Move server-rejected offline orders back into the queue to retry (e.g. after reopening a shift). */
 export async function retryFailedOfflineOrders() {
-  const failed = getOfflineFailed();
-  if (!failed.length) return { sent: 0, remaining: getOfflineQueue().length, failed: 0 };
+  const failed = getOfflineFailedDetails();
+  if (!failed.length) return { sent: 0, remaining: getOfflinePendingCount(), failed: 0 };
   setOfflineQueue([...getOfflineQueue(), ...failed.map((f) => f.input)]);
-  setOfflineFailed([]);
+  discardFailedOfflineOrders();
   return flushOfflineOrders();
 }
 
@@ -133,7 +145,7 @@ function isOfflineCheckoutError(error: unknown) {
 
 function queueOfflineOrder(input: OfflineOrderInput): Order {
   const queue = getOfflineQueue();
-  queue.push(input);
+  queue.push({ ...input, offlineQueueId: makeOfflineId() });
   setOfflineQueue(queue);
   const now = new Date().toISOString();
   return {
@@ -166,13 +178,26 @@ function queueOfflineOrder(input: OfflineOrderInput): Order {
   };
 }
 
-export async function flushOfflineOrders() {
-  const queue = getOfflineQueue();
+let offlineFlush: Promise<{ sent: number; remaining: number; failed: number }> | null = null;
+export function flushOfflineOrders() {
+  if (!offlineFlush) offlineFlush = flushScopedOfflineOrders().finally(() => { offlineFlush = null; });
+  return offlineFlush;
+}
+async function flushScopedOfflineOrders() {
+  const scope = currentOfflineScope();
+  // Give legacy bills stable identities before any request; other users' bills stay untouched.
+  const all = getOfflineQueue().map((item) => belongsToScope(item, scope) ? {
+    ...item, offlineQueueId: item.offlineQueueId || makeOfflineId(), idempotencyKey: item.idempotencyKey || `offline-${makeOfflineId()}`
+  } : item);
+  const queue = all.filter((item) => belongsToScope(item, scope));
   if (!queue.length) return { sent: 0, remaining: 0, failed: getOfflineFailedCount() };
+  setOfflineQueue(all);
   const remaining: OfflineOrderInput[] = [];
-  const failed = getOfflineFailed();
+  const newlyFailed: FailedOfflineOrder[] = [];
   let sent = 0;
   for (const item of queue) {
+    const current = currentOfflineScope();
+    if (current?.userId !== scope?.userId || current?.branchId !== scope?.branchId) { remaining.push(item); continue; }
     try {
       await createOrderOnline(item);
       sent += 1;
@@ -182,13 +207,15 @@ export async function flushOfflineOrders() {
         remaining.push(item);
       } else {
         // Server rejected (e.g. stock/shift) — move aside for manual attention, don't retry blindly.
-        failed.push({ input: item, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
+        newlyFailed.push({ input: item, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
       }
     }
   }
-  setOfflineQueue(remaining);
+  const processed = new Set(queue.map((item) => item.offlineQueueId));
+  setOfflineQueue([...getOfflineQueue().filter((item) => !processed.has(item.offlineQueueId)), ...remaining]);
+  const failed = [...getOfflineFailed(), ...newlyFailed];
   setOfflineFailed(failed);
-  return { sent, remaining: remaining.length, failed: failed.length };
+  return { sent, remaining: remaining.length, failed: failed.filter((item) => belongsToScope(item.input, scope)).length };
 }
 
 type FetchJsonInit = RequestInit & { timeoutMs?: number };
@@ -197,6 +224,14 @@ async function fetchJson<T>(input: RequestInfo, init?: FetchJsonInit): Promise<T
   const token = localStorage.getItem("bb_pos_token");
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  const target = String(input);
+  if (!/\/(branches|auth\/(me|pin))$/.test(target)) {
+    try {
+      const user = JSON.parse(localStorage.getItem("bb_pos_user") || "null");
+      const branchId = user && localStorage.getItem(`bb_pos_branch_id:${user.id}`);
+      if (branchId) headers["X-Branch-Id"] = branchId;
+    } catch { /* No restored session. */ }
+  }
   const { timeoutMs, ...fetchInit } = init ?? {};
   const controller = timeoutMs ? new AbortController() : null;
   const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -261,6 +296,19 @@ export async function getCustomers(search?: string) {
   if (search) query.set("search", search);
   const payload = await fetchJson<{ items: Customer[] }>(`${API_URL}/customers?${query.toString()}`);
   return payload.items;
+}
+
+export type UnassignedCustomer = Customer & { historicalBranchIds: number[] };
+export async function getUnassignedCustomers() {
+  const payload = await fetchJson<{ items: UnassignedCustomer[] }>(`${API_URL}/customers/unassigned`);
+  return payload.items;
+}
+
+export async function assignCustomerBranch(id: number, branchId: number) {
+  const payload = await fetchJson<{ customer: Customer }>(`${API_URL}/customers/${id}/branch`, {
+    method: "PUT", body: JSON.stringify({ branchId })
+  });
+  return payload.customer;
 }
 
 export async function getCustomerInsights(params: { inactiveDays?: number; limit?: number } = {}) {
@@ -545,11 +593,12 @@ async function createOrderOnline(input: CreateOrderInput) {
 }
 
 export async function createOrder(input: OfflineOrderInput) {
+  const request = { ...input, idempotencyKey: input.idempotencyKey || `checkout-${makeOfflineId()}` };
   try {
-    return await createOrderOnline(input);
+    return await createOrderOnline(request);
   } catch (error) {
     if (!isOfflineCheckoutError(error)) throw error;
-    return queueOfflineOrder(input);
+    return queueOfflineOrder(request);
   }
 }
 
@@ -655,11 +704,22 @@ export async function getShifts(branchId: number) {
 }
 
 /* ─── Migration ─── */
+export async function getPosposMigrationStatuses() {
+  const payload = await fetchJson<{ items: PosposBranchSyncStatus[] }>(`${API_URL}/migration/sync/latest`);
+  return payload.items;
+}
+
 export async function syncPosposMigration(branchId: number) {
-  return fetchJson<{ success?: boolean; menuItems?: number; ingredients?: number; customers?: number; sales?: number; message?: string }>(`${API_URL}/migration/sync`, {
+  const payload = await fetchJson<{ job: PosposSyncJob }>(`${API_URL}/migration/sync`, {
     method: "POST",
     body: JSON.stringify({ branchId })
   });
+  return payload.job;
+}
+
+export async function getPosposMigrationJob(id: number) {
+  const payload = await fetchJson<{ job: PosposSyncJob }>(`${API_URL}/migration/sync/${id}`);
+  return payload.job;
 }
 
 /* ─── Purchases ─── */
@@ -955,4 +1015,8 @@ export async function processIntegrationOutbox() {
     body: JSON.stringify({})
   });
   return payload.result;
+}
+
+export async function getCurrentUser() {
+  return (await fetchJson<{ user: User }>(`${API_URL}/auth/me`)).user;
 }

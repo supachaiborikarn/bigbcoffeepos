@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import type { User } from "../types";
-import { loginWithPin as apiLoginWithPin } from "../api";
+import { getCurrentUser, loginWithPin as apiLoginWithPin } from "../api";
 
 type AuthContextType = {
   user: User | null;
@@ -26,16 +26,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const savedToken = localStorage.getItem(TOKEN_KEY);
     const savedUser = localStorage.getItem(USER_KEY);
+    let cancelled = false;
     if (savedToken && savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
+      getCurrentUser().then((current) => {
+        if (cancelled) return;
+        setUser(current);
         setToken(savedToken);
-      } catch {
+        localStorage.setItem(USER_KEY, JSON.stringify(current));
+      }).catch(() => {
+        if (cancelled) return;
         localStorage.removeItem(TOKEN_KEY);
         localStorage.removeItem(USER_KEY);
-      }
-    }
-    setLoading(false);
+      }).finally(() => { if (!cancelled) setLoading(false); });
+    } else setLoading(false);
+    return () => { cancelled = true; };
   }, []);
 
   const login = useCallback(async (pin: string): Promise<boolean> => {
@@ -54,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    Object.keys(localStorage).filter(key => key.startsWith("bbpos.print.job:")).forEach(key => localStorage.removeItem(key));
     setUser(null);
     setToken(null);
     localStorage.removeItem(TOKEN_KEY);

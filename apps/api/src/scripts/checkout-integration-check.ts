@@ -2,6 +2,7 @@ import prisma from "../prisma.js";
 import { getDailyCloseReport, getSalesSummary } from "../store/reports.js";
 import { createOrder, getOrders, updateOrderStatusWithContext } from "../store/orders.js";
 import { getShiftSummary } from "../store/shifts.js";
+import { assignCustomerBranch, customerHasBranch, getUnassignedCustomers } from "../store/customers.js";
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
@@ -20,6 +21,7 @@ async function main() {
   let createdCupIngredientId: number | null = null;
   let customerId: number | null = null;
   let shiftId: number | null = null;
+  let foreignShiftId: number | null = null;
 
   try {
     const branch = await prisma.branch.create({
@@ -37,9 +39,18 @@ async function main() {
     userId = user.id;
 
     const customer = await prisma.customer.create({
-      data: { name: `${tag}_customer`, phone: `${Date.now()}`, points: 5 }
+      data: { name: `${tag}_customer`, phone: `${Date.now()}`, points: 5, metadata: JSON.stringify({ importBatch: tag }) }
     });
     customerId = customer.id;
+    assert((await getUnassignedCustomers()).some((row) => row.id === customer.id), "legacy contact should be reviewable");
+    const assigned = await assignCustomerBranch(customer.id, branchId);
+    assert(assigned.points === 5 && JSON.parse(assigned.metadata).importBatch === tag, "assignment must preserve points and imported metadata");
+    assert(await customerHasBranch(customer.id, branchId), "assigned contact should belong to chosen branch");
+    assert(!(await customerHasBranch(customer.id, otherBranchId)), "assigned contact must stay out of other branch");
+    assert(!(await getUnassignedCustomers()).some((row) => row.id === customer.id), "assigned contact should leave review list");
+    let reassigned = false;
+    try { await assignCustomerBranch(customer.id, otherBranchId); reassigned = true; } catch { /* Existing assignments cannot be overwritten by this workflow. */ }
+    assert(!reassigned, "assignment workflow must not move an already assigned member");
 
     const ingredient = await prisma.ingredient.create({
       data: { name: `${tag}_bean`, unit: "g", costPerUnit: 1 }
@@ -92,6 +103,22 @@ async function main() {
     });
     shiftId = shift.id;
 
+    const foreignShift = await prisma.shift.create({ data: { branchId: otherBranchId!, status: "OPEN", openingCash: 0 } });
+    foreignShiftId = foreignShift.id;
+    for (const status of ["FOREIGN", "CLOSED"]) {
+      if (status === "CLOSED") await prisma.shift.update({ where: { id: foreignShiftId }, data: { branchId: branchId!, status: "CLOSED" } });
+      let rejected = false;
+      try {
+        await createOrder({ branchId: branchId!, customerId: null, userId: userId!, shiftId: foreignShiftId,
+          items: [{ menuItemId: menuItemId!, qty: 1, modifiers: [] }], paymentMethod: "CASH",
+          discountType: null, discountValue: 0, loyaltyPointsToUse: 0, paymentDetails: { cashReceived: 50 } });
+      } catch (error) { rejected = /กะนี้ปิดแล้วหรือเป็นกะของสาขาอื่น/.test((error as Error).message); }
+      assert(rejected, `${status} shift must reject checkout`);
+      assert(await prisma.order.count({ where: { branchId: branchId! } }) === 0, "Rejected shift must roll back the order");
+      const untouched = await prisma.ingredientStock.findUnique({ where: { branchId_ingredientId: { branchId: branchId!, ingredientId: ingredientId! } } });
+      assert(untouched?.stockQty === 10, "Rejected shift must roll back stock changes");
+    }
+
     let insufficientPaymentFailed = false;
     try {
       await createOrder({
@@ -142,6 +169,10 @@ async function main() {
       idempotencyKey: `${tag}_order`
     });
     assert(duplicate?.id === order.id, "Idempotency key created a duplicate order");
+    assert(order.cashReceived === 60 && order.changeAmount === 60 - order.total, "Checkout receipt must include actual cash and change");
+    assert(duplicate.cashReceived === 60 && duplicate.changeAmount === order.changeAmount, "Recovered checkout must retain original receipt payment details");
+    const receiptOrder = (await getOrders(branchId)).find((item: any) => item.id === order.id);
+    assert(receiptOrder?.cashReceived === 60 && receiptOrder.changeAmount === order.changeAmount, "Reprint must retain original cash and change");
 
     const stockAfterSale = await prisma.ingredientStock.findUnique({
       where: { branchId_ingredientId: { branchId, ingredientId } }
@@ -247,9 +278,11 @@ async function main() {
         where: { OR: createdOrderIds.flatMap((id) => [{ reason: `SALE-${id}` }, { reason: `REFUNDED-${id}` }, { reason: `CANCELLED-${id}` }]) }
       });
     }
+    if (foreignShiftId) await prisma.shift.deleteMany({ where: { id: foreignShiftId } });
     if (shiftId) await prisma.shift.deleteMany({ where: { id: shiftId } });
     if (menuItemId && ingredientId) await prisma.recipe.deleteMany({ where: { menuItemId, ingredientId } });
     if (branchId) await prisma.cupStockSetting.deleteMany({ where: { branchId } });
+    if (branchId) await prisma.inventoryLot.deleteMany({ where: { branchId } });
     if (branchId) await prisma.ingredientStock.deleteMany({ where: { branchId, ingredientId: { in: [ingredientId, cupIngredientId, lidIngredientId].filter((id): id is number => Boolean(id)) } } });
     if (menuItemId) await prisma.menuItem.deleteMany({ where: { id: menuItemId } });
     if (createdCupIngredientId) await prisma.ingredient.deleteMany({ where: { id: createdCupIngredientId } });

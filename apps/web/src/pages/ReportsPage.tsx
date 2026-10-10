@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSalesSummary, getDailyCloseReport, getOrdersCsvUrl, API_URL } from "../api";
-import type { DailyCloseReport, PaymentMethod, ReportSource, SalesSummary } from "../types";
+import type { PaymentMethod, ReportSource, SalesSummary } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
+import { submitPrintJob } from "../utils/printJob";
+import { getPrinterMode } from "../utils/printerSettings";
+import { createDailySummaryJob } from "../utils/dailySummaryPrint";
 
 function formatDateInput(date: Date) {
   const d = new Date(date);
@@ -23,24 +26,6 @@ const reportSourceLabels: Record<ReportSource, string> = {
   pospos: "POSPOS sales-only",
   all: "ทั้งหมด"
 };
-
-function formatThaiDate(value: string) {
-  return new Date(`${value}T12:00:00+07:00`).toLocaleDateString("th-TH", { dateStyle: "medium" });
-}
-
-function formatThaiDateTime(value?: string | null) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" });
-}
-
-function escapeHtml(value: unknown) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 const fetchAuth = async <T,>(url: string): Promise<T> => {
   const token = localStorage.getItem("bb_pos_token");
@@ -133,140 +118,18 @@ export default function ReportsPage() {
   };
 
   const printDailySummary = async () => {
+    if (!activeBranch) return;
     setIsPrintingDaily(true);
-    let printWindow: Window | null = null;
+    // Browser printing needs the popup opened synchronously inside the click,
+    // before the report fetch, or popup blockers swallow it. Printer bridges
+    // (iOS app / PassPRNT / RawBT) don't use a window at all.
+    let popup: Window | null = getPrinterMode() === "browser" ? window.open("", "bbpos_receipt", "width=420,height=760") : null;
     try {
-      printWindow = window.open("", "_blank", "width=360,height=700");
-      if (!printWindow) throw new Error("ไม่สามารถเปิดหน้าพิมพ์ได้");
-      const report = await getDailyCloseReport({ date: reportRange.to, branchId: reportBranchId ?? activeBranch?.id, source: reportSource });
-      const sourceLabel = reportSourceLabels[report.source] ?? reportSourceLabels.system;
-      const row = (label: string, value: string, className = "") => `
-        <div class="row ${className}">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
-        </div>`;
-      const sourceRows = [
-        ["ยอดขายในระบบ", report.sourceBreakdown.system],
-        ["POSPOS sales-only", report.sourceBreakdown.pospos],
-        ["ทั้งหมด", report.sourceBreakdown.all]
-      ].map(([label, source]) => {
-        const item = source as DailyCloseReport["sourceBreakdown"]["system"];
-        return row(String(label), `${item.orders.toLocaleString("th-TH")} บิล / ${formatMoney(item.revenue)}`);
-      }).join("");
-      const paymentRows = report.payments.map((payment) => (
-        row(paymentLabels[payment.method] ?? payment.method, `${payment.count.toLocaleString("th-TH")} บิล / ${formatMoney(payment.total)}`)
-      )).join("");
-      const shiftRows = report.shifts.map((shift) => `
-        <div class="mini-block">
-          <p class="mini-title">กะ #${shift.id} · ${escapeHtml(shift.userName)}</p>
-          ${row("เปิด", formatThaiDateTime(shift.openedAt))}
-          ${row("ปิด", formatThaiDateTime(shift.closedAt))}
-          ${row("ยอดขาย", formatMoney(shift.totalSales))}
-          ${row("จำนวนบิล", shift.totalOrders.toLocaleString("th-TH"))}
-          ${row("เงินนับ", shift.closingCash == null ? "-" : formatMoney(shift.closingCash))}
-          ${row("ส่วนต่าง", shift.difference == null ? "-" : formatMoney(shift.difference), Number(shift.difference ?? 0) < 0 ? "neg" : "pos")}
-          ${shift.note ? `<p class="note">หมายเหตุ: ${escapeHtml(shift.note)}</p>` : ""}
-        </div>
-      `).join("");
-      const itemRows = report.topItems.slice(0, 10).map((item, index) => (
-        row(`${index + 1}. ${item.name}`, `${item.qty.toLocaleString("th-TH")} / ${formatMoney(item.revenue)}`)
-      )).join("");
-      const hiddenItemCount = Math.max(0, report.topItems.length - 10);
-      printWindow.document.write(`
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>ใบสรุปส่งยอด ${escapeHtml(report.date)}</title>
-  <style>
-    * { box-sizing: border-box; }
-    @page { margin: 0; size: 58mm auto; }
-    body {
-      width: 58mm;
-      margin: 0;
-      padding: 6px 4px;
-      color: #111827;
-      background: #fff;
-      font-family: "IBM Plex Sans Thai", "Tahoma", sans-serif;
-      font-size: 10px;
-      line-height: 1.3;
-    }
-    .sheet { width: 100%; }
-    header { text-align: center; border-bottom: 1px dashed #111827; padding-bottom: 6px; margin-bottom: 6px; }
-    h1 { font-size: 13px; margin: 0 0 3px; }
-    h2 { font-size: 11px; margin: 8px 0 3px; padding-top: 5px; border-top: 1px dashed #111827; }
-    p { margin: 0; }
-    .muted { color: #667085; }
-    .row { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; align-items: baseline; }
-    .row span { min-width: 0; overflow-wrap: anywhere; }
-    .row strong { text-align: right; white-space: nowrap; }
-    .total { border-top: 1px dashed #111827; margin-top: 4px; padding-top: 5px; font-size: 12px; }
-    .mini-block { padding: 5px 0; border-bottom: 1px dotted #d0d5dd; }
-    .mini-title { font-weight: 700; margin-bottom: 2px; }
-    .note { color: #475467; margin-top: 3px; overflow-wrap: anywhere; }
-    .pos { color: #047857; }
-    .neg { color: #b42318; }
-    .signatures { display: grid; grid-template-columns: 1fr; gap: 22px; margin-top: 20px; }
-    .sign { text-align: center; padding-top: 18px; border-top: 1px solid #111827; }
-    .footer { text-align: center; margin-top: 10px; border-top: 1px dashed #111827; padding-top: 6px; }
-    @media screen {
-      body { background: #f2f4f7; padding: 12px; }
-      .sheet { background: #fff; max-width: 230px; margin: 0 auto; padding: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); }
-    }
-    @media print { body { padding: 6px 4px; background: #fff; } .sheet { box-shadow: none; padding: 0; } }
-  </style>
-</head>
-<body>
-  <div class="sheet">
-    <header>
-      <h1>ใบสรุปส่งยอดประจำวัน</h1>
-      <p><strong>${escapeHtml(report.branch?.name ?? "ทุกสาขา")}</strong></p>
-      <p class="muted">วันที่ ${formatThaiDate(report.date)}</p>
-      <p class="muted">ชุดข้อมูล: ${escapeHtml(sourceLabel)}</p>
-      <p class="muted">พิมพ์ ${formatThaiDateTime(report.generatedAt)}</p>
-    </header>
-
-    ${row("ยอดขายสุทธิ", formatMoney(report.totals.totalRevenue), "total")}
-    ${row("จำนวนบิล", report.totals.totalOrders.toLocaleString("th-TH"))}
-    ${row("เฉลี่ย/บิล", formatMoney(report.totals.averageTicket))}
-    ${row("ส่วนลดรวม", formatMoney(report.totals.discountAmount))}
-
-    <h2>แยกตามแหล่งข้อมูล</h2>
-    ${sourceRows}
-
-    <h2>สรุปช่องทางชำระเงิน</h2>
-    ${paymentRows || `<p class="muted">ไม่มีข้อมูลชำระเงิน</p>`}
-
-    <h2>สรุปเงินสด</h2>
-    ${row("ขายเงินสด", formatMoney(report.cash.cashSales))}
-    ${row("เงินสดที่ควรมี", formatMoney(report.cash.expectedCash))}
-    ${row("นับเงินจริง", formatMoney(report.cash.countedCash))}
-    ${row("ส่วนต่าง", formatMoney(report.cash.difference), report.cash.difference < 0 ? "neg total" : "pos total")}
-
-    <h2>รายละเอียดกะ</h2>
-    ${shiftRows || `<p class="muted">ไม่มีข้อมูลกะ</p>`}
-
-    <h2>เมนูขายดี</h2>
-    ${itemRows || `<p class="muted">ไม่มีข้อมูลสินค้า</p>`}
-    ${hiddenItemCount > 0 ? `<p class="muted">มีสินค้าเพิ่มเติมอีก ${hiddenItemCount.toLocaleString("th-TH")} รายการ</p>` : ""}
-
-    <h2>หมายเหตุยอด</h2>
-    ${row("ยกเลิก", `${report.totals.cancelledOrders.toLocaleString("th-TH")} บิล`)}
-    ${row("คืนเงิน", `${report.totals.refundedOrders.toLocaleString("th-TH")} บิล`)}
-    ${row("ใช้แต้ม", `${report.totals.loyaltyPointsUsed.toLocaleString("th-TH")} แต้ม`)}
-
-    <section class="signatures">
-      <div class="sign">ผู้ส่งยอด</div>
-      <div class="sign">ผู้รับยอด</div>
-    </section>
-    <p class="footer">Big B Coffee POS</p>
-  </div>
-  <script>window.onload = () => { window.print(); window.onafterprint = () => window.close(); };</script>
-</body>
-</html>`);
-      printWindow.document.close();
+      const report = await getDailyCloseReport({ date: reportRange.to, branchId: reportBranchId ?? activeBranch.id, source: reportSource });
+      if (!submitPrintJob(createDailySummaryJob(report, activeBranch.id), popup)) throw new Error("ระบบพิมพ์ยังไม่พร้อม ลองใหม่อีกครั้ง");
+      popup = null;
     } catch (error) {
-      printWindow?.close();
+      popup?.close();
       toast.error((error as Error).message);
     } finally {
       setIsPrintingDaily(false);

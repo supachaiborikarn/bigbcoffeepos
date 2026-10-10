@@ -55,13 +55,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       {/* Toast container */}
       {toasts.length > 0 && (
-        <div className="toast-container">
+        <div className="toast-container" aria-live="polite" aria-atomic="false">
           {toasts.map((t) => (
-            <div key={t.id} className={`toast toast--${t.type}`} onClick={() => dismiss(t.id)}>
-              <span className="toast__icon">
+            <div key={t.id} className={`toast toast--${t.type}`} role="status">
+              <span className="toast__icon" aria-hidden="true">
                 {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "ℹ"}
               </span>
               <span className="toast__msg">{t.message}</span>
+              <button className="toast__close" onClick={() => dismiss(t.id)} aria-label="ปิดการแจ้งเตือน">×</button>
             </div>
           ))}
         </div>

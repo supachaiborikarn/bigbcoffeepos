@@ -99,6 +99,8 @@ function hydrateOrder(row: any) {
   if (!row) return null;
   return {
     ...row,
+    cashReceived: row.payments?.find((p: any) => p.method === "CASH")?.amountReceived ?? row.cashReceived ?? null,
+    changeAmount: row.payments?.find((p: any) => p.method === "CASH")?.changeAmount ?? row.changeAmount ?? null,
     createdAt: row.createdAt.toISOString(),
     items: row.items.map((i: any) => ({
       ...i,
@@ -466,7 +468,7 @@ function scheduleIntegrationOutbox(outboxPayload: Record<string, unknown>) {
 export async function getOrders(branchId?: number) {
   const orders = await prisma.order.findMany({
     where: branchId ? { branchId } : undefined,
-    include: { items: true },
+    include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } },
     orderBy: { id: "desc" }
   });
   return orders.map(hydrateOrder);
@@ -475,7 +477,7 @@ export async function getOrders(branchId?: number) {
 export async function getOrder(id: number) {
   const order = await prisma.order.findUnique({
     where: { id },
-    include: { items: true }
+    include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
   });
   return hydrateOrder(order);
 }
@@ -485,7 +487,7 @@ export async function getOrderByIdempotencyKey(idempotencyKey: string) {
   if (!key) return null;
   const order = await prisma.order.findUnique({
     where: { idempotencyKey: key },
-    include: { items: true }
+    include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
   });
   return hydrateOrder(order);
 }
@@ -506,7 +508,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
     const order = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
         where: { id },
-        include: { items: true }
+        include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
       });
       if (!current) return null;
       if (REVERSAL_STATUSES.has(current.status)) return current;
@@ -609,7 +611,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
       const updated = await tx.order.update({
         where: { id },
         data: { status },
-        include: { items: true }
+        include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
       });
       await tx.orderEvent.create({
         data: {
@@ -631,7 +633,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
       const order = await tx.order.update({
         where: { id },
         data: { status },
-        include: { items: true }
+        include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
       });
       await tx.orderEvent.create({
         data: {
@@ -890,7 +892,7 @@ export async function createOrder(input: {
           }))
         }
       },
-      include: { items: true }
+      include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
     }));
 
     await measureCheckoutStep("paymentCreate", () => tx.payment.create({
@@ -963,8 +965,8 @@ export async function createOrder(input: {
       const cashAdd = paymentMethod === "CASH" ? total : 0;
       const qrAdd = paymentMethod === "QR" ? total : 0;
       const cardAdd = paymentMethod === "CARD" || paymentMethod === "EWALLET" ? total : 0;
-      await measureCheckoutStep("shiftUpdate", () => tx.shift.update({
-        where: { id: input.shiftId },
+      const shiftUpdate = await measureCheckoutStep("shiftUpdate", () => tx.shift.updateMany({
+        where: { id: input.shiftId, branchId: input.branchId, status: "OPEN" },
         data: {
           totalSales: { increment: total },
           totalOrders: { increment: 1 },
@@ -973,9 +975,10 @@ export async function createOrder(input: {
           cardSales: { increment: cardAdd }
         }
       }));
+      if (shiftUpdate.count !== 1) throw new Error("กะนี้ปิดแล้วหรือเป็นกะของสาขาอื่น");
     }
 
-      return newOrder;
+      return { ...newOrder, cashReceived: paymentDetails.cashReceived, changeAmount: paymentDetails.changeAmount };
       });
       transactionMs += Date.now() - transactionStartedAt;
       break;
@@ -984,7 +987,7 @@ export async function createOrder(input: {
       if (idempotencyKey && error?.code === "P2002") {
         const existingOrder = await prisma.order.findUnique({
           where: { idempotencyKey },
-          include: { items: true }
+          include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
         });
         if (existingOrder) return hydrateOrder(existingOrder);
       }

@@ -30,6 +30,8 @@ model Branch {
   inventoryLots   InventoryLot[]
   businessDocuments BusinessDocument[]
   marketplaceConnections MarketplaceConnection[]
+  managedWarehouses CentralWarehouse[] @relation("WarehouseManagerBranch")
+  restockRequests RestockRequest[]
 
   @@map("branches")
 }
@@ -118,6 +120,10 @@ model Ingredient {
   stockCountItems StockCountItem[]
   stockTransferItems StockTransferItem[]
   inventoryLots InventoryLot[]
+  warehouseStocks WarehouseStock[]
+  warehouseMovements WarehouseStockMovement[]
+  restockRequestItems RestockRequestItem[]
+  restockShipmentItems RestockShipmentItem[]
 
   @@map("ingredients")
 }
@@ -470,6 +476,137 @@ model StockTransferItem {
   ingredient    Ingredient    @relation(fields: [ingredientId], references: [id])
 
   @@map("stock_transfer_items")
+}
+
+model CentralWarehouse {
+  id              Int      @id @default(autoincrement())
+  name            String   @default("สต็อกกลางน้ำมันเครื่อง")
+  managerBranchId Int?     @map("manager_branch_id")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  managerBranch Branch? @relation("WarehouseManagerBranch", fields: [managerBranchId], references: [id])
+  stocks        WarehouseStock[]
+  movements     WarehouseStockMovement[]
+  requests      RestockRequest[]
+
+  @@index([managerBranchId])
+  @@map("central_warehouses")
+}
+
+model WarehouseStock {
+  id           Int      @id @default(autoincrement())
+  warehouseId  Int      @map("warehouse_id")
+  ingredientId Int      @map("ingredient_id")
+  stockQty     Float    @default(0) @map("stock_qty")
+  reorderLevel Float    @default(0) @map("reorder_level")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  warehouse  CentralWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  ingredient Ingredient       @relation(fields: [ingredientId], references: [id])
+
+  @@unique([warehouseId, ingredientId])
+  @@index([ingredientId])
+  @@map("warehouse_stocks")
+}
+
+model WarehouseStockMovement {
+  id            Int      @id @default(autoincrement())
+  warehouseId   Int      @map("warehouse_id")
+  ingredientId  Int      @map("ingredient_id")
+  qty           Float
+  reason        String
+  referenceType String   @default("") @map("reference_type")
+  referenceId   Int?     @map("reference_id")
+  actorUserId   Int?     @map("actor_user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  warehouse  CentralWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  ingredient Ingredient       @relation(fields: [ingredientId], references: [id])
+
+  @@index([warehouseId])
+  @@index([ingredientId])
+  @@index([referenceType, referenceId])
+  @@map("warehouse_stock_movements")
+}
+
+model RestockRequest {
+  id                Int       @id @default(autoincrement())
+  warehouseId       Int       @map("warehouse_id")
+  branchId          Int       @map("branch_id")
+  status            String    @default("DRAFT")
+  note              String    @default("")
+  requestedByUserId Int?      @map("requested_by_user_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  submittedAt       DateTime? @map("submitted_at")
+  pickingAt         DateTime? @map("picking_at")
+  cancelledAt       DateTime? @map("cancelled_at")
+
+  warehouse CentralWarehouse   @relation(fields: [warehouseId], references: [id])
+  branch    Branch             @relation(fields: [branchId], references: [id])
+  items     RestockRequestItem[]
+  shipments RestockShipment[]
+
+  @@index([warehouseId])
+  @@index([branchId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("restock_requests")
+}
+
+model RestockRequestItem {
+  id            Int   @id @default(autoincrement())
+  requestId     Int   @map("request_id")
+  ingredientId  Int   @map("ingredient_id")
+  requestedQty  Float @default(0) @map("requested_qty")
+  reservedQty   Float @default(0) @map("reserved_qty")
+  shippedQty    Float @default(0) @map("shipped_qty")
+  receivedQty   Float @default(0) @map("received_qty")
+
+  request    RestockRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  ingredient Ingredient     @relation(fields: [ingredientId], references: [id])
+  shipmentItems RestockShipmentItem[]
+
+  @@unique([requestId, ingredientId])
+  @@index([ingredientId])
+  @@map("restock_request_items")
+}
+
+model RestockShipment {
+  id                 Int       @id @default(autoincrement())
+  restockRequestId   Int       @map("restock_request_id")
+  status             String    @default("IN_TRANSIT")
+  dispatchedByUserId Int?      @map("dispatched_by_user_id")
+  receivedByUserId   Int?      @map("received_by_user_id")
+  note               String    @default("")
+  dispatchedAt       DateTime  @default(now()) @map("dispatched_at")
+  receivedAt         DateTime? @map("received_at")
+
+  request RestockRequest        @relation(fields: [restockRequestId], references: [id], onDelete: Cascade)
+  items   RestockShipmentItem[]
+
+  @@index([restockRequestId])
+  @@index([status])
+  @@map("restock_shipments")
+}
+
+model RestockShipmentItem {
+  id             Int   @id @default(autoincrement())
+  shipmentId     Int   @map("shipment_id")
+  requestItemId  Int   @map("request_item_id")
+  ingredientId   Int   @map("ingredient_id")
+  shippedQty     Float @default(0) @map("shipped_qty")
+  receivedQty    Float @default(0) @map("received_qty")
+
+  shipment   RestockShipment    @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  requestItem RestockRequestItem @relation(fields: [requestItemId], references: [id])
+  ingredient Ingredient          @relation(fields: [ingredientId], references: [id])
+
+  @@unique([shipmentId, requestItemId])
+  @@index([ingredientId])
+  @@map("restock_shipment_items")
 }
 
 model ProductUnit {

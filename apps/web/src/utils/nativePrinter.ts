@@ -16,6 +16,8 @@ export interface NativeReceiptPayload {
    * exactly as designed, regardless of the printer's built-in fonts.
    */
   html: string;
+  documents?: string[];
+  requestId?: string;
   /** Width of the paper roll in millimetres (TSP100III = 58 or 80). */
   widthMm: number;
   /** Number of identical copies (e.g. office / shop / customer slips). */

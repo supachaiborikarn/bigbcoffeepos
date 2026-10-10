@@ -65,6 +65,7 @@ export async function updateIngredient(
 
 export async function getInventoryItems(branchId: number) {
   const ingredients = await prisma.ingredient.findMany({
+    where: { stocks: { some: { branchId } } },
     include: {
       stocks: {
         where: { branchId }
@@ -209,8 +210,9 @@ export async function getStockMovements(branchId?: number) {
   });
 }
 
-export async function getRecipes() {
+export async function getRecipes(branchType?: string) {
   const recipes = await prisma.recipe.findMany({
+    where: branchType ? { menuItem: { branchType } } : undefined,
     orderBy: { menuItemId: "asc" }
   });
 

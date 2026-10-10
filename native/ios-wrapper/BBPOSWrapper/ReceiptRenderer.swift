@@ -8,15 +8,17 @@ import WebKit
 final class ReceiptRenderer: NSObject, WKNavigationDelegate {
     private var webView: WKWebView?
     private var continuation: CheckedContinuation<UIImage, Error>?
-    private var targetWidthPx: CGFloat = 384
+    private var targetWidthPx: CGFloat = 406
+    private var layoutWidth: CGFloat = 192
 
     enum RenderError: Error { case snapshotFailed }
 
     /// 58mm roll ≈ 384 dots printable width; 80mm ≈ 576 dots (Star = 203 dpi).
     func render(html: String, baseUrl: String, widthMm: Int) async throws -> UIImage {
-        targetWidthPx = widthMm >= 80 ? 576 : 384
+        targetWidthPx = widthMm >= 80 ? 576 : 406
+        layoutWidth = (widthMm >= 80 ? 72 : 50.8) * 96 / 25.4
 
-        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: targetWidthPx, height: 100))
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: layoutWidth, height: 100))
         web.navigationDelegate = self
         web.isOpaque = true
         web.backgroundColor = .white
@@ -35,7 +37,7 @@ final class ReceiptRenderer: NSObject, WKNavigationDelegate {
             guard let self, let web = self.webView else { return }
             web.evaluateJavaScript("document.body.scrollHeight") { result, _ in
                 let height = (result as? NSNumber).map(CGFloat.init(truncating:)) ?? 1200
-                web.frame = CGRect(x: 0, y: 0, width: self.targetWidthPx, height: max(1, height))
+                web.frame = CGRect(x: 0, y: 0, width: self.layoutWidth, height: max(1, height))
 
                 let snapConfig = WKSnapshotConfiguration()
                 snapConfig.snapshotWidth = NSNumber(value: Double(self.targetWidthPx))

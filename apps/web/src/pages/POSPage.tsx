@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, PauseCircle, Settings, ShoppingCart, X } from "lucide-react";
+import { PauseCircle, Settings, ShoppingCart, X, Search, ScanBarcode, ArrowUpRight, CarFront, CheckCircle2 } from "lucide-react";
 import { createCustomer, getCustomers, getMenu, getProductUnits, getRecipes, getStoreSetting } from "../api";
-import type { Customer, DiscountRule, MenuItem, PaymentMethod, ProductUnit, StoreSetting } from "../types";
+import type { Customer, DiscountRule, MenuItem, PaymentMethod, ProductUnit, StoreSetting, Order } from "../types";
 import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
 import { useCart } from "../contexts/CartContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import { CashDrawerModal, printReceipt } from "../components/ReceiptPrinter";
-import { isNativePrintAvailable } from "../utils/nativePrinter";
-import { isRawbtEnabled } from "../utils/rawbtPrinter";
+import { getPrinterMode } from "../utils/printerSettings";
+import { useDialogFocus } from "../utils/useDialogFocus";
 import ProductGrid from "../components/pos/ProductGrid";
 import CartPanel from "../components/pos/CartPanel";
 import ModifierModal from "../components/pos/ModifierModal";
+import { businessProfile } from "../utils/business";
 import { shouldUseModifierModal } from "../utils/menuRules";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
@@ -83,7 +84,6 @@ export default function POSPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("ทั้งหมด");
   const [memberQuery, setMemberQuery] = useState("");
-  const [selectedMember, setSelectedMember] = useState<Customer | null>(null);
   const [newMember, setNewMember] = useState({ name: "", phone: "" });
   const [discountDraft, setDiscountDraft] = useState({
     type: "ORDER_PERCENT" as DiscountRule["type"],
@@ -94,16 +94,16 @@ export default function POSPage() {
     maxDiscount: ""
   });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [customersLoaded, setCustomersLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCashDrawer, setShowCashDrawer] = useState(false);
   const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState<PaymentMethod | null>(null);
+  const [paymentReference, setPaymentReference] = useState("");
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  // Compact mode: tablets + phones (≤1024px, matching the CSS breakpoint that
-  // hides the side cart / left categories). Cart collapses to a floating button
-  // that opens a full-screen payment sheet.
-  const isCompact = useMediaQuery("(max-width: 1024px)");
+  // Keep a side cart on landscape tablets; narrower screens use the payment sheet.
+  const isCompact = useMediaQuery("(max-width: 999px)");
   const [showCartSheet, setShowCartSheet] = useState(false);
-  const [lastOrder, setLastOrder] = useState<any>(null);
+  const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
   const [storeSetting, setStoreSetting] = useState<StoreSetting | null>(null);
@@ -111,10 +111,13 @@ export default function POSPage() {
 
   const { activeBranch } = useBranch();
   const { activeShift } = useShift();
+  const profile = businessProfile(activeBranch?.branchType);
+  const BusinessIcon = profile.icon;
   const { user } = useAuth();
   const toast = useToast();
   const {
     cart,
+    orderNote, setOrderNote, selectedMember, setSelectedMember,
     addItem,
     scanFeedback,
     setScanFeedback,
@@ -142,14 +145,22 @@ export default function POSPage() {
   const refreshCustomers = async () => {
     const items = await getCustomers();
     setCustomers(items);
+    setCustomersLoaded(true);
   };
 
   useEffect(() => {
-    getMenu().then(setMenu).catch(() => {});
+    getMenu().then((items) => setMenu(items.filter((item) => item.branchType === activeBranch?.branchType))).catch(() => {});
     getProductUnits().then(setProductUnits).catch(() => setProductUnits([]));
     getRecipes().then((items) => setRecipeCount(items.length)).catch(() => setRecipeCount(null));
     refreshCustomers().catch(() => {});
-  }, []);
+  }, [activeBranch?.id]);
+
+  useEffect(() => {
+    if (!customersLoaded || !selectedMember) return;
+    const current = customers.find((customer) => customer.id === selectedMember.id) ?? null;
+    if (current !== selectedMember) setSelectedMember(current);
+    if (!current) toast.error("สมาชิกในบิลนี้ไม่อยู่ในสาขาแล้ว กรุณาเลือกสมาชิกใหม่");
+  }, [customers, customersLoaded, selectedMember, setSelectedMember, toast]);
 
   useEffect(() => {
     if (!activeBranch?.id) {
@@ -196,7 +207,7 @@ export default function POSPage() {
   const maxRedeemablePoints = selectedMember
     ? Math.min(selectedMember.points, Math.floor(Math.max(0, subtotal - discountAmount)))
     : 0;
-  const canManageMenu = getRoleLevel(user?.role) >= 2;
+  const canManageMenu = getRoleLevel(user?.role) >= 3;
   const payableTotal = useMemo(() => getPayableTotal(total, storeSetting), [total, storeSetting]);
 
   useEffect(() => {
@@ -330,11 +341,11 @@ export default function POSPage() {
     // Skip the blank receipt window when printing natively or via RawBT — those
     // paths print directly, so no browser print window is needed (and we avoid a
     // popup flashing open/closed on the Android tablet).
-    const receiptWindow = (!isNativePrintAvailable() && !isRawbtEnabled() && typeof window !== "undefined")
+    const receiptWindow = (getPrinterMode() === "browser" && typeof window !== "undefined")
       ? window.open("", "bbpos_receipt", "width=380,height=640")
       : null;
     setIsSubmitting(true);
-    const cartSnapshot = [...cart];
+    const cartSnapshot = cart.map((item, index) => index === 0 && orderNote ? { ...item, note: [item.note, orderNote].filter(Boolean).join(" · ") } : item);
     const subtotalSnapshot = subtotal;
     const discountSnapshot = discountAmount;
     const totalSnapshot = payableTotal;
@@ -343,24 +354,27 @@ export default function POSPage() {
     try {
       const order = await checkout(paymentMethod, selectedMember?.id ?? null, pointsSnapshot, {
         cashReceived,
-        paymentConfirmed: paymentMethod !== "CASH"
+        paymentConfirmed: paymentMethod !== "CASH",
+        referenceNo: paymentMethod === "CASH" ? undefined : paymentReference.trim() || undefined
       });
       clearCart();
       setLastOrder(order);
       setShowCashDrawer(false);
       setShowCartSheet(false);
-      // Print receipt
+      setPendingPaymentConfirm(null);
+      // Printing failure must never be reported as a failed payment.
+      try {
       const printed = printReceipt({
         order,
         cart: cartSnapshot,
         discountRules: rulesSnapshot,
-        subtotal: subtotalSnapshot,
-        discountAmount: discountSnapshot,
-        total: totalSnapshot,
-        pointsUsed: pointsSnapshot,
+        subtotal: order.subtotal ?? subtotalSnapshot,
+        discountAmount: order.discountAmount ?? discountSnapshot,
+        total: order.total ?? totalSnapshot,
+        pointsUsed: order.loyaltyPointsUsed ?? pointsSnapshot,
         paymentMethod,
-        cashReceived,
-        changeAmount: changeAmt,
+        cashReceived: order.cashReceived ?? cashReceived,
+        changeAmount: order.changeAmount ?? changeAmt,
         storeSetting,
         // บ่อถ่ายน้ำมัน (oil_service): พิมพ์ 3 ใบแยก — สำนักงาน / ร้าน / ลูกค้า
         copies: activeBranch?.branchType === "oil_service" ? 3 : 1,
@@ -371,6 +385,10 @@ export default function POSPage() {
       if (!printed) {
         receiptWindow?.close();
         toast.error("พิมพ์ใบเสร็จไม่สำเร็จ กรุณาตรวจสอบการตั้งค่าปริ้นเตอร์");
+      }
+      } catch {
+        receiptWindow?.close();
+        toast.error("บิลบันทึกแล้ว แต่พิมพ์ไม่สำเร็จ เปิดใบเสร็จจากออเดอร์เพื่อพิมพ์ซ้ำ");
       }
       setSelectedMember(null);
       setMemberQuery("");
@@ -387,7 +405,7 @@ export default function POSPage() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [cart, isSubmitting, subtotal, discountAmount, payableTotal, pointsToUse, discountRules, checkout, clearCart, paymentMethod, selectedMember, activeBranch, storeSetting, refreshCustomers, toast]);
+  }, [cart, orderNote, isSubmitting, subtotal, discountAmount, payableTotal, pointsToUse, discountRules, checkout, clearCart, paymentMethod, paymentReference, selectedMember, activeBranch, storeSetting, refreshCustomers, toast]);
 
   const handleCheckoutClick = () => {
     if (cart.length === 0 || isSubmitting || !activeShift) return;
@@ -396,9 +414,11 @@ export default function POSPage() {
       return;
     }
     setCheckoutError(null);
+    setPaymentReference("");
     if (paymentMethod === "CASH") {
       setShowCashDrawer(true);
     } else {
+      setPaymentReference("");
       setPendingPaymentConfirm(paymentMethod);
     }
   };
@@ -427,183 +447,37 @@ export default function POSPage() {
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
 
   return (
-    <main className="pos-layout" style={{ display: "grid", gap: "0", height: "100%", width: "100%", background: "var(--pos-bg)" }}>
-      {/* Center Panel: Products */}
-      <section style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRight: "1px solid var(--border)" }}>
-        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-            <div>
-              <h2 style={{ fontSize: "20px", fontWeight: "bold", color: "var(--pos-sidebar)" }}>ขายสินค้า (POS)</h2>
-              <p className="muted" style={{ fontSize: "12px" }}>{activeBranch?.name}</p>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-              {recipeCount === 0 && (
-                <span className="badge badge--warning" title="ระบบขายได้ แต่ยังไม่มีสูตรสำหรับตัดวัตถุดิบออกจากสต็อกอัตโนมัติ">
-                  ยังไม่มีสูตรตัดสต็อก
-                </span>
-              )}
-              <button
-                className="btn btn--ghost"
-                onClick={() => holdCart()}
-                disabled={cart.length === 0}
-                title="พักบิลปัจจุบันแล้วเริ่มบิลใหม่ (F9)"
-              >
-                <PauseCircle size={16} />
-                พักบิล
-              </button>
-              {canManageMenu && (
-                <Link to="/inventory?tab=products&manage=menu" className="btn btn--primary pos-manage-card-header">
-                  <Settings size={16} />
-                  จัดการการ์ด
-                </Link>
-              )}
-            </div>
+    <main className="pos-layout studio-pos">
+      <section className="studio-catalog">
+        <div className="studio-pos-heading">
+          <div><span className="studio-eyebrow"><BusinessIcon size={15} /> {profile.type === "coffee" ? "COFFEE COUNTER" : "SERVICE COUNTER"}</span>
+            <h1>{profile.saleTitle}<span className="studio-heading-dot">.</span></h1>
+            <p>{profile.type === "coffee" ? "เลือกเมนู ปรับรสชาติ แล้วส่งต่อความอร่อย" : "เลือกสินค้าและบริการสำหรับรถคันนี้"}</p>
           </div>
-
-          {heldBills.length > 0 && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>บิลที่พักไว้:</span>
-              {heldBills.map((bill) => (
-                <span
-                  key={bill.id}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid var(--border)", borderRadius: 999, padding: "4px 6px 4px 12px", fontSize: 13 }}
-                >
-                  <button
-                    onClick={() => restoreHeldBill(bill.id)}
-                    title="เรียกบิลนี้กลับมาคิดเงิน"
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--brand-hover)", fontWeight: 600, padding: 0 }}
-                  >
-                    {bill.label} · {bill.itemCount} ชิ้น · ฿{Math.round(bill.total).toLocaleString("th-TH")}
-                  </button>
-                  <button
-                    onClick={() => removeHeldBill(bill.id)}
-                    title="ลบบิลที่พัก"
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", display: "inline-flex", padding: 0 }}
-                  >
-                    <X size={14} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: "16px" }}>
-            <input
-              ref={searchInputRef}
-              className="input"
-              placeholder="ค้นหาสินค้า (F1)"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={handleProductSearchKeyDown}
-              style={{ flex: 1 }}
-            />
-            
-            <input
-              ref={scannerInputRef}
-              className="input scanner-input"
-              inputMode="none"
-              placeholder="ยิงบาร์โค้ด (Enter)"
-              style={{ width: "220px", borderColor: scanFeedback.tone === "error" ? "var(--danger)" : scanFeedback.tone === "success" ? "var(--success)" : "var(--border)" }}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  processBarcodeScan(e.currentTarget.value);
-                  e.currentTarget.value = "";
-                }
-              }}
-            />
-          </div>
-          {scanFeedback.message && (
-            <div style={{ fontSize: "12px", color: scanFeedback.tone === "error" ? "var(--danger)" : "var(--success)", marginTop: "8px" }}>
-              {scanFeedback.message}
-            </div>
-          )}
-
-          {/* Horizontal category chips — shown only on narrow screens (tablet/phone)
-              where the 140px left categories column is hidden to free up space. */}
-          <div className="pos-cat-chips">
-            {categories.map((item) => (
-              <button
-                key={item}
-                className={`pos-cat-chip${category === item ? " is-active" : ""}`}
-                onClick={() => setCategory(item)}
-              >
-                {item}
-              </button>
-            ))}
+          <div className="studio-heading-actions">
+            <button className="btn btn--ghost" onClick={() => holdCart()} disabled={!cart.length} title="พักบิล (F9)"><PauseCircle size={17} /><span>พักบิล</span></button>
+            {canManageMenu && <Link to="/inventory?tab=products&manage=menu" className="studio-icon-button" aria-label="จัดการสินค้า"><Settings size={18} /></Link>}
           </div>
         </div>
-
-        {/* Split view: Left Sidebar Categories, Right Product Grid */}
-        <div style={{ display: "flex", flex: 1, minHeight: 0, background: "#fff" }}>
-          {/* Left Categories Sidebar */}
-          <aside className="pos-categories" style={{
-            width: "140px",
-            borderRight: "1px solid var(--border)",
-            background: "var(--bg-muted)",
-            display: "flex",
-            flexDirection: "column",
-            overflowY: "auto",
-            flexShrink: 0
-          }}>
-            {categories.map((item) => (
-              <button
-                key={item}
-                style={{
-                  width: "100%",
-                  padding: "16px 12px",
-                  textAlign: "left",
-                  background: category === item ? "#fff" : "transparent",
-                  color: category === item ? "var(--brand-hover)" : "var(--text-secondary)",
-                  border: "none",
-                  borderLeft: `4px solid ${category === item ? "var(--brand)" : "transparent"}`,
-                  fontWeight: category === item ? "bold" : "normal",
-                  fontSize: "13px",
-                  cursor: "pointer",
-                  borderBottom: "1px solid rgba(0,0,0,0.04)",
-                  transition: "all 0.15s ease",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between"
-                }}
-                onClick={() => setCategory(item)}
-              >
-                <span style={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: "vertical",
-                  lineHeight: "1.3"
-                }}>
-                  {item}
-                </span>
-              </button>
-            ))}
-          </aside>
-
-          {/* Right Product Grid */}
-          <div className="pos-products-scroll" style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
-            <ProductGrid
-              menu={menu}
-              category={category}
-              search={search}
-              branchType={activeBranch?.branchType}
-              onItemClick={handleMenuItemClick}
-            />
-          </div>
+        <div className="studio-counter-strip">
+          <div><span className={`studio-live-dot${activeShift ? " is-live" : ""}`} /><span>{activeShift ? "พร้อมรับรายการ" : "เปิดกะเพื่อเริ่มขาย"}</span></div>
+          <span>{activeShift ? `${activeShift.totalOrders} บิลในกะนี้` : "ยังไม่มีกะที่เปิดอยู่"}</span>
+          <Link to="/orders">ดูรายการ <ArrowUpRight size={14} /></Link>
         </div>
-
-        {/* Compact: floating cart button → opens the full-screen payment sheet */}
-        {isCompact && cart.length > 0 && (
-          <button className="pos-cart-fab" onClick={() => setShowCartSheet(true)}>
-            <span className="pos-cart-fab__info">
-              <ShoppingCart size={20} />
-              <span>{cartCount} รายการ</span>
-            </span>
-            <span className="pos-cart-fab__pay">{formatMoney(payableTotal)} · ชำระเงิน →</span>
-          </button>
-        )}
+        {profile.type === "oil_service" && <div className="studio-service-note"><CarFront size={22} /><label htmlFor="service-note"><span>รายละเอียดรถ / งานบริการ</span><input id="service-note" value={orderNote} maxLength={300} onChange={(e) => setOrderNote(e.target.value)} placeholder="ทะเบียนรถ · เลขไมล์ · งานที่ลูกค้าแจ้ง" /></label></div>}
+        {lastOrder && <div className="studio-sale-success" role="status"><CheckCircle2 size={18} /><span>{lastOrder.id < 0 ? "บันทึกบิลออฟไลน์แล้ว" : `บันทึกบิล #${lastOrder.id} แล้ว`} · {formatMoney(lastOrder.total)}</span><Link className="btn btn--ghost" to="/orders">ดูบิล / พิมพ์ซ้ำ</Link><button aria-label="ปิดข้อความ" onClick={() => setLastOrder(null)}><X size={16} /></button></div>}
+        {heldBills.length > 0 && <div className="studio-held-bills" aria-label="บิลที่พักไว้">{heldBills.map((bill) => <div key={bill.id}><button onClick={() => restoreHeldBill(bill.id)}><PauseCircle size={15} />{bill.label} · {formatMoney(bill.total)}</button><button aria-label={`ลบ ${bill.label}`} onClick={() => removeHeldBill(bill.id)}><X size={14} /></button></div>)}</div>}
+        <div className="studio-catalog-toolbar">
+        <div className="studio-search-row">
+          <label className="studio-search"><Search size={20} /><input ref={searchInputRef} aria-label="ค้นหาสินค้า" placeholder={profile.type === "coffee" ? "ค้นหาเมนู เครื่องดื่ม หรือเบเกอรี่" : "ค้นหาสินค้า บริการ หรือรหัสสินค้า"} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={handleProductSearchKeyDown} /><kbd>F1</kbd></label>
+          <label className="studio-scanner"><ScanBarcode size={20} /><input ref={scannerInputRef} aria-label="ยิงบาร์โค้ด" inputMode="none" placeholder="สแกนบาร์โค้ด" onKeyDown={(e) => { if (e.key === "Enter") { processBarcodeScan(e.currentTarget.value); e.currentTarget.value = ""; } }} /></label>
+        </div>
+        <div className="studio-categories" aria-label="หมวดสินค้า">{categories.map((item) => <button key={item} aria-pressed={category === item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{item}<span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span></button>)}</div>
+        </div>
+        <div className="studio-catalog-label"><strong>{category === "ทั้งหมด" ? "สินค้าทั้งหมด" : category}</strong><span role="status" className={scanFeedback.tone === "error" ? "negative" : ""}>{scanFeedback.tone === "idle" ? "แตะสินค้าเพื่อเพิ่มรายการ" : scanFeedback.message}</span></div>
+        <div className="pos-products-scroll studio-products-scroll"><ProductGrid menu={menu} category={category} search={search} branchType={activeBranch?.branchType} onItemClick={handleMenuItemClick} /></div>
+        {recipeCount === 0 && profile.type === "coffee" && <div className="studio-recipe-note">ยังไม่มีสูตรสำหรับตัดวัตถุดิบอัตโนมัติ</div>}
+        {isCompact && cart.length > 0 && <button className="pos-cart-fab" onClick={() => setShowCartSheet(true)}><span className="pos-cart-fab__info"><ShoppingCart size={20} /><span>{cartCount} รายการ</span></span><span className="pos-cart-fab__pay">{formatMoney(payableTotal)} · ชำระเงิน →</span></button>}
       </section>
 
       {/* Right Panel: Cart & Payment.
@@ -621,6 +495,7 @@ export default function POSPage() {
               </div>
             )}
       <CartPanel
+        businessType={profile.type}
         cart={cart}
         subtotal={subtotal}
         discountAmount={discountAmount}
@@ -669,14 +544,15 @@ export default function POSPage() {
 
       {pendingPaymentConfirm && (
         <div className="modal-backdrop" onClick={() => { if (!isSubmitting) setPendingPaymentConfirm(null); }} style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 20 }}>
-          <div className="panel" onClick={(event) => event.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", margin: "auto", padding: 24, borderRadius: 12, background: "var(--bg-surface)" }}>
+          <PaymentDialog onClose={() => { if (!isSubmitting) setPendingPaymentConfirm(null); }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
               <div>
-                <h2 style={{ fontSize: 20 }}>ยืนยันชำระเงิน {paymentLabels[pendingPaymentConfirm]}</h2>
-                <p className="muted" style={{ marginTop: 6 }}>บันทึกบิลหลังตรวจยอดรับชำระแล้ว</p>
+                <h2 id="payment-title" style={{ fontSize: 20 }}>ยืนยันชำระเงิน {paymentLabels[pendingPaymentConfirm]}</h2>
+                <p className="muted" style={{ marginTop: 6 }}>{pendingPaymentConfirm === "QR" ? "ให้ลูกค้าชำระผ่าน QR กรุงไทยของร้าน แล้วตรวจยอดรับเงินในแอปของร้านก่อนยืนยัน" : "ตรวจยอดเงินเข้าจากแอปหรือเครื่องรับบัตรก่อนยืนยัน"}</p><p className="muted">POS บันทึกการชำระเงินหลังคุณตรวจแล้ว ไม่มีการตรวจเงินเข้าอัตโนมัติ</p>
               </div>
               <strong style={{ fontSize: 24, color: "var(--brand-hover)" }}>{formatMoney(payableTotal)}</strong>
             </div>
+            <label className="studio-payment-reference">เลขอ้างอิงการรับเงิน (ถ้ามี)<input className="input" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} maxLength={120} placeholder="เลขอ้างอิงจากธนาคารหรือใบสลิป" disabled={isSubmitting} /></label>
             {checkoutError && (
               <div role="alert" style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: "#fef3f2", border: "1px solid #fda29b", color: "#b42318", fontSize: 14, lineHeight: 1.45 }}>
                 ⚠️ ชำระเงินไม่สำเร็จ: {checkoutError}
@@ -688,7 +564,7 @@ export default function POSPage() {
                 {isSubmitting ? "กำลังบันทึก..." : "ยืนยันและบันทึก"}
               </button>
             </div>
-          </div>
+          </PaymentDialog>
         </div>
       )}
 
@@ -704,4 +580,9 @@ export default function POSPage() {
       )}
     </main>
   );
+}
+
+function PaymentDialog({children,onClose}:{children:React.ReactNode;onClose:()=>void}) {
+ const ref=useDialogFocus(onClose);
+ return <div ref={ref} role="dialog" aria-modal="true" aria-labelledby="payment-title" tabIndex={-1} className="panel" onClick={event=>event.stopPropagation()} style={{width:"min(460px,calc(100vw - 32px))",margin:"auto",padding:24,borderRadius:12,background:"var(--bg-surface)"}}>{children}</div>;
 }

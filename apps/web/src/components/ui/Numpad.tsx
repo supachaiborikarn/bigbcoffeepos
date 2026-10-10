@@ -5,9 +5,11 @@ type NumpadProps = {
   onChange: (value: string) => void;
   onEnter: () => void;
   enterLabel?: string;
+  hideEnter?: boolean;
+  disabled?: boolean;
 };
 
-export default function Numpad({ value, onChange, onEnter, enterLabel = "ตกลง" }: NumpadProps) {
+export default function Numpad({ value, onChange, onEnter, enterLabel = "ตกลง", hideEnter = false, disabled = false }: NumpadProps) {
   const handleKey = useCallback((key: string) => {
     if (key === "clear") {
       onChange("");
@@ -27,23 +29,23 @@ export default function Numpad({ value, onChange, onEnter, enterLabel = "ตก�
 
   return (
     <div className="numpad">
-      <button type="button" className="numpad-btn" onClick={() => handleKey("7")}>7</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("8")}>8</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("9")}>9</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("7")}>7</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("8")}>8</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("9")}>9</button>
 
-      <button type="button" className="numpad-btn" onClick={() => handleKey("4")}>4</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("5")}>5</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("6")}>6</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("4")}>4</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("5")}>5</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("6")}>6</button>
 
-      <button type="button" className="numpad-btn" onClick={() => handleKey("1")}>1</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("2")}>2</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("3")}>3</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("1")}>1</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("2")}>2</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("3")}>3</button>
 
-      <button type="button" className="numpad-btn" onClick={() => handleKey(".")}>.</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("0")}>0</button>
-      <button type="button" className="numpad-btn" onClick={() => handleKey("backspace")}>⌫</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey(".")}>.</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("0")}>0</button>
+      <button disabled={disabled} type="button" className="numpad-btn" onClick={() => handleKey("backspace")}>⌫</button>
 
-      <button type="button" className="numpad-btn enter" onClick={onEnter}>{enterLabel}</button>
+      {!hideEnter && <button disabled={disabled} type="button" className="numpad-btn enter" onClick={onEnter}>{enterLabel}</button>}
     </div>
   );
 }

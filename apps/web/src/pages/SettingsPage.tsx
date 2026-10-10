@@ -10,7 +10,8 @@ const providerLabel: Record<IntegrationProvider, string> = {
   rd_tax: "RD / e-Tax",
   line_oa: "Line OA",
   lineman: "Lineman",
-  email: "Daily Email"
+  email: "Daily Email",
+  pospos: "POSPOS"
 };
 
 function formatDateTime(value: string) {
@@ -23,6 +24,7 @@ function formatDateTime(value: string) {
 function getStatusClass(status: IntegrationEvent["status"]) {
   if (status === "SENT") return "badge--active";
   if (status === "FAILED") return "badge--danger";
+  if (status === "RUNNING") return "badge--warning";
   return "";
 }
 

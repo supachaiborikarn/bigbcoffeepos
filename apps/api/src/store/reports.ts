@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { ensureShiftCloseDetailsTable } from "./shifts.js";
 import { getCupStockSettings } from "./cupStockSettings.js";
 import { cashTotalsByShift, listCashEntries } from "./cashDrawer.js";
+import { listTimeEntries, summarizeHours } from "./timeClock.js";
 
 export type ReportSource = "system" | "pospos" | "all";
 
@@ -484,6 +485,7 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
     cashEntries,
     shifts: shiftSummaries,
     cups: input.branchId ? await getCupUsage(input.branchId, range) : [],
+    staffHours: input.branchId ? summarizeHours(await listTimeEntries(input.branchId, range.from, range.to).catch(() => [])) : [],
     topItems: topItemsRaw.map((item) => ({
       menuItemId: item.menuItemId,
       name: item.name,

@@ -17,6 +17,7 @@ const num = (v: number) => v.toLocaleString("th-TH");
 const thaiDate = (value: string) => new Date(`${value}T12:00:00+07:00`).toLocaleDateString("th-TH", { dateStyle: "medium", timeZone: "Asia/Bangkok" });
 const thaiDateTime = (value?: string | null) => value ? new Date(value).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Bangkok" }) : "-";
 const thaiTime = (value?: string | null) => value ? new Date(value).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }) : "-";
+const hoursText = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")} ชม.`;
 const cashStatus = (diff: number) => diff === 0 ? "ตรงยอด" : diff < 0 ? "เงินขาด" : "เงินเกิน";
 const signed = (v: number) => `${v > 0 ? "+" : ""}${money(v)}`;
 const bangkokDay = (value: string) => new Date(value).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
@@ -139,6 +140,8 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   .who-n { text-align: right; overflow-wrap: anywhere; }
   .grid2 { display: grid; grid-template-columns: ${wide ? "1fr 1fr" : "1fr"}; column-gap: 4mm; }
   .note { font-size: 0.88em; margin-top: 0.8mm; overflow-wrap: anywhere; }
+  .staff { padding: 0.6mm 0 1mm; border-bottom: 1px dotted #000; }
+  .staff .row.strong { border-top: 0; margin-top: 0; padding-top: 0; }
   .muted { font-size: 0.88em; }
   .signs { display: grid; grid-template-columns: ${wide ? "1fr 1fr" : "1fr"}; gap: ${wide ? "5mm" : "7mm"}; margin-top: 10mm; }
   .sign { text-align: center; border-top: 1px solid #000; padding-top: 1mm; font-size: 0.9em; }
@@ -188,6 +191,12 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
 
   <h2>รายละเอียดกะ <small>${num(report.shifts.length)} กะ</small></h2>
   ${shifts || `<p class="muted">ไม่มีข้อมูลกะ</p>`}
+
+  ${(report.staffHours ?? []).length ? `<h2>เวลาทำงานพนักงาน <small>${num((report.staffHours ?? []).length)} คน</small></h2>
+  ${(report.staffHours ?? []).map((p) => `<div class="staff">
+    ${row(p.userName, p.open && !p.minutes ? "ยังไม่ออก" : `${hoursText(p.minutes)}${p.open ? " +" : ""}`, "strong")}
+    <p class="note">${p.entries.map((e) => `${shiftTime(e.clockIn, report.date)}–${e.clockOut ? shiftTime(e.clockOut, report.date) : "ยังไม่ลงเวลาออก"}`).join(" · ")}</p>
+  </div>`).join("")}` : ""}
 
   <h2>เมนูขายดี <small>Top ${TOP_ITEM_LIMIT}</small></h2>
   ${items ? `<table><thead><tr><th class="idx">#</th><th>เมนู</th><th class="n">จำนวน</th><th class="n">ยอด</th></tr></thead><tbody>${items}</tbody></table>` : `<p class="muted">ไม่มีข้อมูลสินค้า</p>`}
@@ -266,6 +275,14 @@ export function buildDailySummaryEscPos(report: DailyCloseReport, widthMm: 58 | 
     if (s.difference != null) out += row("  ส่วนต่าง", signed(s.difference));
     if (s.note) out += `  * ${s.note}\n`;
   });
+
+  if (report.staffHours?.length) {
+    out += section("เวลาทำงานพนักงาน");
+    report.staffHours.forEach((p) => {
+      out += row(p.userName, p.open && !p.minutes ? "ยังไม่ออก" : hoursText(p.minutes) + (p.open ? " +" : ""));
+      out += "  " + p.entries.map((e) => `${shiftTime(e.clockIn, report.date)}-${e.clockOut ? shiftTime(e.clockOut, report.date) : "?"}`).join(", ") + "\n";
+    });
+  }
 
   out += section("เมนูขายดี");
   if (!report.topItems.length) out += "ไม่มีข้อมูลสินค้า\n";

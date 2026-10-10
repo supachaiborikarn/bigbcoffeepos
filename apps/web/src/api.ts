@@ -8,6 +8,7 @@ import type {
   CustomerInsights,
   CupStockSetting,
   CashEntry,
+  TimeEntry,
   CustomerImportInput,
   DailyCloseReport,
   Ingredient,
@@ -713,6 +714,21 @@ export async function getAuditEvents(params: { limit?: number; action?: string; 
   if (params.branchId) query.set("branchId", String(params.branchId));
   const payload = await fetchJson<{ items: AuditEvent[] }>(`${API_URL}/audit?${query.toString()}`);
   return payload.items;
+}
+
+export async function punchTimeClock(branchId: number, pin: string) {
+  return fetchJson<{ action: "in" | "out"; entry: TimeEntry; staff: { id: number; name: string } }>(`${API_URL}/time-clock/punch`, { method: "POST", body: JSON.stringify({ branchId, pin }) });
+}
+
+export async function getTimeClock(branchId: number, date?: string) {
+  const query = new URLSearchParams({ branchId: String(branchId) });
+  if (date) query.set("date", date);
+  return fetchJson<{ date: string; items: TimeEntry[] }>(`${API_URL}/time-clock?${query.toString()}`);
+}
+
+export async function closeTimeEntry(id: number, clockOut: string) {
+  const payload = await fetchJson<{ entry: TimeEntry }>(`${API_URL}/time-clock/${id}/close`, { method: "POST", body: JSON.stringify({ clockOut }) });
+  return payload.entry;
 }
 
 export async function getCashEntries(shiftId: number) {

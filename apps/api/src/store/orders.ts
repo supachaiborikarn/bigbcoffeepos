@@ -829,7 +829,10 @@ export async function createOrder(input: {
   const tax = vatResult.tax;
   const total = vatResult.total;
 
-  const drinkCount = customer ? orderItems.reduce((sum, oi) => sum + (DRINK_CATEGORIES.includes(oi.category) ? oi.qty : 0), 0) : 0;
+  // Loyalty: 1 point per prepared drink (1 cup). A prepared drink is a line
+  // where a cup was chosen in the picker; add-ons, desserts and retail items
+  // sold on their own don't earn points.
+  const drinkCount = customer ? orderItems.reduce((sum, oi) => sum + (oi.modifiers.some((m) => m.name === "Cup") ? oi.qty : 0), 0) : 0;
   const pointsEarned = Math.floor(drinkCount);
   const paymentDetails = normalizePaymentDetails(paymentMethod, total, input.paymentDetails);
 

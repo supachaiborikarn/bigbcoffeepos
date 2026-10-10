@@ -466,6 +466,17 @@ export type CashEntry = {
   voided: boolean;
 };
 
+export type TimeEntry = {
+  id: number;
+  userId: number;
+  userName: string;
+  branchId: number;
+  clockIn: string;
+  clockOut: string | null;
+  minutes: number | null;
+  note: string | null;
+};
+
 export type DailyCloseReport = {
   date: string;
   generatedAt: string;
@@ -519,6 +530,8 @@ export type DailyCloseReport = {
   topItems: Array<{ menuItemId: number; name: string; qty: number; revenue: number }>;
   /** Cups used that day (net of cancels/refunds) and stock left at report time. */
   cups?: Array<{ cupOption: string; label: string; name: string; unit: string; sold: number; remaining: number }>;
+  /** Staff clock-in/out for the day, per person. */
+  staffHours?: Array<{ userName: string; minutes: number; open: boolean; entries: TimeEntry[] }>;
 };
 
 export type ProductImportInput = {

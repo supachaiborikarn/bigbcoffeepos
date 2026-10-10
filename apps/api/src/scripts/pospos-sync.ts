@@ -447,9 +447,13 @@ export async function syncPosposData(branchId: number) {
       const rows = Array.from(document.querySelectorAll("table tbody tr"));
       return rows.map((tr) => {
         const tds = tr.querySelectorAll("td");
+        // Columns: [select, avatar, รหัสลูกค้า, ชื่อ, ประเภท, ระดับ, เบอร์โทร, วันเกิด, วันที่เพิ่ม, ป้ายกำกับ, แต้ม]
         return {
+          code: (tds[2] as HTMLElement)?.innerText?.trim() || "",
           name: (tds[3] as HTMLElement)?.innerText?.trim() || "",
+          tier: (tds[5] as HTMLElement)?.innerText?.trim() || "",
           phone: (tds[6] as HTMLElement)?.innerText?.trim() || "",
+          points: (tds[10] as HTMLElement)?.innerText?.trim() || "",
         };
       }).filter((c) => c.name && c.phone);
     }, "Customers");
@@ -457,14 +461,29 @@ export async function syncPosposData(branchId: number) {
     for (const row of customersData) {
       const name = row.name;
       const phone = String(row.phone).replace(/[^0-9]/g, "");
-      if (name && phone) {
-        await prisma.customer.upsert({
-          where: { phone },
-          update: { name },
-          create: { name, phone, points: 0 },
+      if (!name || !phone) continue;
+      const posposPoints = Math.max(0, Math.floor(parsePosposQuantity(row.points)));
+      const memberCode = row.code || null;
+      const existing = await prisma.customer.findUnique({ where: { phone }, select: { id: true, points: true, memberCode: true } });
+      if (existing) {
+        // Points: take POSPOS only on first import (BB POS still 0) so points earned
+        // or redeemed in BB POS are never overwritten.
+        const codeFree = memberCode && !existing.memberCode
+          ? !(await prisma.customer.findFirst({ where: { memberCode, NOT: { id: existing.id } }, select: { id: true } }))
+          : false;
+        await prisma.customer.update({
+          where: { id: existing.id },
+          data: {
+            name,
+            ...(existing.points === 0 && posposPoints > 0 ? { points: posposPoints } : {}),
+            ...(codeFree ? { memberCode } : {}),
+          },
         });
-        results.customers++;
+      } else {
+        const codeTaken = memberCode ? await prisma.customer.findFirst({ where: { memberCode }, select: { id: true } }) : null;
+        await prisma.customer.create({ data: { name, phone, points: posposPoints, ...(memberCode && !codeTaken ? { memberCode } : {}) } });
       }
+      results.customers++;
     }
     console.log(`  ✓ Saved ${results.customers} customers`);
 

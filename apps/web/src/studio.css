@@ -533,3 +533,17 @@
 .activity-tools { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
 .activity-tools>.input { max-width:220px; }
 .activity-log .stk-log__row { grid-template-columns:120px minmax(0,1fr); }
+
+/* ═══ Time clock (components/shift/TimeClockDialog.tsx) ═══ */
+.timeclock { width:min(460px,100%); }
+.timeclock-pin { display:flex; flex-direction:column; gap:12px; }
+.timeclock-dots { display:flex; justify-content:center; gap:12px; padding:6px 0; }
+.timeclock-dots span { width:14px; height:14px; border-radius:50%; border:2px solid var(--border); }
+.timeclock-dots span.is-filled { background:var(--brand); border-color:var(--brand); }
+.timeclock-result { display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center; padding:22px 16px; border-radius:16px; background:var(--brand-subtle); color:var(--brand); }
+.timeclock-result.is-out { background:var(--bg-muted); color:var(--text-primary); }
+.timeclock-result strong { font-size:20px; color:var(--text-primary); }
+.timeclock-result span { font-size:15px; color:var(--text-secondary); }
+.timeclock-row { grid-template-columns:110px minmax(0,1fr) auto !important; }
+.timeclock-fix { display:flex; gap:6px; align-items:center; }
+.timeclock-fix .input { width:110px; }

@@ -136,6 +136,7 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 import { requireAuth, requireAdmin, requireRole, requireBranchAccess, generateToken, type AuthRequest } from "./middleware/auth.js";
 import { listAuditEvents } from "./store/auditEvents.js";
+import { closeTimeEntry, getTimeEntryBranch, listTimeEntries, punch } from "./store/timeClock.js";
 import { addCashEntry, CASH_IN_CATEGORIES, CASH_OUT_CATEGORIES, getCashEntryBranch, listCashEntries, voidCashEntry } from "./store/cashDrawer.js";
 
 const pinAttempts = new Map<string, { count: number; resetAt: number }>();
@@ -763,6 +764,42 @@ app.post("/api/shifts/:id/close", requireRecordBranch(async (req) => prisma.shif
     const summary = await getShiftSummary(id);
     audit("shift.closed", req, { shiftId: id, closingCash: Number(req.body?.closingCash) || 0, difference: summary?.cash.difference ?? null });
     return res.json({ shift, summary });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+
+/* ─── Staff time clock (PIN punch in / out) ─── */
+app.post("/api/time-clock/punch", enforcePinRateLimit, requireBranchAccess((req) => parseId(req.body?.branchId)), async (req: AuthRequest, res) => {
+  const branchId = parseId(req.body?.branchId);
+  const pin = String(req.body?.pin ?? "").trim();
+  if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
+  if (!pin) return res.status(400).json({ error: "กรุณาใส่ PIN" });
+  const staff = await authenticatePin(pin);
+  if (!staff) {
+    audit("time_clock.pin_failed", req, { branchId });
+    return res.status(401).json({ error: "PIN ไม่ถูกต้อง" });
+  }
+  try {
+    const result = await punch({ userId: staff.id, branchId });
+    pinAttempts.delete(req.ip || "unknown");
+    audit(result.action === "in" ? "time_clock.in" : "time_clock.out", req, { branchId, staffId: staff.id, staffName: staff.name, entryId: result.entry.id, minutes: result.entry.minutes });
+    return res.json({ ...result, staff: { id: staff.id, name: staff.name } });
+  } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
+});
+app.get("/api/time-clock", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string);
+  if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date ?? "")) ? String(req.query.date) : new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+  const entries = await listTimeEntries(branchId, new Date(`${day}T00:00:00+07:00`), new Date(`${day}T23:59:59.999+07:00`));
+  return res.json({ date: day, items: entries });
+});
+app.post("/api/time-clock/:id/close", requireRole("admin", "manager"), requireRecordBranch(async (req) => getTimeEntryBranch(Number(req.params.id) || 0)), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  const clockOut = new Date(String(req.body?.clockOut ?? ""));
+  if (id === null || Number.isNaN(clockOut.getTime())) return res.status(400).json({ error: "ระบุเวลาออก" });
+  try {
+    const entry = await closeTimeEntry(id, clockOut, req.user?.id);
+    audit("time_clock.closed_by_manager", req, { entryId: id, branchId: entry.branchId, staffId: entry.userId, clockOut: entry.clockOut });
+    return res.json({ entry });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
 

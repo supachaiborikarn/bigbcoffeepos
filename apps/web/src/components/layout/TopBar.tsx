@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Menu, Moon, Sun, MapPin, Printer, Wallet } from "lucide-react";
+import { Menu, Moon, Sun, MapPin, Printer, Wallet, Clock } from "lucide-react";
 import { businessProfile, roleLabels } from "../../utils/business";
 import { getShiftSummary } from "../../api";
 import { useAuth } from "../../contexts/AuthContext";
@@ -10,6 +10,7 @@ import type { ShiftSummary } from "../../types";
 import Numpad from "../ui/Numpad";
 import OfflineStatus from "../OfflineStatus";
 import CashDrawerDialog from "../shift/CashDrawerDialog";
+import TimeClockDialog from "../shift/TimeClockDialog";
 
 const formatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -73,6 +74,7 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [closedSummary, setClosedSummary] = useState<PrintableShiftSummary | null>(null);
   const [showCashDrawer, setShowCashDrawer] = useState(false);
+  const [showTimeClock, setShowTimeClock] = useState(false);
   const reloadCloseSummary = () => { if (showShiftModal === "close" && activeShift) getShiftSummary(activeShift.id).then(setShiftSummary).catch(() => {}); };
 
   const countedCash = useMemo(() => {
@@ -175,6 +177,11 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
             </div>
           </div>
 
+          {activeBranch && (
+            <button className="btn btn--ghost topbar-cash-btn" onClick={() => setShowTimeClock(true)} title="ลงเวลาเข้า/ออกงานด้วย PIN">
+              <Clock size={17} /><span>ลงเวลา</span>
+            </button>
+          )}
           {activeShift && (
             <button className="btn btn--ghost topbar-cash-btn" onClick={() => setShowCashDrawer(true)} title="บันทึกเงินจ่ายออก / เติมเข้าลิ้นชัก">
               <Wallet size={17} /><span>เงินเข้า/ออก</span>
@@ -429,6 +436,7 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
           </div>
         </section>
       )}
+      {showTimeClock && activeBranch && <TimeClockDialog branchId={activeBranch.id} onClose={() => setShowTimeClock(false)} />}
       {showCashDrawer && activeShift && <CashDrawerDialog shiftId={activeShift.id} onClose={() => setShowCashDrawer(false)} onChanged={reloadCloseSummary} />}
     </>
   );

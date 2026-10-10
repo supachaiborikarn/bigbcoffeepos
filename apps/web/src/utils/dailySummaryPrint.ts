@@ -19,9 +19,26 @@ const thaiDateTime = (value?: string | null) => value ? new Date(value).toLocale
 const thaiTime = (value?: string | null) => value ? new Date(value).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }) : "-";
 const cashStatus = (diff: number) => diff === 0 ? "ตรงยอด" : diff < 0 ? "เงินขาด" : "เงินเกิน";
 const signed = (v: number) => `${v > 0 ? "+" : ""}${money(v)}`;
+const bangkokDay = (value: string) => new Date(value).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
+// Time only when it falls on the report day; otherwise include the date (shift crossed midnight).
+const shiftTime = (value: string | null, reportDate: string) => !value ? "-" : bangkokDay(value) === reportDate ? thaiTime(value) : thaiDateTime(value);
 
 function esc(value: unknown) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/**
+ * Cash reconciliation over CLOSED shifts only (an open shift has no counted
+ * cash yet, so including it would show a false shortage):
+ *   counted − opening float = cash actually taken from sales → compare with cash sales.
+ */
+function cashReconciliation(report: DailyCloseReport) {
+  const closed = report.shifts.filter((s) => s.closedAt && s.closingCash != null);
+  const counted = closed.reduce((sum, s) => sum + (s.closingCash ?? 0), 0);
+  const opening = closed.reduce((sum, s) => sum + s.openingCash, 0);
+  const cashSales = closed.reduce((sum, s) => sum + s.cashSales, 0);
+  const net = counted - opening;
+  return { closed, openShifts: report.shifts.filter((s) => !s.closedAt), counted, opening, net, cashSales, diff: Math.round((net - cashSales) * 100) / 100 };
 }
 
 /**
@@ -32,6 +49,7 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   const wide = widthMm === 80;
   const sourceLabel = SOURCE_LABELS[report.source] ?? SOURCE_LABELS.system;
   const row = (label: string, value: string, cls = "") => `<div class="row ${cls}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
+  const cash = cashReconciliation(report);
   const paymentTotal = report.payments.reduce((sum, p) => sum + p.total, 0);
   const paymentCount = report.payments.reduce((sum, p) => sum + p.count, 0);
 
@@ -41,8 +59,12 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
     .map((p) => `<tr><td>${esc(PAYMENT_LABELS[p.method] ?? p.method)}</td><td class="n">${num(p.count)}</td><td class="n">${money(p.total)}</td></tr>`).join("");
   const shifts = report.shifts.map((s) => `
     <div class="shift">
-      <div class="shift-head"><b>กะ #${s.id}</b><span>${esc(s.userName)}</span></div>
-      <div class="shift-time">${thaiTime(s.openedAt)} – ${s.closedAt ? thaiTime(s.closedAt) : "ยังไม่ปิด"}</div>
+      <div class="shift-head"><b>กะ #${s.id}</b><span>${s.closedAt ? "ปิดแล้ว" : "ยังเปิดอยู่"}</span></div>
+      <table class="who"><tbody>
+        <tr><td class="who-k">เปิดกะ</td><td class="who-t">${esc(shiftTime(s.openedAt, report.date))}</td><td class="who-n">${esc(s.userName)}</td></tr>
+        <tr><td class="who-k">ปิดกะ</td><td class="who-t">${esc(shiftTime(s.closedAt, report.date))}</td><td class="who-n">${s.closedAt ? esc(s.closedByName || "-") : "—"}</td></tr>
+      </tbody></table>
+      ${row("เงินเปิดกะ", money(s.openingCash))}
       <div class="grid2">
         ${row("ยอดขาย", money(s.totalSales))}
         ${row("บิล", num(s.totalOrders))}
@@ -103,7 +125,11 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   .shift:last-child { border-bottom: 0; }
   .shift-head { display: flex; justify-content: space-between; gap: 2mm; }
   .shift-head span { overflow-wrap: anywhere; text-align: right; }
-  .shift-time { font-size: 0.86em; margin-bottom: 0.6mm; }
+  .who { margin: 0.6mm 0 0.8mm; }
+  .who td { padding: 0.3mm 0; }
+  .who-k { width: 3.6em; font-weight: 700; }
+  .who-t { white-space: nowrap; padding-right: 2mm !important; }
+  .who-n { text-align: right; overflow-wrap: anywhere; }
   .grid2 { display: grid; grid-template-columns: ${wide ? "1fr 1fr" : "1fr"}; column-gap: 4mm; }
   .note { font-size: 0.88em; margin-top: 0.8mm; overflow-wrap: anywhere; }
   .muted { font-size: 0.88em; }
@@ -134,11 +160,14 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   ${payments ? `<table><thead><tr><th>ช่องทาง</th><th class="n">บิล</th><th class="n">ยอดเงิน</th></tr></thead><tbody>${payments}</tbody>
     <tfoot><tr><td>รวม</td><td class="n">${num(paymentCount)}</td><td class="n">${money(paymentTotal)}</td></tr></tfoot></table>` : `<p class="muted">ไม่มีข้อมูลชำระเงิน</p>`}
 
-  <h2>สรุปเงินสด</h2>
-  ${row("ขายเงินสด", money(report.cash.cashSales))}
-  ${row("เงินสดที่ควรมี", money(report.cash.expectedCash))}
-  ${row("นับเงินจริง", money(report.cash.countedCash))}
-  <div class="row boxed"><span><b>ส่วนต่าง · ${cashStatus(report.cash.difference)}</b></span><b>${signed(report.cash.difference)}</b></div>
+  <h2>สรุปเงินสด <small>กะที่ปิดแล้ว ${num(cash.closed.length)} กะ</small></h2>
+  ${cash.closed.length ? `
+  ${row("นับเงินในลิ้นชักได้", money(cash.counted))}
+  ${row("หัก เงินทอนตอนเปิดกะ", money(-cash.opening))}
+  ${row("= เงินสดจากการขาย", money(cash.net), "strong")}
+  ${row("ยอดขายเงินสดตามระบบ", money(cash.cashSales))}
+  <div class="row boxed"><span><b>ส่วนต่าง · ${cashStatus(cash.diff)}</b></span><b>${signed(cash.diff)}</b></div>` : `<p class="muted">ยังไม่มีกะที่ปิด · ขายเงินสดวันนี้ ${money(report.cash.cashSales)}</p>`}
+  ${cash.openShifts.length ? `<p class="note">* กะ ${cash.openShifts.map((s) => `#${s.id}`).join(", ")} ยังไม่ปิด ไม่นับรวมในส่วนนี้</p>` : ""}
 
   <h2>รายละเอียดกะ <small>${num(report.shifts.length)} กะ</small></h2>
   ${shifts || `<p class="muted">ไม่มีข้อมูลกะ</p>`}
@@ -186,16 +215,24 @@ export function buildDailySummaryEscPos(report: DailyCloseReport, widthMm: 58 | 
   if (!report.payments.length) out += "ไม่มีข้อมูลชำระเงิน\n";
   report.payments.forEach((p) => { out += row(PAYMENT_LABELS[p.method] ?? p.method, `${num(p.count)} บิล  ${money(p.total)}`); });
 
-  out += section("สรุปเงินสด");
-  out += row("ขายเงินสด", money(report.cash.cashSales));
-  out += row("เงินสดที่ควรมี", money(report.cash.expectedCash));
-  out += row("นับเงินจริง", money(report.cash.countedCash));
-  out += ESCPOS.boldOn + row(`ส่วนต่าง (${cashStatus(report.cash.difference)})`, signed(report.cash.difference)) + ESCPOS.boldOff;
+  const cash = cashReconciliation(report);
+  out += section(`สรุปเงินสด (ปิดแล้ว ${cash.closed.length} กะ)`);
+  if (cash.closed.length) {
+    out += row("นับเงินในลิ้นชักได้", money(cash.counted));
+    out += row("หัก เงินทอนตอนเปิดกะ", money(-cash.opening));
+    out += ESCPOS.boldOn + row("= เงินสดจากการขาย", money(cash.net)) + ESCPOS.boldOff;
+    out += row("ยอดขายเงินสดตามระบบ", money(cash.cashSales));
+    out += ESCPOS.boldOn + row(`ส่วนต่าง (${cashStatus(cash.diff)})`, signed(cash.diff)) + ESCPOS.boldOff;
+  } else out += `ยังไม่มีกะที่ปิด · ขายเงินสด ${money(report.cash.cashSales)}\n`;
+  if (cash.openShifts.length) out += `* กะ ${cash.openShifts.map((s) => `#${s.id}`).join(", ")} ยังไม่ปิด ไม่นับรวม\n`;
 
   out += section("รายละเอียดกะ");
   if (!report.shifts.length) out += "ไม่มีข้อมูลกะ\n";
   report.shifts.forEach((s) => {
-    out += row(`กะ #${s.id} ${s.userName}`, `${thaiTime(s.openedAt)}-${s.closedAt ? thaiTime(s.closedAt) : "เปิดอยู่"}`);
+    out += ESCPOS.boldOn + `กะ #${s.id}` + ESCPOS.boldOff + (s.closedAt ? "" : " (ยังเปิดอยู่)") + "\n";
+    out += row(`  เปิด ${shiftTime(s.openedAt, report.date)}`, s.userName);
+    out += row(`  ปิด ${shiftTime(s.closedAt, report.date)}`, s.closedAt ? s.closedByName || "-" : "-");
+    out += row("  เงินเปิดกะ", money(s.openingCash));
     out += row("  ยอดขาย", `${num(s.totalOrders)} บิล  ${money(s.totalSales)}`);
     out += row("  เงินนับ", s.closingCash == null ? "-" : money(s.closingCash));
     if (s.difference != null) out += row("  ส่วนต่าง", signed(s.difference));

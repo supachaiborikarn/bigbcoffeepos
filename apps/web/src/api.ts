@@ -489,10 +489,12 @@ export async function createStockAdjustment(input: {
   return payload;
 }
 
-export async function getStockMovements(branchId: number) {
-  const payload = await fetchJson<{ items: StockMovement[] }>(
-    `${API_URL}/stock-movements?branchId=${branchId}`
-  );
+export async function getStockMovements(branchId: number, options: { ingredientId?: number; manualOnly?: boolean; limit?: number } = {}) {
+  const query = new URLSearchParams({ branchId: String(branchId) });
+  if (options.ingredientId) query.set("ingredientId", String(options.ingredientId));
+  if (options.manualOnly) query.set("manual", "1");
+  if (options.limit) query.set("limit", String(options.limit));
+  const payload = await fetchJson<{ items: StockMovement[] }>(`${API_URL}/stock-movements?${query.toString()}`);
   return payload.items;
 }
 

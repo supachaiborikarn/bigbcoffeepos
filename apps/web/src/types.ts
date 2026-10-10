@@ -90,6 +90,7 @@ export type ShiftSummary = {
   closeDetails?: {
     cashCounts: Record<string, number>;
     note: string | null;
+    closedBy?: { id: number; name: string } | null;
   };
   payments: ShiftPaymentSummary[];
   topItems: Array<{ menuItemId: number; name: string; qty: number; revenue: number }>;
@@ -477,6 +478,7 @@ export type DailyCloseReport = {
     id: number;
     branchName: string;
     userName: string;
+    closedByName?: string | null;
     status: string;
     openedAt: string;
     closedAt: string | null;

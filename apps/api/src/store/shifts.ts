@@ -2,14 +2,14 @@ import prisma from "../prisma.js";
 
 const PAYMENT_METHODS = ["CASH", "QR", "CARD", "EWALLET"] as const;
 const REVERSED_ORDER_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
-type ShiftCloseDetails = { cashCounts?: Record<string, number>; note?: string };
+type ShiftCloseDetails = { cashCounts?: Record<string, number>; note?: string; closedByUserId?: number };
 let closeDetailsTableReady = false;
 
 function toIso(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
 }
 
-async function ensureShiftCloseDetailsTable() {
+export async function ensureShiftCloseDetailsTable() {
   if (closeDetailsTableReady) return;
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS shift_close_details (
@@ -20,6 +20,11 @@ async function ensureShiftCloseDetailsTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+  // Who closed the shift (Shift.userId is the person who opened it).
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE shift_close_details
+    ADD COLUMN IF NOT EXISTS closed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+  `);
   closeDetailsTableReady = true;
 }
 
@@ -27,25 +32,35 @@ async function saveShiftCloseDetails(shiftId: number, details?: ShiftCloseDetail
   if (!details) return;
   const cashCounts = details.cashCounts ?? {};
   const note = typeof details.note === "string" && details.note.trim() ? details.note.trim() : null;
-  if (!Object.keys(cashCounts).length && !note) return;
+  const closedBy = details.closedByUserId ?? null;
+  if (!Object.keys(cashCounts).length && !note && !closedBy) return;
   await ensureShiftCloseDetailsTable();
   await prisma.$executeRaw`
-    INSERT INTO shift_close_details (shift_id, cash_counts, note)
-    VALUES (${shiftId}, CAST(${JSON.stringify(cashCounts)} AS jsonb), ${note})
+    INSERT INTO shift_close_details (shift_id, cash_counts, note, closed_by_user_id)
+    VALUES (${shiftId}, CAST(${JSON.stringify(cashCounts)} AS jsonb), ${note}, ${closedBy})
     ON CONFLICT (shift_id) DO UPDATE SET
       cash_counts = EXCLUDED.cash_counts,
       note = EXCLUDED.note,
+      closed_by_user_id = EXCLUDED.closed_by_user_id,
       updated_at = now()
   `;
 }
 
 export async function getShiftCloseDetails(shiftId: number) {
   await ensureShiftCloseDetailsTable();
-  const rows = await prisma.$queryRaw<Array<{ cash_counts: unknown; note: string | null }>>`
-    SELECT cash_counts, note FROM shift_close_details WHERE shift_id = ${shiftId}
+  const rows = await prisma.$queryRaw<Array<{ cash_counts: unknown; note: string | null; closed_by_id: number | null; closed_by_name: string | null }>>`
+    SELECT d.cash_counts, d.note, u.id AS closed_by_id, u.name AS closed_by_name
+    FROM shift_close_details d
+    LEFT JOIN users u ON u.id = d.closed_by_user_id
+    WHERE d.shift_id = ${shiftId}
   `;
   const row = rows[0];
-  return row ? { cashCounts: row.cash_counts ?? {}, note: row.note } : { cashCounts: {}, note: null };
+  if (!row) return { cashCounts: {}, note: null, closedBy: null };
+  return {
+    cashCounts: row.cash_counts ?? {},
+    note: row.note,
+    closedBy: row.closed_by_id ? { id: row.closed_by_id, name: row.closed_by_name ?? "-" } : null
+  };
 }
 
 export async function openShift(input: { branchId: number; userId?: number; openingCash: number }) {
@@ -158,8 +173,8 @@ export async function getShiftSummary(id: number) {
   const expectedCash = Math.round((shift.openingCash + cashSales) * 100) / 100;
   const difference = shift.closingCash == null ? null : Math.round((shift.closingCash - expectedCash) * 100) / 100;
   const closeDetails = shift.status === "CLOSED"
-    ? await getShiftCloseDetails(id).catch(() => ({ cashCounts: {}, note: null }))
-    : { cashCounts: {}, note: null };
+    ? await getShiftCloseDetails(id).catch(() => ({ cashCounts: {}, note: null, closedBy: null }))
+    : { cashCounts: {}, note: null, closedBy: null };
 
   const itemMap = new Map<number, { menuItemId: number; name: string; qty: number; revenue: number }>();
   billableOrders.forEach((order) => {

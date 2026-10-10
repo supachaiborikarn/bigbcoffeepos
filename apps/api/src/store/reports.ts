@@ -1,5 +1,6 @@
 import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
+import { ensureShiftCloseDetailsTable } from "./shifts.js";
 
 export type ReportSource = "system" | "pospos" | "all";
 
@@ -335,12 +336,14 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
   ]);
 
   const shiftIds = shifts.map((shift) => shift.id);
+  if (shiftIds.length) await ensureShiftCloseDetailsTable().catch(() => undefined);
   const [detailRows, shiftTotalRows, shiftPaymentRows] = shiftIds.length
     ? await Promise.all([
-        prisma.$queryRaw<Array<{ shift_id: number; cash_counts: unknown; note: string | null }>>`
-          SELECT shift_id, cash_counts, note
-          FROM shift_close_details
-          WHERE shift_id IN (${Prisma.join(shiftIds)})
+        prisma.$queryRaw<Array<{ shift_id: number; cash_counts: unknown; note: string | null; closed_by_name: string | null }>>`
+          SELECT d.shift_id, d.cash_counts, d.note, u.name AS closed_by_name
+          FROM shift_close_details d
+          LEFT JOIN users u ON u.id = d.closed_by_user_id
+          WHERE d.shift_id IN (${Prisma.join(shiftIds)})
         `.catch(() => []),
         prisma.order.groupBy({
           by: ["shiftId"],
@@ -401,6 +404,7 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
       id: shift.id,
       branchName: shift.branch.name,
       userName: shift.user?.name ?? "-",
+      closedByName: detail?.closed_by_name ?? null,
       status: shift.status,
       openedAt: shift.openedAt.toISOString(),
       closedAt: shift.closedAt?.toISOString() ?? null,

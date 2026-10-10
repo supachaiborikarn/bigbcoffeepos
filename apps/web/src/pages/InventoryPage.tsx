@@ -2,10 +2,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, EyeOff, PackageCheck, Plus, Printer, RotateCcw, Save, Search, X } from "lucide-react";
 import {
-  createIngredient,
   createMenuItem,
   createPurchase,
-  createStockAdjustment,
   deactivateMenuItem,
   getCupStockSettings,
   getIngredients,
@@ -18,7 +16,6 @@ import {
   restoreMenuItem,
   setMenuGroupActive,
   updateCupStockSettings,
-  updateInventoryItem,
   updateMenuItem,
   updateRecipe
 } from "../api";
@@ -26,6 +23,7 @@ import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrde
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 import { printBarcodeLabels } from "../utils/barcode";
+import StockManager, { describeMovement } from "../components/inventory/StockManager";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -107,14 +105,6 @@ type ProductFormState = {
   active: boolean;
 };
 
-type StockFormState = {
-  name: string;
-  unit: string;
-  costPerUnit: string;
-  stockQty: string;
-  reorderLevel: string;
-};
-
 type RecipeLineForm = {
   ingredientId: string;
   qty: string;
@@ -182,16 +172,6 @@ function productToForm(item: MenuItem): ProductFormState {
     optionLabel: item.optionLabel ?? "",
     branchType: item.branchType ?? "coffee",
     active: item.active
-  };
-}
-
-function stockToForm(item: InventoryItem): StockFormState {
-  return {
-    name: item.name,
-    unit: item.unit,
-    costPerUnit: String(item.costPerUnit ?? ""),
-    stockQty: String(item.stockQty ?? ""),
-    reorderLevel: String(item.reorderLevel ?? "")
   };
 }
 
@@ -275,8 +255,6 @@ export default function InventoryPage() {
   const [recipeCoverage, setRecipeCoverage] = useState<RecipeCoverageReport | null>(null);
 
   const [menuForm, setMenuForm] = useState<ProductFormState>(() => createBlankProductForm(defaultBranchType));
-  const [ingredientForm, setIngredientForm] = useState({ name: "", unit: "ชิ้น", costPerUnit: "", stockQty: "", reorderLevel: "" });
-  const [adjustForm, setAdjustForm] = useState({ ingredientId: "", qty: "", reason: "ADJUSTMENT" });
   const [purchaseForm, setPurchaseForm] = useState({ supplier: "", note: "", ingredientId: "", qty: "", unitCost: "" });
   const [purchaseItems, setPurchaseItems] = useState<PurchaseOrderItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -292,9 +270,6 @@ export default function InventoryPage() {
   const [productEditForm, setProductEditForm] = useState<ProductFormState | null>(null);
   const [mergeTargetCardKey, setMergeTargetCardKey] = useState("");
 
-  const [stockSearch, setStockSearch] = useState("");
-  const [selectedStock, setSelectedStock] = useState<InventoryItem | null>(null);
-  const [stockEditForm, setStockEditForm] = useState<StockFormState | null>(null);
 
   const [recipeProductSearch, setRecipeProductSearch] = useState("");
   const [recipeIngredientSearch, setRecipeIngredientSearch] = useState("");
@@ -367,12 +342,6 @@ export default function InventoryPage() {
     const currentKey = getMenuCardKey(selectedProduct);
     return menuCardGroups.filter((group) => group.branchType === productEditForm.branchType && group.key !== currentKey);
   }, [menuCardGroups, productEditForm, selectedProduct]);
-
-  const visibleStock = useMemo(() => {
-    const query = stockSearch.trim().toLowerCase();
-    if (!query) return inventory;
-    return inventory.filter((item) => `${item.name} ${item.unit}`.toLowerCase().includes(query));
-  }, [inventory, stockSearch]);
 
   const ingredientNameById = useMemo(() => {
     const map = new Map<number, string>();
@@ -455,7 +424,7 @@ export default function InventoryPage() {
 
     const [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport, cupSettings] = await Promise.all([
       getInventory(activeBranch.id),
-      getStockMovements(activeBranch.id),
+      getStockMovements(activeBranch.id, { limit: 20 }),
       getPurchases(activeBranch.id),
       getRecipeCoverage({ branchId: activeBranch.id }),
       getCupStockSettings(activeBranch.id)
@@ -465,9 +434,6 @@ export default function InventoryPage() {
     setPurchases(purchaseItemsFromApi);
     setRecipeCoverage(coverageReport);
     setCupStockDrafts(cupSettings);
-    setSelectedStock((current) => (
-      current ? inventoryItems.find((item) => item.ingredientId === current.ingredientId) ?? null : null
-    ));
   };
 
   useEffect(() => {
@@ -956,101 +922,6 @@ export default function InventoryPage() {
       setProductEditForm(null);
       setMergeTargetCardKey("");
       toast.success(mergeTarget ? `รวมเข้าการ์ด ${nextOptionGroup} แล้ว` : "บันทึกข้อมูลสินค้าสำเร็จ");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleAddIngredient = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!activeBranch) return toast.error("เลือกสาขาก่อน");
-    if (!ingredientForm.name || !ingredientForm.unit || !ingredientForm.costPerUnit) {
-      toast.error("กรุณากรอกข้อมูลวัตถุดิบให้ครบ");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await createIngredient({
-        name: ingredientForm.name,
-        unit: ingredientForm.unit,
-        costPerUnit: Number(ingredientForm.costPerUnit),
-        stockQty: Number(ingredientForm.stockQty) || 0,
-        reorderLevel: Number(ingredientForm.reorderLevel) || 0,
-        branchId: activeBranch.id
-      });
-      setIngredientForm({ name: "", unit: "ชิ้น", costPerUnit: "", stockQty: "", reorderLevel: "" });
-      await refreshInventory();
-      toast.success("เพิ่มวัตถุดิบสำเร็จ");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleStockEditStart = (item: InventoryItem) => {
-    setSelectedStock(item);
-    setStockEditForm(stockToForm(item));
-  };
-
-  const handleStockEditCancel = () => {
-    setSelectedStock(null);
-    setStockEditForm(null);
-  };
-
-  const handleStockUpdate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!activeBranch || !selectedStock || !stockEditForm) return;
-
-    const costPerUnit = toNumber(stockEditForm.costPerUnit);
-    const stockQty = toNumber(stockEditForm.stockQty);
-    const reorderLevel = toNumber(stockEditForm.reorderLevel);
-    if (!stockEditForm.name.trim() || !stockEditForm.unit.trim() || costPerUnit === null || costPerUnit < 0) {
-      toast.error("กรุณากรอกข้อมูลสต็อกให้ครบ");
-      return;
-    }
-    if (stockQty === null || stockQty < 0 || reorderLevel === null || reorderLevel < 0) {
-      toast.error("จำนวนคงเหลือหรือจุดสั่งซื้อไม่ถูกต้อง");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await updateInventoryItem(selectedStock.ingredientId, {
-        branchId: activeBranch.id,
-        name: stockEditForm.name.trim(),
-        unit: stockEditForm.unit.trim(),
-        costPerUnit,
-        stockQty,
-        reorderLevel
-      });
-      await refreshInventory();
-      setSelectedStock(null);
-      setStockEditForm(null);
-      toast.success("บันทึกข้อมูลสต็อกสำเร็จ");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleStockAdjust = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!activeBranch) return toast.error("เลือกสาขาก่อน");
-    const ingredientId = Number(adjustForm.ingredientId);
-    const qty = Number(adjustForm.qty);
-    if (!ingredientId || !Number.isFinite(qty) || qty === 0) return toast.error("เลือกวัตถุดิบและจำนวนให้ถูกต้อง");
-
-    setIsSubmitting(true);
-    try {
-      await createStockAdjustment({ branchId: activeBranch.id, ingredientId, qty, reason: adjustForm.reason || "ADJUSTMENT" });
-      setAdjustForm({ ingredientId: "", qty: "", reason: "ADJUSTMENT" });
-      await refreshInventory();
-      toast.success("ปรับสต็อกสำเร็จ");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -1729,85 +1600,7 @@ export default function InventoryPage() {
 
       {/* INGREDIENTS TAB */}
       {activeTab === "ingredients" && (
-        <section className="inventory-layout" style={{ animation: "slideUp 0.2s ease-out" }}>
-          <section className="panel inventory-stock-panel" style={{ flex: 2 }}>
-            <div className="panel__header">
-              <div>
-                <h2>สต็อกสาขา</h2>
-                <p className="muted">{activeBranch?.name} · ต่ำกว่าเกณฑ์ {lowStockItems.length} รายการ</p>
-              </div>
-              <label className="inventory-search inventory-search--small">
-                <Search size={16} />
-                <input value={stockSearch} onChange={(e) => setStockSearch(e.target.value)} placeholder="ค้นหาสต็อก" />
-              </label>
-            </div>
-
-            <div className="stock-manager">
-              <div className="stock-list">
-                {visibleStock.map((item) => (
-                  <button type="button" key={item.ingredientId} className={`stock-row ${selectedStock?.ingredientId === item.ingredientId ? "is-selected" : ""}`} onClick={() => handleStockEditStart(item)}>
-                    <span>
-                      <strong>{item.name}</strong>
-                      <small>จุดสั่งซื้อ {item.reorderLevel} {item.unit} · ต้นทุน {formatMoney(item.costPerUnit)}</small>
-                    </span>
-                    <span className={item.stockQty <= item.reorderLevel ? "negative" : "positive"}>
-                      {item.stockQty} {item.unit}
-                    </span>
-                  </button>
-                ))}
-                {visibleStock.length === 0 && <div className="empty">ไม่มีข้อมูลสต็อก</div>}
-              </div>
-
-              {selectedStock && stockEditForm ? (
-                <form className="inventory-editor inventory-editor--stock" onSubmit={handleStockUpdate}>
-                  <div className="inventory-editor__header">
-                    <div>
-                      <h3>แก้ไขสต็อก</h3>
-                      <p className="muted">{selectedStock.name}</p>
-                    </div>
-                    <button type="button" className="icon-action" onClick={handleStockEditCancel} aria-label="ปิดฟอร์มแก้ไขสต็อก">
-                      <X size={16} />
-                    </button>
-                  </div>
-                  <div className="inventory-form-grid inventory-form-grid--compact">
-                    <input className="input" value={stockEditForm.name} onChange={(e) => setStockEditForm({ ...stockEditForm, name: e.target.value })} placeholder="ชื่อวัตถุดิบ" />
-                    <input className="input" value={stockEditForm.unit} onChange={(e) => setStockEditForm({ ...stockEditForm, unit: e.target.value })} placeholder="หน่วย" />
-                    <input className="input" type="number" value={stockEditForm.costPerUnit} onChange={(e) => setStockEditForm({ ...stockEditForm, costPerUnit: e.target.value })} placeholder="ต้นทุน/หน่วย" min="0" step="0.01" />
-                    <input className="input" type="number" value={stockEditForm.stockQty} onChange={(e) => setStockEditForm({ ...stockEditForm, stockQty: e.target.value })} placeholder="จำนวนคงเหลือ" min="0" step="0.001" />
-                    <input className="input" type="number" value={stockEditForm.reorderLevel} onChange={(e) => setStockEditForm({ ...stockEditForm, reorderLevel: e.target.value })} placeholder="จุดสั่งซื้อ" min="0" step="0.001" />
-                  </div>
-                  <div className="inventory-editor__actions">
-                    <button type="button" className="btn btn--ghost" onClick={handleStockEditCancel}>ยกเลิก</button>
-                    <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
-                      <Save size={16} />
-                      บันทึกสต็อก
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <div className="stock-editor-empty">เลือกสต็อกหนึ่งรายการเพื่อแก้ไขชื่อ หน่วย ต้นทุน จุดสั่งซื้อ หรือยอดคงเหลือ</div>
-              )}
-            </div>
-          </section>
-
-          <form onSubmit={handleAddIngredient} className="panel" style={{ flex: 1, height: "fit-content" }}>
-            <div className="panel__header">
-              <div>
-                <h2>เพิ่มวัตถุดิบ</h2>
-                <p className="muted">ตั้งต้นสินค้าในสต็อกของสาขา</p>
-              </div>
-              <Plus size={18} />
-            </div>
-            <div className="inventory-form-grid inventory-form-grid--compact">
-              <input className="input" value={ingredientForm.name} onChange={(e) => setIngredientForm({ ...ingredientForm, name: e.target.value })} placeholder="ชื่อวัตถุดิบ" />
-              <input className="input" value={ingredientForm.unit} onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })} placeholder="หน่วย" />
-              <input className="input" type="number" value={ingredientForm.costPerUnit} onChange={(e) => setIngredientForm({ ...ingredientForm, costPerUnit: e.target.value })} placeholder="ต้นทุน/หน่วย" min="0" step="0.01" />
-              <input className="input" type="number" value={ingredientForm.stockQty} onChange={(e) => setIngredientForm({ ...ingredientForm, stockQty: e.target.value })} placeholder="จำนวนตั้งต้น" min="0" step="0.001" />
-              <input className="input" type="number" value={ingredientForm.reorderLevel} onChange={(e) => setIngredientForm({ ...ingredientForm, reorderLevel: e.target.value })} placeholder="จุดสั่งซื้อ" min="0" step="0.001" />
-            </div>
-            <button type="submit" className="btn btn--primary" disabled={isSubmitting} style={{ marginTop: 16, width: "100%" }}>บันทึกวัตถุดิบ</button>
-          </form>
-        </section>
+        <StockManager canEditDetails onChanged={() => { void refreshInventory(); }} />
       )}
 
       {/* MOVEMENTS TAB */}
@@ -1816,31 +1609,27 @@ export default function InventoryPage() {
           <section className="panel">
             <div className="panel__header">
               <div>
-                <h2>ปรับสต็อก</h2>
-                <p className="muted">รับเข้า/ตัดออกแบบ manual พร้อม movement log</p>
+                <h2>ประวัติเข้า/ออกสต็อก</h2>
+                <p className="muted">ขาย รับเข้า ตัดออก นับสต็อก และโอน ของสาขานี้</p>
               </div>
             </div>
             <div className="panel__body">
-              <form onSubmit={handleStockAdjust} className="inventory-form-grid inventory-form-grid--compact">
-                <select className="input" value={adjustForm.ingredientId} onChange={(e) => setAdjustForm({ ...adjustForm, ingredientId: e.target.value })}>
-                  <option value="">เลือกวัตถุดิบ</option>
-                  {ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
-                <input className="input" type="number" value={adjustForm.qty} onChange={(e) => setAdjustForm({ ...adjustForm, qty: e.target.value })} placeholder="+ รับเข้า / - ตัดออก" step="0.001" />
-                <input className="input" value={adjustForm.reason} onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })} placeholder="เหตุผล" />
-                <button className="btn btn--primary" disabled={isSubmitting}>บันทึกการปรับสต็อก</button>
-              </form>
+              <p className="stk-hint">ปรับสต็อกรายสินค้า (รับเข้า / ตัดออก / นับสต็อกจริง) ได้ที่แท็บ <button type="button" className="btn btn--ghost" style={{ minHeight: 0, padding: "2px 8px" }} onClick={() => setActiveTab("ingredients")}>สต็อกวัตถุดิบ</button></p>
               <div className="movement-list">
-                <strong>Movement ล่าสุด</strong>
-                {movements.slice(0, 8).map((movement) => (
-                  <div key={movement.id} className="movement-row">
-                    <span>
-                      {ingredientNameById.get(movement.ingredientId) ?? `สินค้า #${movement.ingredientId}`}
-                      <small>{movement.reason}</small>
-                    </span>
-                    <strong className={movement.qty >= 0 ? "positive" : "negative"}>{movement.qty >= 0 ? "+" : ""}{movement.qty}</strong>
-                  </div>
-                ))}
+                <strong>ความเคลื่อนไหวล่าสุด</strong>
+                {movements.slice(0, 15).map((movement) => {
+                  const info = describeMovement(movement.reason);
+                  const unit = inventory.find((item) => item.ingredientId === movement.ingredientId)?.unit ?? "";
+                  return (
+                    <div key={movement.id} className="movement-row">
+                      <span>
+                        {ingredientNameById.get(movement.ingredientId) ?? `สินค้า #${movement.ingredientId}`}
+                        <small>{new Date(movement.createdAt).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · {info.label}{info.note ? ` · ${info.note}` : ""}</small>
+                      </span>
+                      <strong className={movement.qty >= 0 ? "positive" : "negative"}>{movement.qty >= 0 ? "+" : ""}{movement.qty.toLocaleString("th-TH", { maximumFractionDigits: 3 })} {unit}</strong>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </section>

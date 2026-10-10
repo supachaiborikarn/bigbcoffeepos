@@ -203,10 +203,16 @@ export async function adjustStock(input: { branchId: number; ingredientId: numbe
   return { stock, movement };
 }
 
-export async function getStockMovements(branchId?: number) {
+export async function getStockMovements(branchId?: number, options: { ingredientId?: number; manualOnly?: boolean; take?: number } = {}) {
   return prisma.stockMovement.findMany({
-    where: branchId ? { branchId } : undefined,
-    orderBy: { id: "desc" }
+    where: {
+      ...(branchId ? { branchId } : {}),
+      ...(options.ingredientId ? { ingredientId: options.ingredientId } : {}),
+      // "Manual" = everything except per-sale deductions (SALE-<orderId>).
+      ...(options.manualOnly ? { NOT: { reason: { startsWith: "SALE-" } } } : {})
+    },
+    orderBy: { id: "desc" },
+    ...(options.take ? { take: options.take } : {})
   });
 }
 

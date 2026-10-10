@@ -456,7 +456,9 @@ app.post("/api/stock-adjustments", requireRole("admin", "manager"), requireBranc
 });
 app.get("/api/stock-movements", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
-  res.json({ items: await getStockMovements(branchId) });
+  const ingredientId = parseId(req.query.ingredientId as string) ?? undefined;
+  const limit = parseId(req.query.limit as string);
+  res.json({ items: await getStockMovements(branchId, { ingredientId, manualOnly: req.query.manual === "1", take: limit && limit > 0 ? Math.min(Math.floor(limit), 500) : undefined }) });
 });
 
 /* ─── Central Warehouse & Restock ─── */
@@ -741,13 +743,14 @@ app.post("/api/shifts/open", requireBranchAccess((req) => parseId(req.body?.bran
     return res.status(201).json({ shift });
   } catch (e) { return res.status(400).json({ error: (e as Error).message }); }
 });
-app.post("/api/shifts/:id/close", requireRecordBranch(async (req) => prisma.shift.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager"), async (req, res) => {
+app.post("/api/shifts/:id/close", requireRecordBranch(async (req) => prisma.shift.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
     const shift = await closeShift(id, Number(req.body?.closingCash) || 0, {
       cashCounts: req.body?.cashCounts,
-      note: req.body?.note
+      note: req.body?.note,
+      closedByUserId: req.user?.id
     });
     const summary = await getShiftSummary(id);
     audit("shift.closed", req, { shiftId: id, closingCash: Number(req.body?.closingCash) || 0, difference: summary?.cash.difference ?? null });

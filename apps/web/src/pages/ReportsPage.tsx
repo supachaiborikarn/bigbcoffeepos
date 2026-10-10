@@ -3,6 +3,7 @@ import { getSalesSummary, getDailyCloseReport, getOrdersCsvUrl, API_URL } from "
 import type { PaymentMethod, ReportSource, SalesSummary } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
+import { useShift } from "../contexts/ShiftContext";
 import { submitPrintJob } from "../utils/printJob";
 import { getPrinterMode } from "../utils/printerSettings";
 import { createDailySummaryJob } from "../utils/dailySummaryPrint";
@@ -66,6 +67,14 @@ export default function ReportsPage() {
     return { from: formatDateInput(from), to: formatDateInput(today) };
   });
 
+  // ใบส่งยอด: default = the day the branch's current shift was opened (Bangkok),
+  // or today when no shift is open. Picking a date manually stops the auto-follow.
+  const { activeShift } = useShift();
+  const shiftDay = activeShift?.openedAt ? new Date(activeShift.openedAt).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" }) : null;
+  const [summaryDate, setSummaryDate] = useState(() => shiftDay ?? formatDateInput(new Date()));
+  const [summaryDateTouched, setSummaryDateTouched] = useState(false);
+  useEffect(() => { if (shiftDay && !summaryDateTouched) setSummaryDate(shiftDay); }, [shiftDay, summaryDateTouched]);
+
   const queryStr = useMemo(() => {
     const params = new URLSearchParams();
     params.set("from", reportRange.from);
@@ -125,7 +134,7 @@ export default function ReportsPage() {
     // (iOS app / PassPRNT / RawBT) don't use a window at all.
     let popup: Window | null = getPrinterMode() === "browser" ? window.open("", "bbpos_receipt", "width=420,height=760") : null;
     try {
-      const report = await getDailyCloseReport({ date: reportRange.to, branchId: reportBranchId ?? activeBranch.id, source: reportSource });
+      const report = await getDailyCloseReport({ date: summaryDate, branchId: reportBranchId ?? activeBranch.id, source: reportSource });
       if (!submitPrintJob(createDailySummaryJob(report, activeBranch.id), popup)) throw new Error("ระบบพิมพ์ยังไม่พร้อม ลองใหม่อีกครั้ง");
       popup = null;
     } catch (error) {
@@ -177,7 +186,11 @@ export default function ReportsPage() {
             </select>
             <input className="input" type="date" value={reportRange.from} onChange={e => setReportRange({...reportRange, from: e.target.value})} />
             <input className="input" type="date" value={reportRange.to} onChange={e => setReportRange({...reportRange, to: e.target.value})} />
-            <button className="btn btn--primary" onClick={printDailySummary} disabled={isPrintingDaily}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+              วันที่ใบส่งยอด
+              <input className="input" type="date" value={summaryDate} title={shiftDay === summaryDate ? "วันที่เปิดกะปัจจุบัน" : undefined} onChange={e => { setSummaryDateTouched(true); setSummaryDate(e.target.value); }} />
+            </label>
+            <button className="btn btn--primary" onClick={printDailySummary} disabled={isPrintingDaily || !summaryDate}>
               {isPrintingDaily ? "กำลังเตรียม..." : "พิมพ์ใบส่งยอด"}
             </button>
           </div>

@@ -333,8 +333,8 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
 
             <div className="shift-close-layout">
               <section className="shift-money-panel">
-                <div><span>เปิดกะ</span><strong>{formatDateTime(closedSummary.openedAt)}</strong></div>
-                <div><span>ปิดกะ</span><strong>{formatDateTime(closedSummary.closedAt)}</strong></div>
+                <div><span>เปิดกะ</span><strong>{formatDateTime(closedSummary.openedAt)} · {closedSummary.user?.name ?? "-"}</strong></div>
+                <div><span>ปิดกะ</span><strong>{formatDateTime(closedSummary.closedAt)} · {closedSummary.closeDetails?.closedBy?.name ?? "-"}</strong></div>
                 <div><span>ระยะเวลา</span><strong>{formatDuration(closedSummary.durationMinutes)}</strong></div>
                 <div><span>เงินต้นกะ</span><strong>{formatMoney(closedSummary.cash.openingCash)}</strong></div>
                 <div><span>เงินสดที่ควรมี</span><strong>{formatMoney(closedSummary.cash.expectedCash)}</strong></div>
@@ -368,6 +368,7 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
           </div>
           <div className="shift-print__row"><span>กะ</span><strong>#{closedSummary.shift.id}</strong></div>
           <div className="shift-print__row"><span>ผู้เปิดกะ</span><strong>{closedSummary.user?.name ?? "-"}</strong></div>
+          <div className="shift-print__row"><span>ผู้ปิดกะ</span><strong>{closedSummary.closeDetails?.closedBy?.name ?? "-"}</strong></div>
           <div className="shift-print__row"><span>เปิด</span><strong>{formatDateTime(closedSummary.openedAt)}</strong></div>
           <div className="shift-print__row"><span>ปิด</span><strong>{formatDateTime(closedSummary.closedAt)}</strong></div>
           <div className="shift-print__row"><span>ระยะเวลา</span><strong>{formatDuration(closedSummary.durationMinutes)}</strong></div>

@@ -8,6 +8,7 @@ import { cupStockText, type CupStockMap } from "./CupStockStrip";
 type Props = {
   item: MenuItem;
   cupStock?: CupStockMap;
+  addOns?: DrinkAddOn[];
   onClose: () => void;
   onAdd: (item: MenuItem, qty: number, modifiers: Modifier[]) => void;
 };
@@ -20,14 +21,8 @@ const SWEETNESS_LEVELS = [
   { value: "120%", label: "หวานมาก (120%)" },
 ];
 
-const ADD_ONS = [
-  { value: "Extra Shot", label: "เพิ่มช็อตกาแฟ", price: 15 },
-  { value: "Oat Milk", label: "เปลี่ยนเป็นนมโอ๊ต", price: 20 },
-  { value: "Almond Milk", label: "เปลี่ยนเป็นนมอัลมอนด์", price: 20 },
-  { value: "Vanilla Syrup", label: "เพิ่มไซรัปวานิลลา", price: 15 },
-  { value: "Caramel Syrup", label: "เพิ่มไซรัปคาราเมล", price: 15 },
-  { value: "Whip Cream", label: "วิปครีม", price: 15 },
-];
+/** Drink add-on as offered in the picker; value/label = the ADD ON menu item name, price = its menu price. */
+export type DrinkAddOn = { value: string; label: string; price: number };
 
 const COLD_CUP_OPTIONS = [
   { value: "แก้วเย็น", label: "แก้วเย็น", stockNote: "แก้วใช้แล้วทิ้ง" },
@@ -41,7 +36,7 @@ const HOT_CUP_OPTIONS = [
   { value: "แก้วมาเอง", label: "แก้วมาเอง", stockNote: "ลูกค้านำแก้วมาเอง" },
 ];
 
-export default function ModifierModal({ item, cupStock, onClose, onAdd }: Props) {
+export default function ModifierModal({ item, cupStock, addOns = [], onClose, onAdd }: Props) {
   const dialogRef = useDialogFocus(onClose);
   const usesModifiers = shouldUseModifierModal(item);
 
@@ -65,9 +60,9 @@ export default function ModifierModal({ item, cupStock, onClose, onAdd }: Props)
       modifiers.push({ name: "Sweetness", value: sweetness, price: 0 });
       
       selectedAddOns.forEach((addOnVal) => {
-        const addonData = ADD_ONS.find(a => a.value === addOnVal);
+        const addonData = addOns.find(a => a.value === addOnVal);
         if (addonData) {
-          modifiers.push({ name: "Add-on", value: addonData.label, price: addonData.price });
+          modifiers.push({ name: "Add-on", value: addonData.value, price: addonData.price });
         }
       });
     }
@@ -79,7 +74,7 @@ export default function ModifierModal({ item, cupStock, onClose, onAdd }: Props)
     setSelectedAddOns(prev => prev.includes(val) ? prev.filter(a => a !== val) : [...prev, val]);
   };
 
-  const addonTotal = selectedAddOns.reduce((sum, val) => sum + (ADD_ONS.find(a => a.value === val)?.price || 0), 0);
+  const addonTotal = selectedAddOns.reduce((sum, val) => sum + (addOns.find(a => a.value === val)?.price || 0), 0);
   const totalPrice = (item.basePrice + addonTotal) * qty;
 
   return (
@@ -156,11 +151,11 @@ export default function ModifierModal({ item, cupStock, onClose, onAdd }: Props)
                 </div>
               </section>
 
-              {/* Add-ons */}
-              <section>
+              {/* Add-ons — POSPOS "ADD ON" menu items, priced from the menu */}
+              {addOns.length > 0 && <section>
                 <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "var(--text-secondary)" }}>เพิ่มเติม (Add-ons)</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {ADD_ONS.map((addon) => {
+                  {addOns.map((addon) => {
                     const isSelected = selectedAddOns.includes(addon.value);
                     return (
                       <button key={addon.value} onClick={() => toggleAddOn(addon.value)} style={{
@@ -182,7 +177,7 @@ export default function ModifierModal({ item, cupStock, onClose, onAdd }: Props)
                     )
                   })}
                 </div>
-              </section>
+              </section>}
             </>
           )}
 

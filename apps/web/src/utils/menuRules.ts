@@ -85,3 +85,16 @@ export function isCupVariantMenuItem(item: MenuItem) {
   const isPreparedDrink = (isPreparedCategory && looksLikePreparedDrink) || (isPreparedVariant && looksLikePreparedDrink);
   return isPreparedDrink && CUP_VARIANT_PATTERNS.some((pattern) => nameText.includes(pattern));
 }
+
+/**
+ * Drink add-ons offered in the cup/sweetness picker, in display order. These are
+ * POSPOS "ADD ON" products; price comes from the menu item of the same name.
+ */
+export const DRINK_ADDON_NAMES = ["เพิ่มซอต", "เพิ่มซอต(แก้ว)", "วิปครีม", "ไซรัป", "น้ำผึ้ง", "พรีเมี่ยม", "โกโก้", "เพิ่มนมสด"];
+
+export function drinkAddOns(menu: MenuItem[]) {
+  return DRINK_ADDON_NAMES.flatMap((name) => {
+    const item = menu.find((row) => row.active && row.name.trim() === name && row.basePrice > 0);
+    return item ? [{ value: item.name.trim(), label: item.name.trim(), price: item.basePrice }] : [];
+  });
+}

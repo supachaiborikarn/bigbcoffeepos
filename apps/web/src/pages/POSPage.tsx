@@ -16,7 +16,7 @@ import CartPanel from "../components/pos/CartPanel";
 import ModifierModal from "../components/pos/ModifierModal";
 import CupStockStrip, { useCupStock } from "../components/pos/CupStockStrip";
 import { businessProfile } from "../utils/business";
-import { shouldUseModifierModal } from "../utils/menuRules";
+import { drinkAddOns, shouldUseModifierModal } from "../utils/menuRules";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -113,6 +113,7 @@ export default function POSPage() {
   const { activeBranch } = useBranch();
   const { activeShift } = useShift();
   const profile = businessProfile(activeBranch?.branchType);
+  const addOnOptions = useMemo(() => drinkAddOns(menu), [menu]);
   const cupStock = useCupStock(profile.type === "coffee" ? activeBranch?.id : undefined, lastOrder?.id);
   const BusinessIcon = profile.icon;
   const { user } = useAuth();
@@ -575,6 +576,7 @@ export default function POSPage() {
         <ModifierModal
           item={modifierProduct}
           cupStock={cupStock}
+          addOns={addOnOptions}
           onClose={() => setModifierProduct(null)}
           onAdd={(item, qty, mods) => {
             addCartItem(item, qty, mods);

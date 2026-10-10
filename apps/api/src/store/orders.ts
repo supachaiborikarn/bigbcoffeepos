@@ -109,12 +109,18 @@ function hydrateOrder(row: any) {
   };
 }
 
-function normalizeModifiers(value: Modifier[], category: string) {
+/**
+ * Add-ons are real menu items (POSPOS "ADD ON" products such as เพิ่มซอต, วิปครีม);
+ * their price always comes from the menu row, never from the client. The old
+ * fixed catalog entries remain accepted for orders queued by older clients.
+ */
+function normalizeModifiers(value: Modifier[], category: string, addOnPrices: Map<string, number> = new Map()) {
   if (!Array.isArray(value)) return [];
   if (!DRINK_CATEGORIES.includes(category) && value.length) throw new Error("สินค้านี้ไม่มีตัวเลือกเพิ่มเติม");
   return value.map((modifier) => {
     const name = String(modifier?.name ?? "").trim();
     const modValue = String(modifier?.value ?? "").trim();
+    if (name === "Add-on" && addOnPrices.has(modValue)) return { name, value: modValue, price: addOnPrices.get(modValue)! };
     const catalog = MODIFIER_CATALOG[name as keyof typeof MODIFIER_CATALOG];
     const catalogItem = catalog?.get(modValue);
     if (!catalogItem) {
@@ -725,6 +731,13 @@ export async function createOrder(input: {
   const allowNegativeStock = (storeSetting as any)?.allowNegativeStock === true;
 
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
+  const addOnNames = Array.from(new Set(input.items.flatMap((item) => (Array.isArray(item.modifiers) ? item.modifiers : [])
+    .filter((modifier) => String(modifier?.name ?? "").trim() === "Add-on")
+    .map((modifier) => String(modifier?.value ?? "").trim()))));
+  const addOnPrices = new Map<string, number>(addOnNames.length
+    ? (await prisma.menuItem.findMany({ where: { name: { in: addOnNames }, active: true, branchType: branch.branchType }, select: { name: true, basePrice: true } }))
+      .map((row) => [row.name, row.basePrice])
+    : []);
   const productUnitById = new Map<number, any>(productUnits.map((item: any) => [item.id, item]));
   const orderItems: OrderItemDraft[] = [];
 
@@ -735,7 +748,7 @@ export async function createOrder(input: {
     const productUnit = item.productUnitId ? productUnitById.get(item.productUnitId) : null;
     if (item.productUnitId && (!productUnit || productUnit.menuItemId !== mi.id)) throw new Error("หน่วยสินค้าไม่ถูกต้อง");
 
-    const modifiers = normalizeModifiers(item.modifiers, mi.category);
+    const modifiers = normalizeModifiers(item.modifiers, mi.category, addOnPrices);
     const modTotal = modifiers.reduce((s, m) => s + m.price, 0);
     const unitFactor = productUnit ? Number(productUnit.factor || 1) : 1;
     const customerTier = String((customer as any)?.tier ?? "").trim();

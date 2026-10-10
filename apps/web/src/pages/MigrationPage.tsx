@@ -150,7 +150,7 @@ export default function MigrationPage() {
     if (!canStartSync(currentJob)) return;
 
     const confirmed = window.confirm(
-      `ยืนยัน${actionLabel(currentJob)} POSPOS ของสาขา ${branch.name}?\n\nระบบจะล้างยอดขายและกะขายเดิมของสาขานี้ แล้วนำยอดขาย POSPOS ล่าสุดเข้ามาแทน`
+      `ยืนยัน${actionLabel(currentJob)} POSPOS ของสาขา ${branch.name}?\n\nระบบจะดึงเมนู สต็อก ลูกค้า และยอดขาย POSPOS ล่าสุด\n• ยอดขายที่เคยนำเข้าจาก POSPOS จะถูกแทนด้วยชุดใหม่\n• บิลที่ขายใน BB POS และกะขายจะไม่ถูกแตะ\n• สต็อก: อัปเดตเฉพาะรายการที่ POSPOS มียอดมากกว่า 0 ไม่ตั้งเป็น 0 และไม่แตะแก้ว`
     );
     if (!confirmed) return;
 
@@ -172,7 +172,7 @@ export default function MigrationPage() {
       const data = job.result;
       setSyncLogs(prev => [
         ...prev,
-        `ดึงข้อมูลสำเร็จ: ทับยอดขายเดิม ${data?.replacedOrders ?? 0} บิล, ล้างกะขายเดิม ${data?.replacedShifts ?? 0} กะ, นำเข้ายอดขาย POSPOS ${data?.sales ?? 0} บิล, เมนู ${data?.menuItems ?? 0} รายการ, สต็อก ${data?.ingredients ?? 0} รายการ, ลูกค้า ${data?.customers ?? 0} รายการ`
+        `ดึงข้อมูลสำเร็จ: แทนยอดขาย POSPOS ที่เคยนำเข้า ${data?.replacedOrders ?? 0} บิล, นำเข้ายอดขาย POSPOS ${data?.sales ?? 0} บิล, เมนู ${data?.menuItems ?? 0} รายการ, อัปเดตสต็อก ${data?.ingredients ?? 0} รายการ, ลูกค้า ${data?.customers ?? 0} รายการ`
       ]);
       toast.success("ดึงข้อมูลสำเร็จ");
     } catch (e) {

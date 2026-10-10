@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 import { classifyMenuItem } from "../utils/menu-data-cleaning.js";
 import { CUP_STOCK_INGREDIENT_NAMES } from "../store/cupStockSettings.js";
+import { decideStock, FAKE_STOCK_THRESHOLD, fromPosposJson, parsePosposQuantity, type PosposStockRow } from "../utils/posposStock.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -113,9 +114,14 @@ type PosposPreparedSale = {
   note: string;
 };
 
-async function deleteBranchOrdersForPospos(tx: Prisma.TransactionClient, branchId: number) {
+/**
+ * Remove only orders this sync imported earlier (single "POSPOS sales-only
+ * record" line) so a re-sync replaces them. Orders rung up in BB POS itself and
+ * all shifts are never touched — BB POS now takes real sales alongside POSPOS.
+ */
+async function deleteImportedPosposOrders(tx: Prisma.TransactionClient, branchId: number, salesOnlyItemId: number) {
   const orders = await tx.order.findMany({
-    where: { branchId },
+    where: { branchId, items: { some: {}, every: { menuItemId: salesOnlyItemId } } },
     select: { id: true },
   });
   const orderIds = orders.map((order) => order.id);
@@ -128,9 +134,110 @@ async function deleteBranchOrdersForPospos(tx: Prisma.TransactionClient, branchI
     await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await tx.order.deleteMany({ where: { id: { in: orderIds } } });
   }
-  const deletedShifts = await tx.shift.deleteMany({ where: { branchId } });
 
-  return { orders: orderIds.length, shifts: deletedShifts.count };
+  return { orders: orderIds.length, shifts: 0 };
+}
+
+/** Page through POSPOS's stock list via the JSON the stock page itself loads. */
+async function readStockJson(page: Page): Promise<PosposStockRow[] | null> {
+  const rows: PosposStockRow[] = [];
+  try {
+    const isStockSearch = (r: { url(): string; request(): { method(): string } }) => r.url().includes("/product/pagination/search/v2") && r.request().method() === "POST";
+    for (let pageNo = 1; pageNo <= 50; pageNo++) {
+      let responsePromise = page.waitForResponse(isStockSearch, { timeout: 8000 });
+      await page.goto(`https://go.pospos.co/core/stock?page=${pageNo}&limit=100`);
+      let response = await responsePromise.catch(() => null);
+      if (!response) {
+        // The first visit to the stock page doesn't load until "ค้นหา" is pressed.
+        responsePromise = page.waitForResponse(isStockSearch, { timeout: 20000 });
+        await page.getByRole("button", { name: /ค้นหา/ }).first().click();
+        response = await responsePromise;
+      }
+      const request = JSON.parse(response.request().postData() || "{}");
+      if (Number(request.page) !== pageNo || Number(request.limit) !== 100) return null; // app ignored our paging → use fallback
+      const data = ((await response.json())?.data ?? []) as any[];
+      data.forEach((p) => { const row = fromPosposJson(p); if (row) rows.push(row); });
+      process.stdout.write(`\r  Stock JSON: ${rows.length} rows...`);
+      if (data.length < 100) break;
+    }
+    console.log("");
+    return rows.length ? rows : null;
+  } catch (error) {
+    console.log(`\n  ⚠ Stock JSON failed: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/** POSPOS product code → BB POS ingredient, so renames in POSPOS don't create duplicates. */
+async function ensureLinkTable() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS pospos_links (
+      kind TEXT NOT NULL,
+      code TEXT NOT NULL,
+      local_id INTEGER NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (kind, code)
+    )
+  `);
+}
+
+async function applyStockRows(branchId: number, branchType: string, rows: PosposStockRow[]) {
+  await ensureLinkTable();
+  const links = new Map((await prisma.$queryRaw<Array<{ code: string; local_id: number }>>`SELECT code, local_id FROM pospos_links WHERE kind = 'ingredient'`).map((r) => [r.code, r.local_id]));
+  const cupIds = new Set((await prisma.ingredient.findMany({
+    where: { OR: [{ name: { in: CUP_STOCK_INGREDIENT_NAMES } }, { cupStockSettingItems: { some: {} } }] },
+    select: { id: true },
+  })).map((row) => row.id));
+  const skipped: Record<string, number> = {};
+  let updated = 0;
+
+  for (const row of rows) {
+    // Remember which menus require a cup topping in POSPOS (used by the POS picker).
+    if (row.code && row.cupToppings.length) {
+      const menu = await prisma.menuItem.findFirst({ where: { sku: row.code, branchType }, select: { id: true, metadata: true } });
+      if (menu) {
+        let meta: any = {};
+        try { meta = JSON.parse(menu.metadata || "{}"); } catch { meta = {}; }
+        if (JSON.stringify(meta?.pospos?.cupToppings ?? []) !== JSON.stringify(row.cupToppings)) {
+          meta.pospos = { ...(meta.pospos ?? {}), cupToppings: row.cupToppings };
+          await prisma.menuItem.update({ where: { id: menu.id }, data: { metadata: JSON.stringify(meta) } });
+        }
+      }
+    }
+    if (row.unlimited || row.stock >= FAKE_STOCK_THRESHOLD) { skipped.unlimited = (skipped.unlimited ?? 0) + 1; continue; }
+
+    let ingredientId = row.code ? links.get(row.code) : undefined;
+    if (ingredientId && !(await prisma.ingredient.findUnique({ where: { id: ingredientId }, select: { id: true } }))) ingredientId = undefined;
+    if (!ingredientId) {
+      const byName = await prisma.ingredient.findMany({ where: { name: row.name }, select: { id: true } });
+      if (byName.length > 1) { skipped.ambiguous = (skipped.ambiguous ?? 0) + 1; continue; }
+      ingredientId = byName[0]?.id;
+    }
+    if (!ingredientId) {
+      if (row.stock <= 0) { skipped.zero_or_negative = (skipped.zero_or_negative ?? 0) + 1; continue; }
+      ingredientId = (await prisma.ingredient.create({ data: { name: row.name, unit: row.unit, costPerUnit: row.cost } })).id;
+    } else if (!cupIds.has(ingredientId)) {
+      await prisma.ingredient.update({ where: { id: ingredientId }, data: { costPerUnit: row.cost, unit: row.unit } });
+    }
+    if (row.code) {
+      await prisma.$executeRaw`INSERT INTO pospos_links (kind, code, local_id) VALUES ('ingredient', ${row.code}, ${ingredientId})
+        ON CONFLICT (kind, code) DO UPDATE SET local_id = EXCLUDED.local_id, updated_at = now()`;
+    }
+
+    const stock = await prisma.ingredientStock.findUnique({ where: { branchId_ingredientId: { branchId, ingredientId } } });
+    const decision = decideStock(row, stock?.stockQty ?? null, cupIds.has(ingredientId));
+    if (decision.action === "skip") { skipped[decision.reason] = (skipped[decision.reason] ?? 0) + 1; continue; }
+    await prisma.$transaction(async (tx) => {
+      await tx.ingredientStock.upsert({
+        where: { branchId_ingredientId: { branchId, ingredientId: ingredientId! } },
+        update: { stockQty: decision.to },
+        create: { branchId, ingredientId: ingredientId!, stockQty: decision.to, reorderLevel: 0 },
+      });
+      await tx.stockMovement.create({ data: { branchId, ingredientId: ingredientId!, qty: Math.round((decision.to - decision.from) * 1000) / 1000, reason: `COUNT: ซิงค์ POSPOS ${decision.to} (ระบบ ${decision.from})` } });
+    });
+    updated++;
+  }
+  return { updated, skipped };
 }
 
 // ── Main Sync Function ───────────────────────────────────────────────────────
@@ -172,6 +279,7 @@ export async function syncPosposData(branchId: number) {
     replacedOrders: 0,
     replacedShifts: 0,
     zeroedStockItems: 0,
+    stockSkipped: {} as Record<string, number>,
   };
 
   // Intercept product API response
@@ -296,66 +404,39 @@ export async function syncPosposData(branchId: number) {
       console.log("  ⚠ No product API data captured, skipping menu items.");
     }
 
-    // ── 4. Scrape Stock/Ingredients ──
-    console.log("[4/6] Scraping Stock/Ingredients...");
-    await page.goto("https://go.pospos.co/core/stock", { waitUntil: "networkidle" });
-    await page.waitForTimeout(3000);
-
-    const stockData = await scrapeTable(page, () => {
-      const rows = Array.from(document.querySelectorAll("table tbody tr"));
-      return rows.map((tr) => {
-        const tds = tr.querySelectorAll("td");
-        return {
-          name: (tds[3] as HTMLElement)?.innerText?.trim() || "",
-          cost: (tds[5] as HTMLElement)?.innerText?.trim().replace(/[^0-9.]/g, "") || "0",
-          stockUnit: (tds[6] as HTMLElement)?.innerText?.trim() || "",
-        };
-      }).filter((c) => c.name);
-    }, "Stock");
-
-    const syncedIngredientIds = new Set<number>();
-    for (const row of stockData) {
-      const name = row.name;
-      let stock = 0, unit = "ชิ้น";
-      const parts = row.stockUnit.split(" ");
-      if (parts.length > 0) stock = parseFloat(parts[0].replace(/,/g, "")) || 0;
-      if (parts.length > 1) unit = parts[1];
-      const cost = parseFloat(row.cost) || 0;
-
-      if (name) {
-        const existing = await prisma.ingredient.findFirst({ where: { name } });
-        let ingredientId: number;
-        if (existing) {
-          ingredientId = existing.id;
-          await prisma.ingredient.update({ where: { id: ingredientId }, data: { costPerUnit: cost, unit } });
-        } else {
-          const created = await prisma.ingredient.create({ data: { name, unit, costPerUnit: cost } });
-          ingredientId = created.id;
-        }
-        syncedIngredientIds.add(ingredientId);
-        await prisma.ingredientStock.upsert({
-          where: { branchId_ingredientId: { branchId, ingredientId } },
-          update: { stockQty: stock },
-          create: { branchId, ingredientId, stockQty: stock, reorderLevel: 0 },
-        });
-        results.ingredients++;
-      }
+    // ── 4. Stock (POSPOS JSON, exact numbers; HTML table as fallback) ──
+    console.log("[4/6] Reading stock...");
+    let stockRows = await readStockJson(page);
+    if (!stockRows) {
+      console.log("  ⚠ Stock JSON not captured, falling back to the HTML table");
+      await page.goto("https://go.pospos.co/core/stock", { waitUntil: "networkidle" });
+      await page.waitForTimeout(3000);
+      const html = await scrapeTable(page, () => {
+        const rows = Array.from(document.querySelectorAll("table tbody tr"));
+        return rows.map((tr) => {
+          const tds = tr.querySelectorAll("td");
+          return {
+            name: (tds[3] as HTMLElement)?.innerText?.trim() || "",
+            cost: (tds[5] as HTMLElement)?.innerText?.trim().replace(/[^0-9.]/g, "") || "0",
+            stockUnit: (tds[6] as HTMLElement)?.innerText?.trim() || "",
+          };
+        }).filter((c) => c.name);
+      }, "Stock");
+      stockRows = html.map((row) => ({
+        code: null,
+        name: row.name,
+        stock: parsePosposQuantity(row.stockUnit),
+        unlimited: false,
+        unit: row.stockUnit.split(/\s+/)[1] || "ชิ้น",
+        cost: parseFloat(row.cost) || 0,
+        cupToppings: [],
+      }));
     }
-    if (stockData.length > 0) {
-      // Cups are toppings in POSPOS (not on the stock page) and their stock is
-      // managed in BB POS, so never zero them here.
-      const cupIngredients = await prisma.ingredient.findMany({
-        where: { OR: [{ name: { in: CUP_STOCK_INGREDIENT_NAMES } }, { cupStockSettingItems: { some: {} } }] },
-        select: { id: true },
-      });
-      const keepIds = [...syncedIngredientIds, ...cupIngredients.map((item) => item.id)];
-      const zeroedStock = await prisma.ingredientStock.updateMany({
-        where: { branchId, ...(keepIds.length > 0 ? { ingredientId: { notIn: keepIds } } : {}) },
-        data: { stockQty: 0 },
-      });
-      results.zeroedStockItems = zeroedStock.count;
-    }
-    console.log(`  ✓ Saved ${results.ingredients} ingredients/stock, zeroed ${results.zeroedStockItems} missing stock rows`);
+
+    const stockResult = await applyStockRows(branchId, branchType, stockRows);
+    results.ingredients = stockResult.updated;
+    results.stockSkipped = stockResult.skipped;
+    console.log(`  ✓ Stock: ${stockResult.updated} updated, skipped ${JSON.stringify(stockResult.skipped)} (nothing zeroed)`);
 
     // ── 5. Scrape Customers ──
     console.log("[5/6] Scraping Customers...");
@@ -457,7 +538,7 @@ export async function syncPosposData(branchId: number) {
       });
 
       const replaceResult = await prisma.$transaction(async (tx) => {
-        const deleted = await deleteBranchOrdersForPospos(tx, branchId);
+        const deleted = await deleteImportedPosposOrders(tx, branchId, salesOnlyItem.id);
         let importedSales = 0;
 
         for (const sale of preparedSales) {
@@ -493,7 +574,7 @@ export async function syncPosposData(branchId: number) {
       results.replacedOrders = replaceResult.replacedOrders;
       results.replacedShifts = replaceResult.replacedShifts;
       results.sales = replaceResult.importedSales;
-      console.log(`  ✓ Removed ${results.replacedOrders} existing branch orders and ${results.replacedShifts} shifts before POSPOS import`);
+      console.log(`  ✓ Replaced ${results.replacedOrders} previously imported POSPOS orders (BB POS sales and shifts untouched)`);
     } else if (salesData.length === 0) {
       console.log("  ⚠ No sales rows captured, keeping existing branch orders.");
     } else {

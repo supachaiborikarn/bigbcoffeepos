@@ -70,8 +70,21 @@ function preparedMenuInfo(item: MenuItem) {
   return { nameText, isPreparedCategory, isPreparedVariant, looksLikePreparedDrink };
 }
 
+/** Cup topping groups POSPOS requires for this menu (synced into metadata), e.g. ["แก้วเย็น"]. */
+export function posposCupToppings(item: MenuItem): string[] {
+  try {
+    const meta = typeof item.metadata === "string" ? JSON.parse(item.metadata || "{}") : (item.metadata ?? {});
+    const toppings = meta?.pospos?.cupToppings;
+    return Array.isArray(toppings) ? toppings.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function shouldUseModifierModal(item: MenuItem) {
   if (item.basePrice <= 0) return false;
+  // POSPOS says this menu needs a cup choice → it's a prepared drink, no guessing.
+  if (posposCupToppings(item).length > 0) return true;
 
   const { nameText, isPreparedCategory, isPreparedVariant, looksLikePreparedDrink } = preparedMenuInfo(item);
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { X, Check } from "lucide-react";
 import type { MenuItem, Modifier } from "../../types";
 import { useDialogFocus } from "../../utils/useDialogFocus";
-import { shouldUseModifierModal } from "../../utils/menuRules";
+import { posposCupToppings, shouldUseModifierModal } from "../../utils/menuRules";
 import { cupStockText, type CupStockMap } from "./CupStockStrip";
 
 type Props = {
@@ -40,7 +40,12 @@ export default function ModifierModal({ item, cupStock, addOns = [], onClose, on
   const dialogRef = useDialogFocus(onClose);
   const usesModifiers = shouldUseModifierModal(item);
 
-  const [type, setType] = useState(item.name.includes("ร้อน") ? "Hot" : item.name.includes("ปั่น") ? "Frappe" : "Iced");
+  const cupToppings = posposCupToppings(item);
+  const [type, setType] = useState(
+    item.name.includes("ปั่น") ? "Frappe"
+      : item.name.includes("ร้อน") || (cupToppings.some((t) => t.includes("ร้อน")) && !cupToppings.some((t) => t.includes("เย็น"))) ? "Hot"
+      : "Iced"
+  );
   const [cup, setCup] = useState(type === "Hot" ? "แก้วทานร้าน" : "แก้วเย็น");
   const [sweetness, setSweetness] = useState("100%");
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);

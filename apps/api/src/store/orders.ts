@@ -748,7 +748,11 @@ export async function createOrder(input: {
     const productUnit = item.productUnitId ? productUnitById.get(item.productUnitId) : null;
     if (item.productUnitId && (!productUnit || productUnit.menuItemId !== mi.id)) throw new Error("หน่วยสินค้าไม่ถูกต้อง");
 
-    const modifiers = normalizeModifiers(item.modifiers, mi.category, addOnPrices);
+    // Add-ons ("เพิ่ม…") and เต้าฮวย desserts are never prepared drinks: drop any cup /
+    // type / sweetness choice (e.g. from a stale client) so they neither use a cup nor earn a point.
+    const isNotADrink = mi.name.trim().startsWith("เพิ่ม") || mi.name.includes("เต้าฮวย");
+    const modifiers = normalizeModifiers(item.modifiers, mi.category, addOnPrices)
+      .filter((modifier) => !isNotADrink || !["Cup", "Type", "Sweetness"].includes(modifier.name));
     const modTotal = modifiers.reduce((s, m) => s + m.price, 0);
     const unitFactor = productUnit ? Number(productUnit.factor || 1) : 1;
     const customerTier = String((customer as any)?.tier ?? "").trim();

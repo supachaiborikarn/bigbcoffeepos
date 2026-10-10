@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { CartItem, DiscountRule, Order, StoreSetting } from "../types";
 import Numpad from "./ui/Numpad";
 import { logoUrl } from "./BrandLogo";
-import { getPaperWidth } from "../utils/printerSettings";
+import { getPaperWidth, PAPER_SPECS } from "../utils/printerSettings";
 import { submitPrintJob } from "../utils/printJob";
 import { useDialogFocus } from "../utils/useDialogFocus";
 
@@ -265,6 +265,7 @@ export function buildReceiptEscPos(data: ReceiptData, branchName: string): strin
 }
 
 export function buildReceiptHtml(data: ReceiptData, branchName: string, widthMm: 58 | 80 = getPaperWidth(), device = false) {
+  const spec = PAPER_SPECS[widthMm];
   const copies = Math.max(1, Math.floor(data.copies ?? 1));
   const labels = data.copyLabels ?? [];
   const slips: string[] = [];
@@ -283,8 +284,10 @@ export function buildReceiptHtml(data: ReceiptData, branchName: string, widthMm:
   <style>
     @page { margin: 0; size: ${widthMm}mm auto; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 0; font-family: 'IBM Plex Sans Thai', 'Sarabun', 'Prompt', sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .r-slip { width: ${device ? "100%" : `${widthMm}mm`}; padding: 4mm 2mm 7mm; }
+    body { margin: 0; padding: 0; ${device ? "" : `width: ${widthMm}mm;`} font-family: 'IBM Plex Sans Thai', 'Sarabun', 'Prompt', sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Printable width (not the roll width), centred, with an inner gutter so edge text isn't clipped. */
+    .r-slip { width: ${device ? "100%" : `${spec.printableMm}mm`}; margin: 0 auto; padding: 4mm ${spec.gutterMm}mm 7mm; overflow-wrap: anywhere; }
+    .r-item-top > span:last-child, .r-row > span:last-child { white-space: nowrap; padding-left: 2mm; }
     .r-slip--break { page-break-after: always; }
     .r-logo { display: block; width: 18mm; height: auto; margin: 0 auto 1mm; image-rendering: auto; }
     .r-shop { text-align: center; font-size: 18px; font-weight: 700; line-height: 1.2; }
@@ -301,7 +304,7 @@ export function buildReceiptHtml(data: ReceiptData, branchName: string, widthMm:
     .r-muted { color: #444; font-size: 11px; }
     .r-total { display: flex; justify-content: space-between; align-items: center; font-size: 18px; font-weight: 800; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 1.2mm 0; margin: 1.2mm 0; }
     .r-foot { text-align: center; font-size: 11px; margin-top: 3mm; line-height: 1.5; }
-    ${device ? "body { background:#fff; } .r-slip { margin:0; }" : "@media screen { body { background:#f3f4f6; } .r-slip { background:#fff; margin:12px auto; box-shadow:0 1px 6px #0002; } }"}
+    ${device ? "body { background:#fff; }" : `@media screen { body { background:#f3f4f6; width:auto; } .r-slip { background:#fff; margin:12px auto; box-shadow:0 1px 6px #0002; outline:1px dashed #bbb; outline-offset:${(widthMm - spec.printableMm) / 2}mm; } }`}
   </style>
 </head>
 <body>${slips.join("")}</body>

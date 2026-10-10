@@ -1,6 +1,7 @@
 import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
 import { ensureShiftCloseDetailsTable } from "./shifts.js";
+import { getCupStockSettings } from "./cupStockSettings.js";
 
 export type ReportSource = "system" | "pospos" | "all";
 
@@ -267,6 +268,28 @@ export async function getOrdersCsvRows(input: ReportInput) {
   });
 }
 
+// Cups used that day (net of cancelled/refunded bills) and what's left now, for
+// the cold cup ("แก้วเย็น") and take-away hot cup ("แก้วเดินทาง").
+async function getCupUsage(branchId: number, range: { from: Date; to: Date }) {
+  const settings = await getCupStockSettings(branchId).catch(() => []);
+  const result: Array<{ cupOption: string; label: string; name: string; unit: string; sold: number; remaining: number }> = [];
+  for (const [cupOption, label] of [["แก้วเย็น", "แก้วเย็น"], ["แก้วเดินทาง", "แก้วร้อน"]] as const) {
+    const cup = settings.find((s: any) => s.cupOption === cupOption && s.deductStock)?.items?.[0];
+    if (!cup) continue;
+    const moved = await prisma.stockMovement.aggregate({
+      where: {
+        branchId,
+        ingredientId: cup.ingredientId,
+        createdAt: { gte: range.from, lte: range.to },
+        OR: [{ reason: { startsWith: "SALE-" } }, { reason: { startsWith: "CANCELLED-" } }, { reason: { startsWith: "REFUNDED-" } }]
+      },
+      _sum: { qty: true }
+    });
+    result.push({ cupOption, label, name: cup.ingredientName, unit: cup.unit, sold: roundMoney(-(moved._sum.qty ?? 0)), remaining: roundMoney(cup.stockQty) });
+  }
+  return result;
+}
+
 export async function getDailyCloseReport(input: { date?: string; branchId?: number; source?: ReportSource }) {
   const source = normalizeReportSource(input.source);
   const range = buildDayRange(input.date);
@@ -451,6 +474,7 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
       difference: roundMoney(cashCounted - cashExpected)
     },
     shifts: shiftSummaries,
+    cups: input.branchId ? await getCupUsage(input.branchId, range) : [],
     topItems: topItemsRaw.map((item) => ({
       menuItemId: item.menuItemId,
       name: item.name,

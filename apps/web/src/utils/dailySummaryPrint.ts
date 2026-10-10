@@ -4,7 +4,7 @@
 // RawBT / browser) and the 58 / 80 mm paper width from printer settings.
 import type { DailyCloseReport, PaymentMethod } from "../types";
 import type { ReceiptPrintJob } from "./printJob";
-import { getPaperWidth } from "./printerSettings";
+import { getPaperWidth, PAPER_SPECS } from "./printerSettings";
 import { ESCPOS, padRow } from "../components/ReceiptPrinter";
 
 const SOURCE_LABELS: Record<string, string> = { system: "ยอดขายในระบบ", pospos: "POSPOS sales-only", all: "ทั้งหมด" };
@@ -47,6 +47,8 @@ function cashReconciliation(report: DailyCloseReport) {
  */
 export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80 = getPaperWidth(), device = false) {
   const wide = widthMm === 80;
+  const spec = PAPER_SPECS[widthMm];
+  const cups = report.cups ?? [];
   const sourceLabel = SOURCE_LABELS[report.source] ?? SOURCE_LABELS.system;
   const row = (label: string, value: string, cls = "") => `<div class="row ${cls}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
   const cash = cashReconciliation(report);
@@ -91,8 +93,10 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   @page { margin: 0; size: ${widthMm}mm auto; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; }
+  ${device ? "" : `body { width: ${widthMm}mm; }`}
   body { font-family: 'IBM Plex Sans Thai', 'Sarabun', 'Tahoma', sans-serif; color: #000; font-size: ${wide ? 12.5 : 10.5}px; line-height: 1.38; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-variant-numeric: tabular-nums; }
-  .slip { width: ${device ? "100%" : `${widthMm}mm`}; padding: ${device ? "0 0 6mm" : wide ? "4mm 4mm 9mm" : "3mm 2mm 8mm"}; }
+  /* Printable width (not the roll width), centred, with an inner gutter so edge text isn't clipped. */
+  .slip { width: ${device ? "100%" : `${spec.printableMm}mm`}; margin: 0 auto; padding: ${device ? `0 ${spec.gutterMm}mm 6mm` : `3mm ${spec.gutterMm}mm 9mm`}; overflow-wrap: anywhere; }
   p { margin: 0; }
   b { font-weight: 700; }
   .head { text-align: center; }
@@ -137,7 +141,8 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   .sign { text-align: center; border-top: 1px solid #000; padding-top: 1mm; font-size: 0.9em; }
   .sign small { display: block; margin-top: 4mm; }
   .foot { text-align: center; font-size: 0.84em; margin-top: 5mm; }
-  ${device ? "" : "@media screen { body { background: #eceef0; padding: 12px 0; } .slip { margin: 0 auto; background: #fff; box-shadow: 0 2px 10px #0002; } }"}
+  .cups td.n b { font-size: 1.12em; }
+  ${device ? "" : `@media screen { body { background: #eceef0; padding: 12px 0; width: auto; } .slip { margin: 0 auto; background: #fff; box-shadow: 0 2px 10px #0002; outline: 1px dashed #bbb; outline-offset: ${(widthMm - spec.printableMm) / 2}mm; } }`}
 </style>
 </head>
 <body><div class="slip">
@@ -155,6 +160,11 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
     <div class="stat"><span>ยอดก่อนส่วนลด</span><b>${money(report.totals.subtotal)}</b></div>
     <div class="stat"><span>ส่วนลดรวม</span><b>${money(report.totals.discountAmount)}</b></div>
   </div>
+
+  ${cups.length ? `<h2>แก้ว <small>ณ เวลาพิมพ์</small></h2>
+  <table class="cups"><thead><tr><th>แก้ว</th><th class="n">ขายวันนี้</th><th class="n">เหลือที่ร้าน</th></tr></thead><tbody>
+    ${cups.map((c) => `<tr><td>${esc(c.label)}</td><td class="n">${num(c.sold)}</td><td class="n"><b>${num(c.remaining)}</b> ${esc(c.unit)}</td></tr>`).join("")}
+  </tbody></table>` : ""}
 
   <h2>ช่องทางชำระเงิน</h2>
   ${payments ? `<table><thead><tr><th>ช่องทาง</th><th class="n">บิล</th><th class="n">ยอดเงิน</th></tr></thead><tbody>${payments}</tbody>
@@ -210,6 +220,11 @@ export function buildDailySummaryEscPos(report: DailyCloseReport, widthMm: 58 | 
   out += row("จำนวนบิล", num(report.totals.totalOrders));
   out += row("เฉลี่ย/บิล", money(report.totals.averageTicket));
   out += row("ส่วนลดรวม", money(report.totals.discountAmount));
+
+  if (report.cups?.length) {
+    out += section("แก้ว (ขายวันนี้ / เหลือที่ร้าน)");
+    report.cups.forEach((c) => { out += row(c.label, `${num(c.sold)} / ${num(c.remaining)} ${c.unit}`); });
+  }
 
   out += section("ช่องทางชำระเงิน");
   if (!report.payments.length) out += "ไม่มีข้อมูลชำระเงิน\n";

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getPaperWidth, getPrinterMode, isAndroidDevice, isIOSDevice, printerLabels, setPaperWidth, setPrinterMode, type PrinterMode } from "../../utils/printerSettings";
+import { getPaperWidth, getPrinterMode, isAndroidDevice, isIOSDevice, PAPER_SPECS, printerLabels, setPaperWidth, setPrinterMode, type PrinterMode } from "../../utils/printerSettings";
 import { printReceipt } from "../ReceiptPrinter";
 import { useBranch } from "../../contexts/BranchContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -26,7 +26,15 @@ export default function PrinterDeviceSettings() {
       {isAndroidDevice() && <option value="rawbt">{printerLabels.rawbt}</option>}
       {mode==='native' && <option value="native">{printerLabels.native}</option>}
     </select></label>
-    <label>ขนาดกระดาษ<select className="input" value={width} onChange={e=>{const value=Number(e.target.value)===80?80:58;setPaperWidth(value);setWidth(value);}}><option value={58}>58 มม.</option><option value={80}>80 มม.</option></select></label>
+    <fieldset className="paper-picker">
+      <legend>ขนาดกระดาษเครื่องพิมพ์ความร้อน</legend>
+      <div className="paper-picker__options">{([58, 80] as const).map(value => <button type="button" key={value} aria-pressed={width===value} className={width===value?'is-active':''} onClick={()=>{setPaperWidth(value);setWidth(value);}}>
+        <span className={`paper-picker__roll is-${value}`} aria-hidden="true" />
+        <strong>{PAPER_SPECS[value].label}</strong>
+        <small>{PAPER_SPECS[value].hint}</small>
+      </button>)}</div>
+      <small className="muted">ใช้กับใบเสร็จและใบสรุปส่งยอด · ตั้งค่าแยกตามเครื่อง/เบราว์เซอร์นี้</small>
+    </fieldset>
     {isIOSDevice() && <p>Star TSP143IIIU ต่อ USB: ติดตั้ง Star PassPRNT บน iPad เลือกเครื่องพิมพ์ในแอป แล้วเลือกวิธีพิมพ์ Star PassPRNT ด้านบน; AirPrint ใช้กับเครื่องพิมพ์ที่รองรับ AirPrint บนเครือข่าย</p>}
     {mode==='rawbt' && <p>ติดตั้ง RawBT และเลือกเครื่องพิมพ์ในแอปก่อนใช้งาน</p>}
     <button className="btn btn--primary" onClick={test}>พิมพ์ทดสอบ · ไม่มีการขาย</button>

@@ -495,6 +495,8 @@ export type DailyCloseReport = {
     note: string | null;
   }>;
   topItems: Array<{ menuItemId: number; name: string; qty: number; revenue: number }>;
+  /** Cups used that day (net of cancels/refunds) and stock left at report time. */
+  cups?: Array<{ cupOption: string; label: string; name: string; unit: string; sold: number; remaining: number }>;
 };
 
 export type ProductImportInput = {

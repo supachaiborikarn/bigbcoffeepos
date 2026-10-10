@@ -23,6 +23,13 @@ export function setPrinterMode(mode: PrinterMode) {
   localStorage.setItem('bbpos.print.rawbt', mode === 'rawbt' ? '1' : '0');
   window.dispatchEvent(new Event('bbpos-printer-settings'));
 }
+// Thermal heads can't print the full roll: a 58 mm roll prints ~48 mm and an
+// 80 mm roll ~72 mm. Slips are laid out at the printable width (centred on the
+// roll) plus a small inner gutter, otherwise edge characters get clipped.
+export const PAPER_SPECS: Record<58 | 80, { printableMm: number; gutterMm: number; label: string; hint: string }> = {
+  58: { printableMm: 48, gutterMm: 1.5, label: '58 มม.', hint: 'กระดาษเล็ก · พิมพ์ได้กว้าง 48 มม.' },
+  80: { printableMm: 72, gutterMm: 2, label: '80 มม.', hint: 'กระดาษใหญ่ · พิมพ์ได้กว้าง 72 มม.' }
+};
 export function getPaperWidth(): 58 | 80 {
   try { return localStorage.getItem('bbpos.print.width') === '80' ? 80 : 58; } catch { return 58; }
 }

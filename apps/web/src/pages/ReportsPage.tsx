@@ -5,7 +5,7 @@ import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 import { useShift } from "../contexts/ShiftContext";
 import { submitPrintJob } from "../utils/printJob";
-import { getPrinterMode } from "../utils/printerSettings";
+import { getPaperWidth, getPrinterMode, setPaperWidth } from "../utils/printerSettings";
 import { createDailySummaryJob } from "../utils/dailySummaryPrint";
 
 function formatDateInput(date: Date) {
@@ -73,6 +73,12 @@ export default function ReportsPage() {
   const shiftDay = activeShift?.openedAt ? new Date(activeShift.openedAt).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" }) : null;
   const [summaryDate, setSummaryDate] = useState(() => shiftDay ?? formatDateInput(new Date()));
   const [summaryDateTouched, setSummaryDateTouched] = useState(false);
+  const [paperWidth, setPaperWidthState] = useState(getPaperWidth);
+  useEffect(() => {
+    const sync = () => setPaperWidthState(getPaperWidth());
+    window.addEventListener("bbpos-printer-settings", sync);
+    return () => window.removeEventListener("bbpos-printer-settings", sync);
+  }, []);
   useEffect(() => { if (shiftDay && !summaryDateTouched) setSummaryDate(shiftDay); }, [shiftDay, summaryDateTouched]);
 
   const queryStr = useMemo(() => {
@@ -190,6 +196,9 @@ export default function ReportsPage() {
               วันที่ใบส่งยอด
               <input className="input" type="date" value={summaryDate} title={shiftDay === summaryDate ? "วันที่เปิดกะปัจจุบัน" : undefined} onChange={e => { setSummaryDateTouched(true); setSummaryDate(e.target.value); }} />
             </label>
+            <div className="seg-paper" role="group" aria-label="ขนาดกระดาษ">
+              {([58, 80] as const).map((w) => <button key={w} type="button" aria-pressed={paperWidth === w} className={paperWidth === w ? "is-active" : ""} onClick={() => setPaperWidth(w)}>{w} มม.</button>)}
+            </div>
             <button className="btn btn--primary" onClick={printDailySummary} disabled={isPrintingDaily || !summaryDate}>
               {isPrintingDaily ? "กำลังเตรียม..." : "พิมพ์ใบส่งยอด"}
             </button>

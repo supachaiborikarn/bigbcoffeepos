@@ -471,3 +471,18 @@
 .studio-app[data-appearance="dark"] .cup-option-stock.is-low { color:#f2c46d; }
 .studio-app[data-appearance="dark"] .cup-option-stock.is-out { color:#f4a29b; }
 @media(max-width:768px) { .studio-counter-strip { flex-wrap:wrap; row-gap:8px; } }
+
+/* ═══ Paper size picker (settings/PrinterDeviceSettings.tsx) ═══ */
+.paper-picker { border:0; padding:0; margin:0; display:grid; gap:8px; min-width:0; }
+.paper-picker legend { font-size:13px; font-weight:600; color:var(--text-secondary); margin-bottom:6px; padding:0; }
+.paper-picker__options { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.paper-picker__options button { display:flex; flex-direction:column; align-items:center; gap:6px; padding:14px 10px; border:2px solid var(--border); border-radius:14px; background:var(--bg-surface); color:var(--text-secondary); text-align:center; min-height:120px; }
+.paper-picker__options button.is-active { border-color:var(--brand); background:var(--brand-subtle); color:var(--brand); }
+.paper-picker__options strong { font-size:18px; color:var(--text-primary); }
+.paper-picker__options small { font-size:12px; line-height:1.4; }
+.paper-picker__roll { display:block; height:34px; border:2px solid currentColor; border-bottom:0; border-radius:4px 4px 0 0; background:repeating-linear-gradient(180deg,transparent 0 6px,currentColor 6px 7px); opacity:.55; }
+.paper-picker__roll.is-58 { width:36px; }
+.paper-picker__roll.is-80 { width:50px; }
+.seg-paper { display:inline-flex; border:1px solid var(--border); border-radius:10px; padding:3px; background:var(--bg-surface); }
+.seg-paper button { border:0; background:transparent; color:var(--text-secondary); border-radius:8px; padding:7px 12px; font-size:13px; white-space:nowrap; }
+.seg-paper button.is-active { background:var(--brand); color:var(--studio-cta-text); }

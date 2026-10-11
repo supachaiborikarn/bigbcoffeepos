@@ -23,66 +23,98 @@ const ShiftContext = createContext<ShiftContextType | null>(null);
 export function ShiftProvider({ children }: { children: ReactNode }) {
   const { activeBranch } = useBranch();
   const { user } = useAuth();
-  const [activeShift, setActiveShift] = useState<Shift | null>(null);
+  const branchId = activeBranch?.id;
+  const scope = branchId && user ? `${branchId}:${user.id}` : null;
+  const [shiftState, setShiftState] = useState<{ scope: string; shift: Shift | null } | null>(null);
+  const activeShift = shiftState?.scope === scope ? shiftState.shift : null;
   const [loading, setLoading] = useState(false);
-  const [loadedFor, setLoadedFor] = useState<number | null>(null);
-  const branchRef = useRef<number | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const requestVersion = useRef(0);
+  const mutation = useRef<{ scope: string; version: number } | null>(null);
 
   // Keeps showing the current shift while it re-checks (e.g. after each sale) and
   // keeps it if the check fails, so the POS never flashes "ยังไม่ได้เปิดกะ" or locks
   // the pay button because of a network hiccup. Only a branch switch clears it.
   const refreshShift = useCallback(async () => {
-    if (!activeBranch) {
-      setActiveShift(null);
-      return;
-    }
-    if (branchRef.current !== activeBranch.id) {
-      branchRef.current = activeBranch.id;
-      setActiveShift(null);
-      setLoadedFor(null);
-    }
+    if (!branchId || !scope || mutation.current?.scope === scope) return;
+    const version = ++requestVersion.current;
+    const current = () => scopeRef.current === scope && requestVersion.current === version;
     setLoading(true);
     try {
-      const shift = await getCurrentShift(activeBranch.id);
-      if (branchRef.current === activeBranch.id) setActiveShift(shift);
+      const shift = await getCurrentShift(branchId);
+      if (current()) setShiftState({ scope, shift });
     } catch {
       /* keep what we had; the next refresh will catch up */
     } finally {
-      setLoading(false);
-      setLoadedFor(activeBranch.id);
+      if (current()) {
+        setLoading(false);
+        setLoadedFor(scope);
+      }
     }
-  }, [activeBranch]);
+  }, [branchId, scope]);
 
   useEffect(() => {
-    if (activeBranch && user) refreshShift();
-    else setActiveShift(null);
-  }, [activeBranch, user, refreshShift]);
+    setShiftState(null);
+    setLoadedFor(null);
+    setLoading(false);
+    void refreshShift();
+    return () => { requestVersion.current += 1; };
+  }, [refreshShift]);
+
+  useEffect(() => {
+    const recheck = () => { if (document.visibilityState === "visible") void refreshShift(); };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [refreshShift]);
 
   const openShift = useCallback(async (openingCash: number) => {
-    if (!activeBranch) throw new Error("เลือกสาขาก่อน");
+    if (!branchId || !scope) throw new Error("เลือกสาขาก่อน");
+    if (mutation.current?.scope === scope) throw new Error("กำลังบันทึกกะ กรุณารอสักครู่");
+    const operation = { scope, version: ++requestVersion.current };
+    mutation.current = operation;
+    const current = () => scopeRef.current === scope && requestVersion.current === operation.version;
     setLoading(true);
     try {
-      const shift = await apiOpenShift({ branchId: activeBranch.id, userId: user?.id, openingCash });
-      setActiveShift(shift);
+      const shift = await apiOpenShift({ branchId, userId: user?.id, openingCash });
+      if (current()) {
+        setShiftState({ scope, shift });
+        setLoadedFor(scope);
+      }
     } finally {
-      setLoading(false);
+      if (mutation.current === operation) mutation.current = null;
+      if (current()) setLoading(false);
     }
-  }, [activeBranch, user]);
+  }, [branchId, scope, user?.id]);
 
   const closeShift = useCallback(async (closingCash: number, details?: { cashCounts?: Record<string, number>; note?: string }): Promise<ShiftCloseResult> => {
-    if (!activeShift) throw new Error("ไม่มีกะที่เปิดอยู่");
+    if (!activeShift || !scope) throw new Error("ไม่มีกะที่เปิดอยู่");
+    if (mutation.current?.scope === scope) throw new Error("กำลังบันทึกกะ กรุณารอสักครู่");
+    const operation = { scope, version: ++requestVersion.current };
+    mutation.current = operation;
+    const current = () => scopeRef.current === scope && requestVersion.current === operation.version;
     setLoading(true);
     try {
       const closed = await apiCloseShift(activeShift.id, closingCash, details);
-      setActiveShift(null);
+      if (closed.shift.branchId !== activeShift.branchId) throw new Error("ผลปิดกะไม่ตรงกับสาขานี้ กรุณาตรวจสอบกะแล้วลองอีกครั้ง");
+      if (current()) {
+        setShiftState({ scope, shift: null });
+        setLoadedFor(scope);
+      }
       return closed;
     } finally {
-      setLoading(false);
+      if (mutation.current === operation) mutation.current = null;
+      if (current()) setLoading(false);
     }
-  }, [activeShift]);
+  }, [activeShift, scope]);
 
   return (
-    <ShiftContext.Provider value={{ activeShift, loading, loaded: loadedFor === activeBranch?.id, openShift, closeShift, refreshShift }}>
+    <ShiftContext.Provider value={{ activeShift, loading, loaded: scope !== null && loadedFor === scope, openShift, closeShift, refreshShift }}>
       {children}
     </ShiftContext.Provider>
   );

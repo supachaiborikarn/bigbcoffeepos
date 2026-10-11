@@ -779,10 +779,23 @@ export async function openShift(input: { branchId: number; userId?: number; open
 }
 
 export async function closeShift(shiftId: number, closingCash: number, details?: { cashCounts?: Record<string, number>; note?: string }) {
-  const payload = await fetchJson<ShiftCloseResult>(`${API_URL}/shifts/${shiftId}/close`, {
-    method: "POST",
-    body: JSON.stringify({ closingCash, ...details })
-  });
+  let payload: ShiftCloseResult;
+  try {
+    payload = await fetchJson<ShiftCloseResult>(`${API_URL}/shifts/${shiftId}/close`, {
+      method: "POST",
+      body: JSON.stringify({ closingCash, ...details })
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 403 && error.message === "Forbidden: insufficient role") {
+      throw new Error("การปิดกะต้องให้ผู้จัดการหรือผู้ดูแลระบบเป็นผู้ดำเนินการ");
+    }
+    throw error;
+  }
+  const shift = payload?.shift;
+  if (!shift || shift.id !== shiftId || shift.status !== "CLOSED" || !Number.isInteger(shift.branchId) || shift.branchId <= 0 ||
+      typeof shift.closedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(shift.closedAt) || !Number.isFinite(Date.parse(shift.closedAt))) {
+    throw new Error("ยังยืนยันการปิดกะไม่ได้ กรุณาตรวจสอบกะแล้วลองอีกครั้ง");
+  }
   return payload;
 }
 

@@ -38,4 +38,18 @@ assert.equal(sent.discountApprovalToken, 'approved-fixture');
 assert.equal(sent.idempotencyKey, 'fixture-checkout-key');
 await api.approveDiscount(2, '1234', { idempotencyKey: 'fixture-checkout-key', items: sent.items });
 assert.equal(sent.draft.idempotencyKey, 'fixture-checkout-key');
-console.log('PASS API regressions: stalled request/body deadlines, caller abort, approval and promotion fields, approval draft; no network or real browser storage');
+
+const closedShift = { id: 167, branchId: 1, status: 'CLOSED', closedAt: '2026-10-11T08:00:00.000Z' };
+globalThis.fetch = async () => new Response('<html>wrong API routing</html>', { headers: { 'Content-Type': 'text/html' } });
+await assert.rejects(api.closeShift(167, 0), /ยังยืนยันการปิดกะไม่ได้/, 'a successful HTML response must never confirm a shift close');
+for (const payload of [null, {}, { shift: null }, { shift: { ...closedShift, id: 168 } }, { shift: { ...closedShift, status: 'OPEN' } }, { shift: { ...closedShift, closedAt: null } }, { shift: { ...closedShift, closedAt: 'invalid' } }, { shift: { ...closedShift, closedAt: '1' } }, { shift: { ...closedShift, branchId: '1' } }, { shift: { ...closedShift, branchId: 0 } }]) {
+  globalThis.fetch = async () => new Response(JSON.stringify(payload));
+  await assert.rejects(api.closeShift(167, 0), /ยังยืนยันการปิดกะไม่ได้/, `invalid close response: ${JSON.stringify(payload)}`);
+}
+globalThis.fetch = async () => new Response(JSON.stringify({ shift: closedShift }));
+assert.deepEqual((await api.closeShift(167, 0)).shift, closedShift);
+globalThis.fetch = async () => new Response(JSON.stringify({ error: 'Forbidden: insufficient role' }), { status: 403 });
+await assert.rejects(api.closeShift(167, 0), /ผู้จัดการหรือผู้ดูแลระบบ/);
+globalThis.fetch = async () => new Response(JSON.stringify({ error: 'คุณไม่มีสิทธิ์เข้าถึงรายการของสาขานี้' }), { status: 403 });
+await assert.rejects(api.closeShift(167, 0), error => error.status === 403 && error.message.includes('สาขานี้'), 'branch restrictions keep their specific message');
+console.log('PASS API regressions: request deadlines, caller abort, checkout approval fields, verified shift close, Thai close permission error; no network or real browser storage');

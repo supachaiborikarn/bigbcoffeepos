@@ -1,4 +1,5 @@
 import prisma from "../prisma.js";
+import { Prisma } from "@prisma/client";
 
 interface PurchaseItemInput {
   ingredientId: number;
@@ -54,30 +55,31 @@ export async function createPurchase(branchId: number, supplier: string, note: s
         total: totalCost,
         status: "RECEIVED",
         items: {
-          create: items.map((item) => ({
+          createMany: { data: items.map((item) => ({
             ingredientId: item.ingredientId,
             description: (item.description ?? "").slice(0, 120),
             qty: item.qty,
             unitCost: item.unitCost,
             lineTotal: money(item.qty * item.unitCost)
-          }))
+          })) }
         }
       }
     });
 
-    for (const item of items) {
-      await tx.ingredientStock.upsert({
-        where: { branchId_ingredientId: { branchId, ingredientId: item.ingredientId } },
-        update: { stockQty: { increment: item.qty } },
-        create: { branchId, ingredientId: item.ingredientId, stockQty: item.qty, reorderLevel: 0 }
-      });
-      await tx.stockMovement.create({ data: { branchId, ingredientId: item.ingredientId, qty: item.qty, reason: `PO#${po.id}` } });
-      if (item.expiryDate) {
-        await tx.inventoryLot.create({
-          data: { branchId, ingredientId: item.ingredientId, purchaseId: po.id, lotNo: (item.lotNo ?? "").trim().slice(0, 40), qty: item.qty, expiryDate: new Date(item.expiryDate) }
-        });
-      }
-    }
+    // One stock write per delivery, including repeated ingredients, avoids a
+    // remote database round trip for every line while retaining each movement.
+    const increments = new Map<number, number>();
+    for (const item of items) increments.set(item.ingredientId, (increments.get(item.ingredientId) ?? 0) + item.qty);
+    const values = [...increments].sort(([a], [b]) => a - b).map(([ingredientId, qty]) => Prisma.sql`(${branchId}, ${ingredientId}, ${qty}, 0)`);
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO ingredient_stocks (branch_id, ingredient_id, stock_qty, reorder_level)
+      VALUES ${Prisma.join(values)}
+      ON CONFLICT (branch_id, ingredient_id)
+      DO UPDATE SET stock_qty = ingredient_stocks.stock_qty + EXCLUDED.stock_qty
+    `);
+    await tx.stockMovement.createMany({ data: items.map((item) => ({ branchId, ingredientId: item.ingredientId, qty: item.qty, reason: `PO#${po.id}` })) });
+    const lots = items.filter((item) => item.expiryDate).map((item) => ({ branchId, ingredientId: item.ingredientId, purchaseId: po.id, lotNo: (item.lotNo ?? "").trim().slice(0, 40), qty: item.qty, expiryDate: new Date(item.expiryDate!) }));
+    if (lots.length) await tx.inventoryLot.createMany({ data: lots });
 
     if (options.updateCost) {
       // the same item twice on one bill counts as one delivery
@@ -93,8 +95,15 @@ export async function createPurchase(branchId: number, supplier: string, note: s
         const stock = ing.costPerUnit > 0 ? onHand.get(ing.id) ?? 0 : 0;
         const to = round((stock * ing.costPerUnit + r.value) / (stock + r.qty));
         if (Math.abs(to - ing.costPerUnit) < 1e-6) continue;
-        await tx.ingredient.update({ where: { id: ing.id }, data: { costPerUnit: to } });
         costChanges.push({ ingredientId: ing.id, from: ing.costPerUnit, to });
+      }
+      if (costChanges.length) {
+        const costs = costChanges.map((change) => Prisma.sql`(${change.ingredientId}::integer, ${change.to}::double precision)`);
+        await tx.$executeRaw(Prisma.sql`
+          UPDATE ingredients AS ingredient SET cost_per_unit = changed.cost
+          FROM (VALUES ${Prisma.join(costs)}) AS changed(id, cost)
+          WHERE ingredient.id = changed.id
+        `);
       }
     }
 

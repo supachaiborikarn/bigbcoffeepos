@@ -4,6 +4,7 @@ import { getMenu } from "../api";
 import type { MenuItem } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { businessProfile } from "../utils/business";
+import { displayCategoryLabel } from "../utils/categoryLabel";
 import StockManager from "../components/inventory/StockManager";
 
 export default function BranchInventoryPage() {
@@ -25,7 +26,7 @@ export default function BranchInventoryPage() {
     <div className="studio-inventory-toolbar"><div className="studio-tabs"><button className={tab === "stock" ? "is-active" : ""} onClick={() => setTab("stock")}>สต็อกสาขา</button><button className={tab === "menu" ? "is-active" : ""} onClick={() => setTab("menu")}>รายการขาย</button></div>{tab === "menu" && <label className="studio-search"><Search size={18} /><input aria-label="ค้นหารายการขาย" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อสินค้า" /></label>}</div>
     {tab === "stock" ? <StockManager canEditDetails={false} /> : <>
       {error && <p role="alert">{error}</p>}
-      <div className="studio-stock-table"><p className="studio-catalog-help">รายการขายใช้ข้อมูลส่วนกลาง หากต้องการแก้ชื่อหรือราคาให้ติดต่อผู้ดูแลระบบ</p>{products.map((item) => <div className="studio-stock-row" key={item.id}><span><strong>{item.name}</strong><small>{item.category}</small></span><strong>฿{item.basePrice.toLocaleString("th-TH")}</strong><span>{item.active ? "เปิดขาย" : "ปิดขาย"}</span></div>)}</div>
+      <div className="studio-stock-table"><p className="studio-catalog-help">รายการขายใช้ข้อมูลส่วนกลาง หากต้องการแก้ชื่อหรือราคาให้ติดต่อผู้ดูแลระบบ</p>{products.map((item) => <div className="studio-stock-row" key={item.id}><span><strong>{item.name}</strong><small>{displayCategoryLabel(item.category)}</small></span><strong>฿{item.basePrice.toLocaleString("th-TH")}</strong><span>{item.active ? "เปิดขาย" : "ปิดขาย"}</span></div>)}</div>
     </>}
   </main>;
 }

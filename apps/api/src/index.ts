@@ -725,7 +725,7 @@ app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)
   if (!parseId(req.body.shiftId)) return res.status(400).json({ error: "กรุณาเปิดกะของสาขานี้ก่อนขาย" });
   if (req.body.customerId && req.user?.role !== "admin" && !(await customerHasBranch(Number(req.body.customerId), branchId))) return res.status(403).json({ error: "สมาชิกนี้ยังไม่ได้ผูกกับสาขาที่ขาย" });
   const sellerCanApprove = req.user?.role === "admin" || req.user?.role === "manager";
-  const approver = !sellerCanApprove ? verifyDiscountApproval(req.body?.discountApprovalToken, branchId) : null;
+  const approver = !sellerCanApprove ? verifyDiscountApproval(req.body?.discountApprovalToken, branchId, req.body) : null;
   try {
     const order = await createOrder({
       branchId,
@@ -778,7 +778,9 @@ app.post("/api/discount-approvals", enforcePinRateLimit, requireBranchAccess((re
   }
   pinAttempts.delete(req.ip || "unknown");
   audit("discount.approved", req, { branchId, approverId: approver.id });
-  return res.json({ token: signDiscountApproval(approver, branchId), approverName: approver.name });
+  try {
+    return res.json({ token: signDiscountApproval(approver, branchId, req.body?.draft), approverName: approver.name });
+  } catch (error) { return res.status(400).json({ error: publicError(error) }); }
 });
 
 /* ─── Shifts ─── */
@@ -864,11 +866,6 @@ app.post("/api/shifts/:id/cash-entries", requireRecordBranch(shiftBranch), async
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
-    // can't pay out more cash than the drawer should hold right now
-    if (req.body?.type === "OUT") {
-      const drawer = (await getShiftSummary(id))?.cash.expectedCash ?? 0;
-      if (Number(req.body?.amount) > drawer) return res.status(400).json({ error: `เงินในลิ้นชักตามระบบมี ${drawer.toLocaleString("th-TH")} บาท จ่ายออก ${Number(req.body.amount).toLocaleString("th-TH")} บาทไม่ได้ ถ้ามีเงินจริงมากกว่านี้ให้บันทึกเงินเข้าก่อน` });
-    }
     const entry = await addCashEntry({ shiftId: id, type: req.body?.type, amount: Number(req.body?.amount), category: req.body?.category, note: req.body?.note, userId: req.user?.id });
     audit("cash_drawer.entry_added", req, { shiftId: id, entryId: entry.id, type: entry.type, amount: entry.amount, category: entry.category });
     return res.status(201).json({ entry });
@@ -951,6 +948,7 @@ app.get("/api/reports/orders.csv", requireRole("admin", "manager"), requireBranc
     { key: "subtotal", label: "ยอดก่อนลด" },
     { key: "discountAmount", label: "ส่วนลด" },
     { key: "loyaltyPointsUsed", label: "แต้มสมาชิกที่ใช้" },
+    { key: "loyaltyPointsEarned", label: "แต้มสมาชิกที่ได้รับ" },
     { key: "tax", label: "VAT ในบิล" },
     { key: "total", label: "ยอดสุทธิ" }
   ]);

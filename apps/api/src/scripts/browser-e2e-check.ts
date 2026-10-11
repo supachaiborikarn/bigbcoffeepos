@@ -88,12 +88,15 @@ async function seedTestData(): Promise<TestData> {
   const user = await prisma.user.create({
     data: { name: `${tag}_admin`, pin, role: "admin", active: true, branchId: null }
   });
-  const [cookie, latte] = await Promise.all([
+  const [cookie, latte, addOn] = await Promise.all([
     prisma.menuItem.create({
       data: { sku: `${tag}-cookie`, name: `${tag}_cookie`, category: "เบเกอรี่", basePrice: 40, branchType: "coffee", active: true }
     }),
     prisma.menuItem.create({
       data: { sku: `${tag}-latte`, name: `${tag}_ลาเต้`, category: "กาแฟ", basePrice: 50, branchType: "coffee", active: true }
+    }),
+    prisma.menuItem.create({
+      data: { sku: `${tag}-addon`, name: "เพิ่มซอต", category: "ADD ON", basePrice: 15, branchType: "coffee", active: true }
     })
   ]);
   const cupIngredients: Array<{ id: number; created: boolean }> = [];
@@ -119,7 +122,7 @@ async function seedTestData(): Promise<TestData> {
     userId: user.id,
     cookie: { id: cookie.id, name: cookie.name },
     latte: { id: latte.id, name: latte.name },
-    menuItemIds: [cookie.id, latte.id],
+    menuItemIds: [cookie.id, latte.id, addOn.id],
     cupIngredientIds: cupIngredients.map((ingredient) => ingredient.id),
     createdCupIngredientIds: cupIngredients.filter((ingredient) => ingredient.created).map((ingredient) => ingredient.id)
   };
@@ -143,6 +146,7 @@ async function cleanupTestData(data: TestData | null) {
     });
   }
   await prisma.shift.deleteMany({ where: { branchId: data.branchId } });
+  await prisma.inventoryLot.deleteMany({ where: { branchId: data.branchId, ingredientId: { in: data.cupIngredientIds } } });
   await prisma.ingredientStock.deleteMany({ where: { branchId: data.branchId, ingredientId: { in: data.cupIngredientIds } } });
   if (data.createdCupIngredientIds.length) await prisma.ingredient.deleteMany({ where: { id: { in: data.createdCupIngredientIds } } });
   await prisma.menuItem.deleteMany({ where: { id: { in: data.menuItemIds } } });
@@ -151,17 +155,17 @@ async function cleanupTestData(data: TestData | null) {
 }
 
 async function addSimpleItem(page: Page, itemName: string) {
-  await page.getByPlaceholder("ค้นหาสินค้า (F1)").fill(itemName);
+  await page.getByRole("textbox", { name: "ค้นหาสินค้า", exact: true }).fill(itemName);
   await page.getByRole("button", { name: `เพิ่ม ${itemName}` }).click();
 }
 
 async function addModifiedLatte(page: Page, itemName: string) {
-  await page.getByPlaceholder("ค้นหาสินค้า (F1)").fill(itemName);
+  await page.getByRole("textbox", { name: "ค้นหาสินค้า", exact: true }).fill(itemName);
   await page.getByRole("button", { name: `เพิ่ม ${itemName}` }).click();
   await page.getByRole("heading", { name: itemName }).waitFor({ timeout: 10_000 });
   await page.getByRole("button", { name: /แก้วเย็น/ }).click();
   await page.getByRole("button", { name: "หวานน้อย (50%)" }).click();
-  await page.getByRole("button", { name: /เพิ่มช็อตกาแฟ/ }).click();
+  await page.getByRole("button", { name: /เพิ่มซอต/ }).click();
   await page.getByRole("button", { name: /เพิ่มลงตะกร้า/ }).click();
 }
 
@@ -235,12 +239,12 @@ async function main() {
     const cashModal = page.locator(".modal-backdrop").last();
 
     await enterNumpad(cashModal, "100");
-    await expectDisabled(cashModal.getByRole("button", { name: "รับเงินและพิมพ์ใบเสร็จ" }), "Underpayment should keep cash confirmation disabled");
+    await expectDisabled(cashModal.getByRole("button", { name: "ยืนยันรับเงิน" }), "Underpayment should keep cash confirmation disabled");
 
     await backspaceNumpad(cashModal, 3);
     await enterNumpad(cashModal, "120");
-    await cashModal.getByRole("button", { name: "รับเงินและพิมพ์ใบเสร็จ" }).click();
-    await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
+    await cashModal.getByRole("button", { name: "ยืนยันรับเงิน" }).click();
+    await page.getByText("เริ่มรายการใหม่", { exact: true }).waitFor({ timeout: 15_000 });
 
     const cashOrder = await getLatestOrderByMenuItem(data.latte.id);
     if (!cashOrder) throw new Error("Browser cash checkout did not create an order");
@@ -252,7 +256,7 @@ async function main() {
     assert(latteLine?.lineTotal === 65, `Modified latte line total mismatch: ${latteLine?.lineTotal}`);
     assert(latteModifiers.some((modifier) => modifier.name === "Cup" && modifier.value === "แก้วเย็น"), "Cup modifier was not persisted");
     assert(latteModifiers.some((modifier) => modifier.value === "หวานน้อย (50%)" || modifier.value === "50%"), "Sweetness modifier was not persisted");
-    assert(latteModifiers.some((modifier) => modifier.value === "เพิ่มช็อตกาแฟ" && modifier.price === 15), "Add-on modifier was not persisted");
+    assert(latteModifiers.some((modifier) => modifier.value === "เพิ่มซอต" && modifier.price === 15), "Menu-priced add-on modifier was not persisted");
     assert(cashOrder.payments[0]?.amountReceived === 120, "Cash payment evidence missing");
     assert(cashOrder.payments[0]?.changeAmount === 15, "Cash change amount mismatch");
 
@@ -262,7 +266,7 @@ async function main() {
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน QR/ }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();
-    await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
+    await page.getByText("เริ่มรายการใหม่", { exact: true }).waitFor({ timeout: 15_000 });
 
     const qrOrder = await getLatestOrderByMenuItem(data.cookie.id);
     if (!qrOrder) throw new Error("Browser QR checkout did not create an order");
@@ -276,7 +280,7 @@ async function main() {
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน บัตรเครดิต/ }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "ยืนยันและบันทึก" }).click();
-    await page.getByText("ไม่มีสินค้าในตะกร้า").waitFor({ timeout: 15_000 });
+    await page.getByText("เริ่มรายการใหม่", { exact: true }).waitFor({ timeout: 15_000 });
 
     const cardOrder = await getLatestOrderByMenuItem(data.cookie.id);
     if (!cardOrder) throw new Error("Browser card checkout did not create an order");
@@ -284,13 +288,13 @@ async function main() {
     assert(cardOrder.paymentMethod === "CARD", `Card payment method mismatch: ${cardOrder.paymentMethod}`);
     assert(cardOrder.payments[0]?.status === "CONFIRMED", "Card payment confirmation was not persisted");
 
-    await page.getByRole("link", { name: /คิวครัว/ }).click();
+    await page.getByRole("link", { name: /คิวเครื่องดื่ม/ }).click();
     await page.waitForURL("**/queue", { timeout: 10_000 });
     await page.getByText(/รอจัดเตรียม/).waitFor({ timeout: 10_000 });
     await page.getByText(`#${qrOrder.id}`).waitFor({ timeout: 10_000 });
     await page.getByText(`#${cardOrder.id}`).waitFor({ timeout: 10_000 });
 
-    await page.getByRole("link", { name: /ออเดอร์\/เดลิเวอรี่/ }).click();
+    await page.getByRole("link", { name: "ออเดอร์", exact: true }).click();
     await page.waitForURL("**/orders", { timeout: 10_000 });
     await page.getByPlaceholder("ค้นหาเลขออเดอร์ / สินค้า").fill(String(cashOrder.id));
     const cashOrderCard = page.getByTestId(`order-card-${cashOrder.id}`);
@@ -312,7 +316,7 @@ async function main() {
     assert(cancelledCashOrder?.status === "CANCELLED", "Order center cancellation did not persist");
     assert(cancelledCashOrder?.events.some((event) => event.eventType === "ORDER_CANCELLED"), "Cancellation event was not persisted");
 
-    await page.getByRole("link", { name: "รายงาน" }).click();
+    await page.getByRole("link", { name: "รายงานยอดขาย" }).click();
     await page.waitForURL("**/reports", { timeout: 10_000 });
     await page.getByRole("heading", { name: "รายงาน" }).waitFor({ timeout: 10_000 });
     await page.getByText("จำนวนออเดอร์").waitFor({ timeout: 10_000 });

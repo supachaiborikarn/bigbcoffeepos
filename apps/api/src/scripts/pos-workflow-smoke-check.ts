@@ -38,7 +38,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "Checkout is blocked without active shift",
     file: "apps/web/src/components/pos/CartPanel.tsx",
-    pattern: /disabled=\{cart\.length === 0 \|\| isSubmitting \|\| !activeShift\}/
+    pattern: /disabled=\{[^}]*cart\.length === 0[^}]*\|\|\s*isSubmitting[^}]*\|\|\s*!activeShift[^}]*\}/
   },
   {
     name: "Checkout sends order to API",

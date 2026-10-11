@@ -39,7 +39,7 @@ export function setPaperWidth(width: 58 | 80) {
 }
 /** Print the receipt as soon as a sale is paid (per device). Off = print on demand from the order. */
 export function getAutoPrint(): boolean {
-  try { return localStorage.getItem('bbpos.print.auto') !== '0'; } catch { return true; }
+  try { return localStorage.getItem('bbpos.print.auto') === '1'; } catch { return false; }
 }
 export function setAutoPrint(on: boolean) {
   localStorage.setItem('bbpos.print.auto', on ? '1' : '0');

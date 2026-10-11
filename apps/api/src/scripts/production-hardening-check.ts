@@ -81,7 +81,7 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
   {
     name: "order center no longer uses mock orders",
     file: "apps/web/src/pages/OrdersPage.tsx",
-    pattern: /getOrders\(activeBranch\.id\)/
+    pattern: /getOrders\(activeBranch\.id(?:,\s*\d+)?\)/
   },
   {
     name: "reports exclude reversed orders",

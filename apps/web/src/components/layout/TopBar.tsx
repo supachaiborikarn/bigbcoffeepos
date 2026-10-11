@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Menu, Moon, Sun, MapPin, Printer, Wallet, Clock } from "lucide-react";
+import { Menu, Moon, Sun, MapPin, Printer, Wallet, Clock, ChevronDown } from "lucide-react";
 import { businessProfile, roleLabels } from "../../utils/business";
 import { getShiftSummary } from "../../api";
 import { useAuth } from "../../contexts/AuthContext";
@@ -159,14 +159,17 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
         <div className="topbar__left">
           <button className="studio-menu-toggle" onClick={onOpenMenu} aria-label="เปิดเมนู" aria-expanded={mobileOpen} aria-controls="main-navigation"><Menu size={22} /></button>
           <div className="studio-location"><MapPin size={17} /><div><small>{profile.title}</small>
-          {branches.length > 1 ? <select aria-label="เลือกสาขา" className="studio-branch-select" value={activeBranch?.id ?? ""} onChange={(e) => setBranchId(Number(e.target.value))}>
+          {branches.length > 1 ? <label className="studio-branch-picker">
+            <strong aria-hidden="true">{activeBranch?.name}</strong><ChevronDown size={14} aria-hidden="true" />
+            <select aria-label="เลือกสาขา" className="studio-branch-select" value={activeBranch?.id ?? ""} onChange={(e) => setBranchId(Number(e.target.value))}>
             {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-          </select> : <strong>{activeBranch?.name}</strong>}</div></div>
+          </select></label> : <strong>{activeBranch?.name}</strong>}</div></div>
           {activeShift && (
             <div className="shift-status-pill">
               <span className="shift-status-dot" />
               <span>กะ #{activeShift.id}</span>
-              <strong>{formatMoney(activeShift.totalSales)}</strong>
+              {/* this is the shift's sales, not the drawer cash (which includes the opening float) */}
+              <strong title={`ยอดขายในกะนี้ ${activeShift.totalOrders} บิล`}>ขาย {formatMoney(Math.max(0, activeShift.totalSales))}</strong>
             </div>
           )}
         </div>

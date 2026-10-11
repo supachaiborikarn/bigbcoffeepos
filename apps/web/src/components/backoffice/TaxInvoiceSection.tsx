@@ -11,6 +11,7 @@ import { Field, money, SearchPicker, Section, SectionState, StatusBadge, thaiDat
 // receipt does. A wrong invoice is voided (its number stays used) and re-issued.
 
 const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+const missingLegacyDetails = (invoice: TaxInvoice) => !invoice.sellerName?.trim() || !invoice.sellerTaxId?.trim() || !invoice.sellerAddress?.trim() || !(invoice.vatRate > 0);
 
 function printTaxInvoice(invoice: TaxInvoice) {
   const win = window.open("", "_blank", "width=820,height=960");
@@ -30,6 +31,7 @@ function printTaxInvoice(invoice: TaxInvoice) {
   ${invoice.status === "VOID" ? `<div class="void">ยกเลิก</div>` : ""}
   <h1>ใบกำกับภาษีเต็มรูป / Tax Invoice</h1>
   <p class="sub">เลขที่ ${esc(invoice.invoiceNo)} · วันที่ ${esc(thaiDate(invoice.createdAt, false))} · อ้างอิงบิล #${esc(invoice.orderId)}${invoice.order ? ` (${esc(thaiDate(invoice.order.createdAt))})` : ""}</p>
+  ${missingLegacyDetails(invoice) ? `<p>ข้อมูลผู้ขายหรืออัตรา VAT ของเอกสารเดิมยังไม่ครบ กรุณายืนยันจากเอกสารต้นฉบับก่อนใช้งาน</p>` : ""}
   <div class="grid">
     <div class="box"><b>ผู้ขาย</b>${esc(invoice.sellerName)}<br>เลขประจำตัวผู้เสียภาษี ${esc(invoice.sellerTaxId)}<br>สาขา ${esc(invoice.sellerBranch || "สำนักงานใหญ่")}<br>${esc(invoice.sellerAddress)}</div>
     <div class="box"><b>ผู้ซื้อ</b>${esc(invoice.buyerName)}<br>เลขประจำตัวผู้เสียภาษี ${esc(invoice.buyerTaxId)}<br>สาขา ${esc(invoice.buyerBranch || "สำนักงานใหญ่")}<br>${esc(invoice.buyerAddress)}</div>
@@ -39,7 +41,7 @@ function printTaxInvoice(invoice: TaxInvoice) {
     <tr><td>รวมเป็นเงิน</td><td class="n">${esc(money(invoice.subtotal))}</td></tr>
     ${invoice.discountAmount ? `<tr><td>ส่วนลด</td><td class="n">-${esc(money(invoice.discountAmount))}</td></tr>` : ""}
     <tr><td>มูลค่าก่อนภาษีมูลค่าเพิ่ม</td><td class="n">${esc(money(base))}</td></tr>
-    <tr><td>ภาษีมูลค่าเพิ่ม ${esc(invoice.vatRate)}%</td><td class="n">${esc(money(invoice.tax))}</td></tr>
+    <tr><td>ภาษีมูลค่าเพิ่ม ${invoice.vatRate > 0 ? `${esc(invoice.vatRate)}%` : "(ยังไม่ยืนยันอัตรา)"}</td><td class="n">${esc(money(invoice.tax))}</td></tr>
     <tr class="total"><td>จำนวนเงินรวมทั้งสิ้น</td><td class="n">${esc(money(invoice.total))}</td></tr>
   </table>
   ${invoice.status === "VOID" ? `<p>ยกเลิกเมื่อ ${esc(thaiDate(invoice.voidedAt))} เหตุผล: ${esc(invoice.voidReason)}</p>` : ""}
@@ -94,6 +96,7 @@ export default function TaxInvoiceSection({ branchId }: { branchId: number }) {
   }
 
   return <Section title="ใบกำกับภาษีเต็มรูป" subtitle="ออกได้เฉพาะบิลที่ชำระแล้ว บิลละ 1 ใบ · ข้อมูลผู้ขายดึงจากตั้งค่าร้าน">
+    {(invoices.data ?? []).some(missingLegacyDetails) && <div className="bo-error" role="alert"><span>ใบกำกับภาษีเดิมบางใบยังขาดข้อมูลผู้ขายหรืออัตรา VAT ต้องยืนยันจากเอกสารต้นฉบับก่อนใช้งาน</span></div>}
     {shop && shopMissing.length > 0 && <div className="bo-error" role="alert"><span>ตั้งค่าร้านยังไม่ครบ: {shopMissing.join(", ")} · ไปที่ <a href="/settings">ตั้งค่า &gt; ร้าน</a> ก่อนออกใบกำกับ</span></div>}
     {setting.error && <div className="bo-error" role="alert"><span>โหลดตั้งค่าร้านไม่สำเร็จ: {setting.error}</span><button type="button" className="btn btn--ghost" onClick={() => setting.reload()}>ลองใหม่</button></div>}
     <div className="bo-grid">

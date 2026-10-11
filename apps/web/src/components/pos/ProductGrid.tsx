@@ -2,6 +2,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import type { MenuItem } from "../../types";
 import ProductCard from "./ProductCard";
 import { isCupVariantMenuItem } from "../../utils/menuRules";
+import { displayCategoryLabel } from "../../utils/categoryLabel";
 
 const PRODUCT_RENDER_LIMIT = 120;
 const priceFormatter = new Intl.NumberFormat("th-TH", {
@@ -118,7 +119,7 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
                 >
                   <span>
                     <strong>{item.optionLabel || item.name}</strong>
-                    <small>{item.category}{item.unit ? ` · ${item.unit}` : ""}</small>
+                    <small>{displayCategoryLabel(item.category)}{item.unit ? ` · ${item.unit}` : ""}</small>
                   </span>
                   <span className="positive">฿{item.basePrice.toLocaleString("th-TH")}</span>
                 </button>

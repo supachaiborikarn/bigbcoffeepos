@@ -2,6 +2,7 @@ import { Coffee, Wrench, Plus, Package, CupSoda, Croissant } from "lucide-react"
 import { memo, useState } from "react";
 import type { MenuItem } from "../../types";
 import productIllustrations from "../../assets/product-illustrations.jpg";
+import { displayCategoryLabel } from "../../utils/categoryLabel";
 
 type Props = {
   item: MenuItem;
@@ -67,7 +68,7 @@ function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
   const hasPhoto = Boolean(item.imageUrl?.trim()) && !imgError;
   const illustration = hasPhoto ? null : illustrationIndex(item);
   const Icon = item.branchType === "oil_service" ? (/บริการ|ค่าแรง/.test(item.category) ? Wrench : Package) : /เบเกอรี่|ขนม/.test(item.category) ? Croissant : /กาแฟ/.test(item.category) ? Coffee : CupSoda;
-  const metaLabel = variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || item.category;
+  const metaLabel = variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || displayCategoryLabel(item.category);
 
   return (
     <button
@@ -85,7 +86,7 @@ function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
             <small>ภาพประกอบ</small>
           </div>
         ) : (
-          <span className="studio-product-placeholder"><Icon size={48} strokeWidth={1.15} /><span>{item.category}</span></span>
+          <span className="studio-product-placeholder"><Icon size={48} strokeWidth={1.15} /><span>{displayCategoryLabel(item.category)}</span></span>
         )}
         {topSeller && <span className="menu-card__flag">ขายดี</span>}
 

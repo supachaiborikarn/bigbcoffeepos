@@ -1,5 +1,6 @@
 import prisma from "../prisma.js";
-import { cashTotalsByShift, listCashEntries } from "./cashDrawer.js";
+import { cashTotalsByShift, ensureCashDrawerTable, getExpectedDrawerCash, listCashEntries } from "./cashDrawer.js";
+import { getShiftSalesTotals } from "./shiftTotals.js";
 
 const PAYMENT_METHODS = ["CASH", "QR", "CARD", "EWALLET"] as const;
 const REVERSED_ORDER_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
@@ -84,27 +85,21 @@ export async function openShift(input: { branchId: number; userId?: number; open
 export const SHIFT_VARIANCE_REASON_THRESHOLD = 100;
 
 export async function closeShift(id: number, closingCash: number, details?: ShiftCloseDetails) {
-  const shift = await getShift(id);
-  if (!shift) throw new Error("ไม่พบกะที่ระบุ");
-  if (shift.status !== "OPEN") throw new Error("กะนี้ปิดไปแล้ว");
   if (!Number.isFinite(closingCash) || closingCash < 0) throw new Error("ยอดเงินที่นับได้ไม่ถูกต้อง");
-
-  const summary = await getShiftSummary(id);
-  const expectedCash = summary?.cash.expectedCash ?? shift.openingCash + shift.cashSales;
-  const difference = Math.round((closingCash - expectedCash) * 100) / 100;
-  if (Math.abs(difference) >= SHIFT_VARIANCE_REASON_THRESHOLD && !details?.note?.trim()) {
-    throw new Error(`เงิน${difference < 0 ? "ขาด" : "เกิน"} ${Math.abs(difference).toLocaleString("th-TH")} บาท ต้องระบุเหตุผลในหมายเหตุปิดกะ`);
-  }
-
-  await prisma.shift.update({
-    where: { id },
-    data: {
-      closingCash,
-      expectedCash,
-      difference,
-      status: "CLOSED",
-      closedAt: new Date()
+  await ensureCashDrawerTable();
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${id} FOR UPDATE`;
+    const shift = await tx.shift.findUnique({ where: { id } });
+    if (!shift) throw new Error("ไม่พบกะที่ระบุ");
+    if (shift.status !== "OPEN") throw new Error("กะนี้ปิดไปแล้ว");
+    const expectedCash = await getExpectedDrawerCash(tx, shift);
+    const difference = Math.round((closingCash - expectedCash) * 100) / 100;
+    if (Math.abs(difference) >= SHIFT_VARIANCE_REASON_THRESHOLD && !details?.note?.trim()) {
+      throw new Error(`เงิน${difference < 0 ? "ขาด" : "เกิน"} ${Math.abs(difference).toLocaleString("th-TH")} บาท ต้องระบุเหตุผลในหมายเหตุปิดกะ`);
     }
+    await tx.shift.update({ where: { id }, data: {
+      ...await getShiftSalesTotals(tx, shift), closingCash, expectedCash, difference, status: "CLOSED", closedAt: new Date()
+    } });
   });
   await saveShiftCloseDetails(id, details);
 
@@ -112,10 +107,11 @@ export async function closeShift(id: number, closingCash: number, details?: Shif
 }
 
 export async function getCurrentShift(branchId: number) {
-  return prisma.shift.findFirst({
+  const shift = await prisma.shift.findFirst({
     where: { branchId, status: "OPEN" },
     orderBy: { id: "desc" }
   });
+  return shift ? { ...shift, ...await getShiftSalesTotals(prisma, shift) } : null;
 }
 
 export async function getShift(id: number) {

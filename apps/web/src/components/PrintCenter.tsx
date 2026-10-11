@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranch } from '../contexts/BranchContext';
 import { buildPassPrntUrl, passPrntError, registerPrintReceiver, type ReceiptPrintJob } from '../utils/printJob';
@@ -9,10 +10,13 @@ import { createReceiptJob, printWhenReady } from './ReceiptPrinter';
 import PrinterDeviceSettings from './settings/PrinterDeviceSettings';
 import { useDialogFocus } from '../utils/useDialogFocus';
 
-type Session = { job: ReceiptPrintJob; mode: PrinterMode; copy: number; attempt: string; message: string; awaiting: boolean };
+type Session = { job: ReceiptPrintJob; mode: PrinterMode; copy: number; attempt: string; message: string; awaiting: boolean; clearAt?: number };
+const COMPLETED_STATUS_MS = 8_000;
 export default function PrintCenter() {
   const { user } = useAuth();
   const { activeBranch } = useBranch();
+  const routeLocation = useLocation();
+  const receiptPage = routeLocation.pathname === '/pos' || routeLocation.pathname === '/orders';
   const key = `bbpos.print.job:${user?.id}:${activeBranch?.id}`;
   const [session, setSession] = useState<Session | null>(null);
   const current = useRef<Session | null>(null);
@@ -23,7 +27,18 @@ export default function PrintCenter() {
     current.current = value; setSession(value);
     try { value ? localStorage.setItem(key, JSON.stringify(value)) : localStorage.removeItem(key); } catch { /* still usable in this tab */ }
   };
-  const update = (message: string, awaiting = false) => { if (current.current) save({ ...current.current, message, awaiting }); };
+  const update = (message: string, awaiting = false) => { if (current.current) save({ ...current.current, message, awaiting, clearAt: undefined }); };
+  const clearCompleted = (value: Session) => {
+    save(value);
+    window.clearTimeout(timeout.current);
+    timeout.current = window.setTimeout(() => {
+      if (current.current?.attempt === value.attempt && !current.current.awaiting) save(null);
+    }, Math.max(0, (value.clearAt ?? Date.now()) - Date.now()));
+  };
+  const complete = (message: string) => {
+    const value = current.current;
+    if (value) clearCompleted({ ...value, message, awaiting: false, clearAt: Date.now() + COMPLETED_STATUS_MS });
+  };
   const launch = (value: Session, popup?: Window | null) => {
     save(value);
     window.clearTimeout(timeout.current);
@@ -48,10 +63,7 @@ export default function PrintCenter() {
       win.onafterprint = () => {
         win.close();
         if (current.current?.attempt !== value.attempt) return;
-        update('ปิดหน้าต่างพิมพ์แล้ว กรุณาตรวจว่าใบเสร็จออกครบ');
-        // nothing left to do: clear the banner after a moment instead of leaving it up
-        window.clearTimeout(timeout.current);
-        timeout.current = window.setTimeout(() => { if (current.current?.attempt === value.attempt && !current.current.awaiting) save(null); }, 8_000);
+        complete('ปิดหน้าต่างพิมพ์แล้ว กรุณาตรวจว่าใบเสร็จออกครบ');
       };
       printWhenReady(win, win.document, () => {
         if (current.current?.attempt !== value.attempt) return;
@@ -72,11 +84,19 @@ export default function PrintCenter() {
             raw.message = raw.copy < raw.job.documents.length ? `พิมพ์แล้ว ${raw.copy}/${raw.job.documents.length} ใบ · กดพิมพ์ใบถัดไป` : 'Star PassPRNT แจ้งว่าพิมพ์ครบแล้ว';
           } else raw.message = passPrntError(code);
           raw.attempt = crypto.randomUUID();
-          raw.awaiting = false; setOpen(true);
+          raw.awaiting = false;
+          if (code === '0' && raw.copy === raw.job.documents.length) raw.clearAt = Date.now() + COMPLETED_STATUS_MS;
+          else setOpen(true);
         } else if (raw.awaiting) {
           raw.awaiting = false; raw.message = 'ยังไม่มีผลยืนยันการพิมพ์ ตรวจใบที่ออกก่อนส่งซ้ำ';
         }
-        save(raw);
+        if (!raw.awaiting && !raw.clearAt && /^(เครื่องพิมพ์แจ้งว่าพิมพ์ครบแล้ว|Star PassPRNT แจ้งว่าพิมพ์ครบแล้ว|ปิดหน้าต่างพิมพ์แล้ว)/.test(raw.message)) {
+          raw.clearAt = raw.job.createdAt + COMPLETED_STATUS_MS;
+        }
+        if (raw.clearAt) {
+          if (raw.clearAt <= Date.now()) save(null);
+          else clearCompleted(raw);
+        } else save(raw);
       } else save(null);
     } catch { save(null); }
     const url = new URL(location.href);
@@ -97,8 +117,9 @@ export default function PrintCenter() {
       if (!value || detail?.requestId !== value.attempt || !value.awaiting) return;
       window.clearTimeout(timeout.current);
       const completed = Math.max(0, Math.min(value.job.documents.length-value.copy, Number(detail.completedCopies)||0));
-      save({...value,copy:value.copy+completed,awaiting:false,message:detail.success ? 'เครื่องพิมพ์แจ้งว่าพิมพ์ครบแล้ว' : `พิมพ์แล้ว ${value.copy+completed}/${value.job.documents.length} ใบ · ตรวจสาย USB กระดาษ และฝาเครื่องก่อนลองอีกครั้ง`});
-      if (!detail.success) setOpen(true);
+      save({...value,copy:value.copy+completed,awaiting:false,clearAt:undefined,message:detail.success ? 'เครื่องพิมพ์แจ้งว่าพิมพ์ครบแล้ว' : `พิมพ์แล้ว ${value.copy+completed}/${value.job.documents.length} ใบ · ตรวจสาย USB กระดาษ และฝาเครื่องก่อนลองอีกครั้ง`});
+      if (detail.success) complete('เครื่องพิมพ์แจ้งว่าพิมพ์ครบแล้ว');
+      else setOpen(true);
     };
     const showSettings = () => {setSettings(true);setOpen(true);};
     const changeSettings = () => {
@@ -116,7 +137,7 @@ export default function PrintCenter() {
 
   const retry = () => {
     if (!session || session.awaiting) return;
-    const next = {...session,mode:getPrinterMode(),attempt:crypto.randomUUID(),copy:session.copy >= session.job.documents.length ? 0 : session.copy};
+    const next = {...session,mode:getPrinterMode(),attempt:crypto.randomUUID(),clearAt:undefined,copy:session.copy >= session.job.documents.length ? 0 : session.copy};
     launch(next);
   };
   const copyIndex = session ? Math.min(session.copy,session.job.documents.length-1) : 0;
@@ -124,8 +145,8 @@ export default function PrintCenter() {
   if (session) callback.searchParams.set('print_attempt',session.attempt);
   const href = session ? buildPassPrntUrl(session.job.documents[copyIndex],session.job.widthMm,callback.href) : '';
   return <>
-    {session && <div className="printer-status" role="status"><p>{session.job.title ?? `บิล #${session.job.billId}`} · {session.message}</p><button className="btn btn--ghost" onClick={()=>{setSettings(false);setOpen(true);}}>ใบเสร็จ / พิมพ์ซ้ำ</button><button className="studio-icon-button" aria-label="ปิดสถานะการพิมพ์" disabled={session.awaiting} onClick={()=>save(null)}>×</button></div>}
-    {open && <PrintDialog onClose={()=>{setOpen(false);setSettings(false);}}>
+    {session && receiptPage && <div className="printer-status" role="status"><p>{session.job.title ?? `บิล #${session.job.billId}`} · {session.message}</p><button className="btn btn--ghost" onClick={()=>{setSettings(false);setOpen(true);}}>ใบเสร็จ / พิมพ์ซ้ำ</button><button className="studio-icon-button" aria-label="ปิดสถานะการพิมพ์" disabled={session.awaiting} onClick={()=>save(null)}>×</button></div>}
+    {open && (settings || (session && (receiptPage || session.job.title))) && <PrintDialog onClose={()=>{setOpen(false);setSettings(false);}}>
       <div style={{display:'flex',justifyContent:'space-between',gap:16}}><h2 id="print-title">{settings?'ตั้งค่าเครื่องพิมพ์':session?.job.title ?? `ใบเสร็จ #${session?.job.billId ?? ''}`}</h2><button className="btn btn--ghost" aria-label="ปิดหน้าพิมพ์" onClick={()=>{setOpen(false);setSettings(false);}}>ปิด</button></div>
       {settings ? <><PrinterDeviceSettings />{session && <button className="btn btn--ghost" onClick={()=>setSettings(false)}>กลับไปใบเสร็จ</button>}</> : session && <>
         <p role="status">{session.message}</p><p className="muted">{printerLabels[session.mode]} · กระดาษ {session.job.widthMm} มม.</p>

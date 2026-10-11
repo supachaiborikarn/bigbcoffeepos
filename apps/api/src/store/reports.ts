@@ -272,7 +272,7 @@ export async function getOrdersCsvRows(input: ReportInput) {
     return {
       id: order.id,
       createdAt: bangkokTime(order.createdAt),
-      source: isPosposSalesOnly ? "POSPOS sales-only import" : "System POS",
+      source: isPosposSalesOnly ? "ยอดขายนำเข้า" : "ยอดขายในระบบ",
       branch: order.branch.name,
       customer: order.customer ? `${order.customer.name} (${order.customer.phone})` : "",
       staff: order.user?.name ?? "",
@@ -285,6 +285,7 @@ export async function getOrdersCsvRows(input: ReportInput) {
       subtotal: roundMoney(order.subtotal),
       discountAmount: roundMoney(order.discountAmount),
       loyaltyPointsUsed: order.customer ? order.loyaltyPointsUsed : "",
+      loyaltyPointsEarned: order.customer ? order.loyaltyPointsEarned : "",
       tax: roundMoney(tax),
       total: roundMoney(order.total)
     };

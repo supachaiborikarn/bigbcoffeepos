@@ -56,7 +56,10 @@ export default function StaffPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name) return toast.error("กรุณากรอกชื่อพนักงาน");
+    // checked here in Thai; the form has noValidate so the browser's English bubbles never show
+    if (!formData.name.trim()) return toast.error("กรุณากรอกชื่อพนักงาน");
+    if (formData.pin && !/^\d{4}$/.test(formData.pin)) return toast.error("PIN ต้องเป็นตัวเลข 4 หลัก");
+    if (formData.role !== "admin" && !formData.branchId) return toast.error("กรุณาเลือกสาขาประจำของพนักงาน");
     if (formData.id === 0 && (!formData.pin || formData.pin.length !== 4)) {
       return toast.error("กรุณากรอก PIN 4 หลัก");
     }
@@ -191,7 +194,7 @@ export default function StaffPage() {
               <h3 style={{ margin: 0 }}>{formData.id > 0 ? "แก้ไขข้อมูลพนักงาน" : "เพิ่มพนักงานใหม่"}</h3>
               <button className="btn" onClick={() => setShowModal(false)} style={{ padding: 4, border: "none", background: "none" }}><X size={24} /></button>
             </div>
-            <form onSubmit={handleSave} style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+            <form onSubmit={handleSave} noValidate style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               <div>
                 <label style={{ display: "block", marginBottom: 8, fontWeight: 500 }}>ชื่อพนักงาน</label>
                 <input 

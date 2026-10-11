@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { getOrders, updateOrderStatus, getStoreSetting } from "../api";
 import { useAuth } from "../contexts/AuthContext";
 import { describeModifiers } from "../utils/modifierLabel";
@@ -7,6 +8,7 @@ import { getPrinterMode } from "../utils/printerSettings";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
+import { useCart } from "../contexts/CartContext";
 import type { Order, OrderStatus, PaymentMethod, StoreSetting } from "../types";
 import { Ban, CheckCircle2, Clock, Printer, RefreshCw, RotateCcw, Search, ShoppingBag } from "lucide-react";
 
@@ -39,7 +41,16 @@ export default function OrdersPage() {
   const { activeBranch } = useBranch();
   const { activeShift, refreshShift } = useShift();
   const { user } = useAuth();
+  const { cart, restoreOrderAsNewBill } = useCart();
+  const navigate = useNavigate();
   const canRefund = user?.role === "admin" || user?.role === "manager";
+  // one action at a time: a double click must not cancel/refund twice
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const guarded = (fn: (order: Order) => Promise<void>) => async (order: Order) => {
+    if (busyId !== null) return;
+    setBusyId(order.id);
+    try { await fn(order); } finally { setBusyId(null); }
+  };
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [activeTab, setActiveTab] = useState<"ALL" | OrderStatus>("ALL");
@@ -158,14 +169,25 @@ export default function OrdersPage() {
     }
   };
 
-  const refundOrder = async (order: Order) => {
+  const reopenOrder = async (order: Order) => {
+    if (await restoreOrderAsNewBill(order)) {
+      navigate("/pos");
+    }
+  };
+
+  const refundOrder = async (order: Order, reopen = false) => {
+    if (reopen && cart.length > 0) {
+      toast.error("มีสินค้าในบิลปัจจุบัน กรุณาพักบิลหรือล้างตะกร้าก่อนเปิดบิลคืนเงินมาแก้");
+      return;
+    }
     const reason = window.prompt(`คืนเงินบิล #${order.id} ยอด ${formatMoney(order.total)} (${PAYMENT_LABELS[order.paymentMethod]})\nระบบจะคืนสต็อก หักยอดขายของกะ และย้ายบิลไปแท็บ "คืนเงินแล้ว"\nระบุเหตุผล:`);
     if (!reason?.trim()) return;
     try {
-      await updateOrderStatus(order.id, "REFUNDED", reason.trim());
+      const refunded = await updateOrderStatus(order.id, "REFUNDED", reason.trim());
       toast.success(`คืนเงินบิล #${order.id} แล้ว · อย่าลืมจ่ายเงินคืนลูกค้า ${formatMoney(order.total)}`);
       await refresh();
       void refreshShift().catch(() => {});
+      if (reopen) await reopenOrder(refunded);
     } catch (error) {
       toast.error((error as Error).message);
     }
@@ -258,17 +280,27 @@ export default function OrdersPage() {
                       <Printer size={16} /> พิมพ์ซ้ำ
                     </button>
                     {order.status === "PAID" && (
-                      <button className="btn btn--primary" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => setReady(order)}>
+                      <button className="btn btn--primary" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded(setReady)(order)} disabled={busyId !== null}>
                         <CheckCircle2 size={16} /> เสร็จสิ้น
                       </button>
                     )}
                     {canRefund && (order.status === "PAID" || order.status === "READY") && (
-                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => refundOrder(order)}>
+                      <>
+                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded(refundOrder)(order)} disabled={busyId !== null}>
                         <RotateCcw size={16} /> คืนเงิน
+                      </button>
+                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded((item) => refundOrder(item, true))(order)} disabled={busyId !== null}>
+                        <RotateCcw size={16} /> คืนเงินและแก้บิล
+                      </button>
+                      </>
+                    )}
+                    {canRefund && order.status === "REFUNDED" && (
+                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded(reopenOrder)(order)} disabled={busyId !== null} title="นำสินค้าและตัวเลือกมาใส่บิลใหม่ บิลเดิมยังคงคืนเงินแล้ว">
+                        <RotateCcw size={16} /> เปิดเป็นบิลใหม่
                       </button>
                     )}
                     {order.status !== "CANCELLED" && order.status !== "REFUNDED" && (
-                      <button className="btn btn--danger" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => cancelOrder(order)} data-testid={`cancel-order-${order.id}`}>
+                      <button className="btn btn--danger" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded(cancelOrder)(order)} disabled={busyId !== null} data-testid={`cancel-order-${order.id}`}>
                         <Ban size={16} /> ยกเลิกบิล
                       </button>
                     )}

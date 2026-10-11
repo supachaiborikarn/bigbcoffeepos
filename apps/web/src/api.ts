@@ -295,8 +295,16 @@ async function fetchJsonOnce<T>(input: RequestInfo, init?: FetchJsonInit): Promi
     } catch { /* No restored session. */ }
   }
   const { timeoutMs, ...fetchInit } = init ?? {};
-  const controller = timeoutMs ? new AbortController() : null;
-  const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+  const reading = (fetchInit.method ?? "GET").toUpperCase() === "GET";
+  const deadline = timeoutMs ?? (reading ? 12_000 : undefined);
+  const controller = deadline ? new AbortController() : null;
+  let timedOut = false;
+  const abortFromCaller = () => controller?.abort(fetchInit.signal?.reason);
+  if (controller && fetchInit.signal) {
+    if (fetchInit.signal.aborted) abortFromCaller();
+    else fetchInit.signal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const timeoutId = controller ? window.setTimeout(() => { timedOut = true; controller.abort(); }, deadline) : null;
 
   try {
     const response = await fetch(input, {
@@ -304,19 +312,26 @@ async function fetchJsonOnce<T>(input: RequestInfo, init?: FetchJsonInit): Promi
       headers: { ...headers, ...fetchInit.headers },
       signal: controller?.signal ?? fetchInit.signal
     });
-    const payload = await response.json().catch(() => ({}));
+    const payload = await response.json().catch((error) => {
+      if (controller?.signal.aborted || fetchInit.signal?.aborted) throw error;
+      return {};
+    });
     if (!response.ok) {
       const message = typeof payload?.error === "string" ? payload.error : `คำขอไม่สำเร็จ (${response.status})`;
       throw new ApiError(message, response.status, typeof payload?.code === "string" ? payload.code : undefined);
     }
     return payload as T;
   } catch (error) {
-    if (controller?.signal.aborted) {
+    if (timedOut && reading) {
+      throw new ApiError("โหลดข้อมูลนานเกินไป กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่", 408, "REQUEST_TIMEOUT");
+    }
+    if (timedOut) {
       throw new Error("บันทึกออเดอร์นานเกินไป กรุณาตรวจสอบอินเทอร์เน็ตแล้วกดรับเงินอีกครั้ง ระบบจะกันออเดอร์ซ้ำให้");
     }
     throw error;
   } finally {
     if (timeoutId) window.clearTimeout(timeoutId);
+    fetchInit.signal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -653,6 +668,8 @@ async function createOrderOnline(input: CreateOrderInput) {
       discountValue: input.discountValue,
       discounts: input.discounts,
       couponCode: input.couponCode,
+      skipPromotions: input.skipPromotions,
+      discountApprovalToken: input.discountApprovalToken,
       branchId: input.branchId,
       customerId: input.customerId,
       loyaltyPointsToUse: input.loyaltyPointsToUse,
@@ -664,8 +681,8 @@ async function createOrderOnline(input: CreateOrderInput) {
 }
 
 /** Manager/admin PIN -> approval token for a large manual discount on this branch's next bill. */
-export async function approveDiscount(branchId: number, pin: string) {
-  return fetchJson<{ token: string; approverName: string }>(`${API_URL}/discount-approvals`, { method: "POST", body: JSON.stringify({ branchId, pin }) });
+export async function approveDiscount(branchId: number, pin: string, draft: unknown) {
+  return fetchJson<{ token: string; approverName: string }>(`${API_URL}/discount-approvals`, { method: "POST", body: JSON.stringify({ branchId, pin, draft }) });
 }
 
 export async function createOrder(input: OfflineOrderInput) {

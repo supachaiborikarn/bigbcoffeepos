@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
+import { displayCategoryLabel } from "../utils/categoryLabel";
 import { AlertTriangle, ChevronLeft, ChevronRight, Edit2, EyeOff, PackageCheck, Plus, Printer, RotateCcw, Save, Search, X } from "lucide-react";
 import {
   createMenuItem,
@@ -426,40 +427,40 @@ export default function InventoryPage() {
     } catch (err) { toast.error(`Export ไม่สำเร็จ: ${(err as Error).message}`); }
   };
 
+  const refreshVersion = useRef(0);
   const refreshInventory = async () => {
-    // receivable = stocked here, plus anything this branch's recipes use (so recipes never look empty)
-    const [menuItems, ingredientItems] = await Promise.all([getMenu(), getIngredients({ receivable: true })]);
+    const version = ++refreshVersion.current;
     const branchType = activeBranch?.branchType;
-    const matchesActiveBranch = (item: MenuItem) => !branchType || item.branchType === branchType;
-    setMenu(menuItems);
-    setIngredients(ingredientItems);
-    setSelectedProduct((current) => (current ? menuItems.find((item) => item.id === current.id && matchesActiveBranch(item)) ?? null : null));
-    setSelectedRecipeProduct((current) => (current ? menuItems.find((item) => item.id === current.id && matchesActiveBranch(item)) ?? null : null));
-
+    const run = <T,>(request: Promise<T>, apply: (value: T) => void) => request.then((value) => {
+      if (version === refreshVersion.current) apply(value);
+    });
+    const requests = [
+      run(getMenu(), (menuItems) => {
+        const matchesActiveBranch = (item: MenuItem) => !branchType || item.branchType === branchType;
+        setMenu(menuItems);
+        setSelectedProduct((current) => (current ? menuItems.find((item) => item.id === current.id && matchesActiveBranch(item)) ?? null : null));
+        setSelectedRecipeProduct((current) => (current ? menuItems.find((item) => item.id === current.id && matchesActiveBranch(item)) ?? null : null));
+      }),
+      run(getIngredients({ receivable: true }), setIngredients)
+    ];
     if (!activeBranch) {
       setInventory([]);
       setMovements([]);
       setPurchases([]);
       setRecipeCoverage(null);
       setCupStockDrafts([]);
-      return;
+    } else {
+      requests.push(
+        run(getInventory(activeBranch.id), setInventory),
+        run(getStockMovements(activeBranch.id, { limit: 20 }), (rows) => setMovements(rows.slice(0, 20))),
+        run(getPurchases(activeBranch.id), setPurchases),
+        run(getRecipeCoverage({ branchId: activeBranch.id }), setRecipeCoverage),
+        run(getCupStockSettings(activeBranch.id), setCupStockDrafts)
+      );
     }
-
-    // each part updates on its own, so e.g. a slow coverage report can't leave the receipt history stale
-    const [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport, cupSettings] = await Promise.allSettled([
-      getInventory(activeBranch.id),
-      getStockMovements(activeBranch.id, { limit: 20 }),
-      getPurchases(activeBranch.id),
-      getRecipeCoverage({ branchId: activeBranch.id }),
-      getCupStockSettings(activeBranch.id)
-    ]);
-    if (inventoryItems.status === "fulfilled") setInventory(inventoryItems.value);
-    if (movementItems.status === "fulfilled") setMovements(movementItems.value.slice(0, 20));
-    if (purchaseItemsFromApi.status === "fulfilled") setPurchases(purchaseItemsFromApi.value);
-    if (coverageReport.status === "fulfilled") setRecipeCoverage(coverageReport.value);
-    if (cupSettings.status === "fulfilled") setCupStockDrafts(cupSettings.value);
-    const failed = [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport, cupSettings].filter((r) => r.status === "rejected").length;
-    if (failed) toast.error(`โหลดข้อมูลสต็อกบางส่วนไม่สำเร็จ (${failed} ส่วน) กดรีเฟรชหน้าเพื่อลองใหม่`);
+    const results = await Promise.allSettled(requests);
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed && version === refreshVersion.current) toast.error(`โหลดข้อมูลสต็อกบางส่วนไม่สำเร็จ (${failed} ส่วน) กดรีเฟรชหน้าเพื่อลองใหม่`);
   };
 
   useEffect(() => {
@@ -500,6 +501,7 @@ export default function InventoryPage() {
 
   useEffect(() => {
     refreshInventory().catch(() => {});
+    return () => { refreshVersion.current += 1; };
   }, [activeBranch]);
 
   const findMergeTargetCard = (
@@ -1035,7 +1037,7 @@ export default function InventoryPage() {
                 <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="ค้นหาการ์ด / ตัวเลือก / SKU / บาร์โค้ด" />
               </label>
               <select className="input" value={productCategory} onChange={(e) => setProductCategory(e.target.value)}>
-                {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+                {categoryOptions.map((category) => <option key={category} value={category}>{displayCategoryLabel(category)}</option>)}
               </select>
               <select className="input" value={productStatus} onChange={(e) => setProductStatus(e.target.value as typeof productStatus)}>
                 <option value="all">ทุกสถานะ</option>
@@ -1056,7 +1058,7 @@ export default function InventoryPage() {
                         <strong>{group.label}</strong>
                         <span className={`status-badge ${isInactive ? "status-badge--inactive" : "status-badge--active"}`}>{statusText}</span>
                       </span>
-                      <small>{group.category} · {branchTypeLabels[group.branchType]} · {group.items.length} ตัวเลือก</small>
+                      <small>{displayCategoryLabel(group.category)} · {branchTypeLabels[group.branchType]} · {group.items.length} ตัวเลือก</small>
                       <span className="menu-manager-card__price">{formatPriceRange(group)}</span>
                     </button>
                     <div className="menu-manager-card__actions">
@@ -1232,7 +1234,7 @@ export default function InventoryPage() {
                       <option value="">{mergeTargetCards.length === 0 ? "ไม่มีการ์ดอื่นให้รวม" : "รวมเข้าการ์ดเมนูอื่น"}</option>
                       {mergeTargetCards.map((group) => (
                         <option key={group.key} value={group.key}>
-                          {group.category} · {group.label} · {group.items.length} ตัวเลือก{group.activeCount === 0 ? " · ปิดขาย" : ""}
+                          {displayCategoryLabel(group.category)} · {group.label} · {group.items.length} ตัวเลือก{group.activeCount === 0 ? " · ปิดขาย" : ""}
                         </option>
                       ))}
                     </select>
@@ -1370,7 +1372,7 @@ export default function InventoryPage() {
                     >
                       <span>
                         <strong>{item.name}</strong>
-                        <small>{item.category} · ขาย {item.soldQty.toLocaleString("th-TH")} รายการ</small>
+                        <small>{displayCategoryLabel(item.category)} · ขาย {item.soldQty.toLocaleString("th-TH")} รายการ</small>
                       </span>
                       <span className="negative">{formatMoney(item.soldRevenue)}</span>
                     </button>
@@ -1493,7 +1495,7 @@ export default function InventoryPage() {
                   >
                     <span>
                       <strong>{item.name}</strong>
-                      <small>{item.category} · {formatMoney(item.basePrice)} · {recipeStatusLabels[status]}</small>
+                      <small>{displayCategoryLabel(item.category)} · {formatMoney(item.basePrice)} · {recipeStatusLabels[status]}</small>
                     </span>
                     <span className={`status-badge ${status === "has_recipe" ? "status-badge--active" : "status-badge--inactive"}`}>
                       {coverage?.recipeIngredientCount ?? 0}

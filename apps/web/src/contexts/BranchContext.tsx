@@ -17,24 +17,25 @@ const BranchContext = createContext<BranchContextType | null>(null);
 
 const BRANCH_KEY = "bb_pos_branch_id";
 const BRANCH_CACHE_KEY = "bb_pos_branches_cache";
-const RETRY_DELAYS = [800, 2000, 4000];
+
+function cachedBranches(userId: number | undefined): Branch[] {
+  try {
+    const cached = JSON.parse(localStorage.getItem(`${BRANCH_CACHE_KEY}:${userId}`) || "null");
+    return Array.isArray(cached) ? cached.filter((b) => Number.isInteger(b?.id) && typeof b?.name === "string" && typeof b?.active === "boolean") : [];
+  } catch { return []; }
+}
 
 /** Branch list with retries for network hiccups; falls back to the last list this browser saw. */
 async function loadBranchesResilient(userId: number | undefined): Promise<{ items: Branch[]; cached: boolean }> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      const items = await getBranches();
-      try { localStorage.setItem(`${BRANCH_CACHE_KEY}:${userId}`, JSON.stringify(items)); } catch { /* cache is optional */ }
-      return { items, cached: false };
-    } catch (err) {
-      if (err instanceof ApiError && err.status < 500) throw err;
-      if (attempt < RETRY_DELAYS.length) { await new Promise((r) => window.setTimeout(r, RETRY_DELAYS[attempt])); continue; }
-      try {
-        const cached = JSON.parse(localStorage.getItem(`${BRANCH_CACHE_KEY}:${userId}`) || "null");
-        if (Array.isArray(cached) && cached.length) return { items: cached, cached: true };
-      } catch { /* fall through */ }
-      throw err;
-    }
+  try {
+    const items = await getBranches();
+    try { localStorage.setItem(`${BRANCH_CACHE_KEY}:${userId}`, JSON.stringify(items)); } catch { /* cache is optional */ }
+    return { items, cached: false };
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) throw err;
+    const cached = cachedBranches(userId);
+    if (cached.length) return { items: cached, cached: true };
+    throw err;
   }
 }
 
@@ -59,11 +60,7 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false;
-    setLoading(true);
-
-    setError(null);
-    loadBranchesResilient(user?.id).then(({ items }) => {
-      if (cancelled) return;
+    const apply = (items: Branch[]) => {
       const allowed = items.filter((b) => b.active && (user?.role === "admin" || b.id === user?.branchId));
       setBranches(allowed);
       if (allowed.length === 1) localStorage.setItem(`${BRANCH_KEY}:${user?.id}`, String(allowed[0].id));
@@ -71,6 +68,15 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       setActiveBranchId(allowed.length === 1 ? allowed[0].id : allowed.some((b) => b.id === savedId) ? savedId : null);
       setLoadedFor(accountKey);
       setLoading(false);
+    };
+    const cached = cachedBranches(user?.id);
+    if (cached.length) apply(cached);
+    else setLoading(true);
+
+    setError(null);
+    loadBranchesResilient(user?.id).then(({ items }) => {
+      if (cancelled) return;
+      apply(items);
     }).catch((err) => {
       if (cancelled) return;
       setBranches([]);

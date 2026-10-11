@@ -114,6 +114,7 @@ async function main() {
     }
     if (shiftId) await prisma.shift.deleteMany({ where: { id: shiftId } });
     if (menuItemId && ingredientId) await prisma.recipe.deleteMany({ where: { menuItemId, ingredientId } });
+    if (branchId && ingredientId) await prisma.inventoryLot.deleteMany({ where: { branchId, ingredientId } });
     if (branchId && ingredientId) await prisma.ingredientStock.deleteMany({ where: { branchId, ingredientId } });
     if (menuItemId) await prisma.menuItem.deleteMany({ where: { id: menuItemId } });
     if (ingredientId) await prisma.ingredient.deleteMany({ where: { id: ingredientId } });

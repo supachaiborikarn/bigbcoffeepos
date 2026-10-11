@@ -261,6 +261,8 @@ export type OrderItem = {
   id: number;
   menuItemId: number;
   name: string;
+  category?: string;
+  menuBasePrice?: number;
   qty: number;
   basePrice: number;
   modifiers: Modifier[];

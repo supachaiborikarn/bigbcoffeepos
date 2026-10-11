@@ -1,5 +1,6 @@
 import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
+import { getShiftSalesTotals } from "./shiftTotals.js";
 
 // Cash paid out of / put into the drawer during a shift (ice, deliveries, petty
 // purchases, topping up change). Expected drawer cash at close becomes
@@ -79,23 +80,41 @@ export async function cashTotalsByShift(shiftIds: number[]) {
   return totals;
 }
 
+/** Call while holding the shift row lock, so check and payout share one balance. */
+export async function getExpectedDrawerCash(client: any, shift: any) {
+  const totals = await getShiftSalesTotals(client, shift);
+  const rows = await client.$queryRaw`
+    SELECT COALESCE(SUM(CASE WHEN entry_type = 'IN' THEN amount ELSE -amount END), 0) AS net
+    FROM cash_drawer_entries WHERE shift_id = ${shift.id} AND voided_at IS NULL
+  `;
+  return Math.round((shift.openingCash + totals.cashSales + Number(rows[0]?.net ?? 0)) * 100) / 100;
+}
+
 export async function addCashEntry(input: { shiftId: number; type: CashEntryType; amount: number; category: string; note?: string; userId?: number }) {
   const amount = Math.round(Number(input.amount) * 100) / 100;
   if (input.type !== "OUT" && input.type !== "IN") throw new Error("ประเภทรายการไม่ถูกต้อง");
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("จำนวนเงินต้องมากกว่า 0");
   const category = String(input.category ?? "").trim().slice(0, 60);
   if (!category) throw new Error("เลือกหมวดรายการ");
-  const shift = await prisma.shift.findUnique({ where: { id: input.shiftId }, select: { id: true, branchId: true, status: true } });
-  if (!shift) throw new Error("ไม่พบกะที่ระบุ");
-  if (shift.status !== "OPEN") throw new Error("กะนี้ปิดแล้ว บันทึกเงินเข้า/ออกไม่ได้");
   await ensureCashDrawerTable();
   const note = typeof input.note === "string" && input.note.trim() ? input.note.trim().slice(0, 200) : null;
-  const rows = await prisma.$queryRaw<Array<{ id: number }>>`
-    INSERT INTO cash_drawer_entries (branch_id, shift_id, entry_type, amount, category, note, user_id)
-    VALUES (${shift.branchId}, ${shift.id}, ${input.type}, ${amount}, ${category}, ${note}, ${input.userId ?? null})
-    RETURNING id
-  `;
-  return (await listCashEntries([shift.id], { includeVoided: true })).find((entry) => entry.id === rows[0].id)!;
+  const entryId = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${input.shiftId} FOR UPDATE`;
+    const shift = await tx.shift.findUnique({ where: { id: input.shiftId } });
+    if (!shift) throw new Error("ไม่พบกะที่ระบุ");
+    if (shift.status !== "OPEN") throw new Error("กะนี้ปิดแล้ว บันทึกเงินเข้า/ออกไม่ได้");
+    if (input.type === "OUT") {
+      const drawer = await getExpectedDrawerCash(tx, shift);
+      if (amount > drawer) throw new Error(`เงินสดในลิ้นชักตามระบบ (รวมเงินทอนตั้งต้น) มี ${drawer.toLocaleString("th-TH")} บาท จ่ายออก ${amount.toLocaleString("th-TH")} บาทไม่ได้ ถ้ามีเงินจริงมากกว่านี้ให้บันทึกเงินเข้าก่อน`);
+    }
+    const rows = await tx.$queryRaw<Array<{ id: number }>>`
+      INSERT INTO cash_drawer_entries (branch_id, shift_id, entry_type, amount, category, note, user_id)
+      VALUES (${shift.branchId}, ${shift.id}, ${input.type}, ${amount}, ${category}, ${note}, ${input.userId ?? null})
+      RETURNING id
+    `;
+    return rows[0].id;
+  });
+  return (await listCashEntries([input.shiftId], { includeVoided: true })).find((entry) => entry.id === entryId)!;
 }
 
 export async function getCashEntryBranch(id: number) {
@@ -112,7 +131,14 @@ export async function voidCashEntry(id: number, userId?: number) {
   `;
   const row = rows[0];
   if (!row) throw new Error("ไม่พบรายการ");
-  if (row.status !== "OPEN") throw new Error("กะนี้ปิดแล้ว ยกเลิกรายการไม่ได้");
-  if (row.voided_at) return;
-  await prisma.$executeRaw`UPDATE cash_drawer_entries SET voided_at = now(), voided_by = ${userId ?? null} WHERE id = ${id}`;
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${row.shift_id} FOR UPDATE`;
+    const shift = await tx.shift.findUniqueOrThrow({ where: { id: row.shift_id } });
+    if (shift.status !== "OPEN") throw new Error("กะนี้ปิดแล้ว ยกเลิกรายการไม่ได้");
+    const entries = await tx.$queryRaw<Array<{ entry_type: string; amount: unknown; voided_at: Date | null }>>`SELECT entry_type, amount, voided_at FROM cash_drawer_entries WHERE id = ${id} FOR UPDATE`;
+    const entry = entries[0];
+    if (!entry || entry.voided_at) return;
+    if (entry.entry_type === "IN" && Number(entry.amount) > await getExpectedDrawerCash(tx, shift)) throw new Error("ยกเลิกเงินเข้าไม่ได้ เพราะเงินในลิ้นชักถูกจ่ายออกไปแล้ว");
+    await tx.$executeRaw`UPDATE cash_drawer_entries SET voided_at = now(), voided_by = ${userId ?? null} WHERE id = ${id}`;
+  });
 }

@@ -28,18 +28,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const savedUser = localStorage.getItem(USER_KEY);
     let cancelled = false;
     if (savedToken && savedUser) {
+      try {
+        const restored = JSON.parse(savedUser) as User;
+        if (!restored?.id || !["admin", "manager", "cashier"].includes(restored.role)) throw new Error("invalid saved session");
+        setUser(restored);
+        setToken(savedToken);
+        setLoading(false);
+      } catch {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        setLoading(false);
+        return;
+      }
       getCurrentUser().then((current) => {
-        if (cancelled) return;
+        if (cancelled || localStorage.getItem(TOKEN_KEY) !== savedToken) return;
         setUser(current);
         setToken(savedToken);
         localStorage.setItem(USER_KEY, JSON.stringify(current));
       }).catch((err) => {
-        if (cancelled) return;
+        if (cancelled || localStorage.getItem(TOKEN_KEY) !== savedToken) return;
         // Only a real "token rejected" ends the session. A dropped connection or a
         // busy server must not log the cashier out mid-shift: keep the saved user.
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           localStorage.removeItem(TOKEN_KEY);
           localStorage.removeItem(USER_KEY);
+          setUser(null);
+          setToken(null);
           return;
         }
         try { setUser(JSON.parse(savedUser)); setToken(savedToken); }

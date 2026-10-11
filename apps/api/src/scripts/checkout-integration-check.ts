@@ -1,5 +1,5 @@
 import prisma from "../prisma.js";
-import { getDailyCloseReport, getSalesSummary } from "../store/reports.js";
+import { getDailyCloseReport, getOrdersCsvRows, getSalesSummary } from "../store/reports.js";
 import { createOrder, getOrders, updateOrderStatusWithContext } from "../store/orders.js";
 import { getShiftSummary } from "../store/shifts.js";
 import { assignCustomerBranch, customerHasBranch, getUnassignedCustomers } from "../store/customers.js";
@@ -173,6 +173,8 @@ async function main() {
     assert(duplicate.cashReceived === 60 && duplicate.changeAmount === order.changeAmount, "Recovered checkout must retain original receipt payment details");
     const receiptOrder = (await getOrders(branchId)).find((item: any) => item.id === order.id);
     assert(receiptOrder?.cashReceived === 60 && receiptOrder.changeAmount === order.changeAmount, "Reprint must retain original cash and change");
+    const csvOrder = (await getOrdersCsvRows({ branchId, source: "system" })).find((item) => item.id === order.id);
+    assert(csvOrder?.loyaltyPointsUsed === 2 && csvOrder.loyaltyPointsEarned === order.loyaltyPointsEarned, "Order CSV must include the member's used and earned points from the saved bill");
 
     const stockAfterSale = await prisma.ingredientStock.findUnique({
       where: { branchId_ingredientId: { branchId, ingredientId } }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ArrowDownToLine, ArrowUpFromLine, X } from "lucide-react";
-import { addCashEntry, getCashEntries, getCashEntryCategories, voidCashEntry } from "../../api";
+import { addCashEntry, getCashEntries, getCashEntryCategories, getShiftSummary, voidCashEntry } from "../../api";
 import type { CashEntry } from "../../types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -26,7 +26,12 @@ export default function CashDrawerDialog({ shiftId, onClose, onChanged }: { shif
   const [entries, setEntries] = useState<CashEntry[] | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(() => getCashEntries(shiftId).then(setEntries).catch(() => setEntries([])), [shiftId]);
+  // cash that should be in the drawer now = opening float + cash sales + in − out (same figure the server checks a pay-out against)
+  const [drawerCash, setDrawerCash] = useState<number | null>(null);
+  const load = useCallback(() => Promise.all([
+    getCashEntries(shiftId).then(setEntries).catch(() => setEntries([])),
+    getShiftSummary(shiftId).then((s) => setDrawerCash(s.cash.expectedCash)).catch(() => setDrawerCash(null))
+  ]), [shiftId]);
   useEffect(() => { void load(); getCashEntryCategories().then(setCategories).catch(() => { /* fallback list */ }); }, [load]);
 
   const switchType = (next: "OUT" | "IN") => { setType(next); setCategory((next === "OUT" ? categories.out : categories.in)[0]); };
@@ -64,8 +69,9 @@ export default function CashDrawerDialog({ shiftId, onClose, onChanged }: { shif
         <button className="studio-icon-button" onClick={onClose} disabled={saving} aria-label="ปิด"><X size={18} /></button>
       </div>
       <p className="stk-hint">ใช้เมื่อหยิบเงินสดออกจากลิ้นชักไปจ่าย หรือเติมเงินทอนเข้า ระบบจะนำไปคำนวณ "เงินสดที่ควรมี" ตอนปิดกะ</p>
+      {drawerCash !== null && <p className="stk-hint"><strong>เงินสดในลิ้นชักตามระบบตอนนี้ {money.format(drawerCash)}</strong> (รวมเงินทอนตั้งต้น · จ่ายออกได้ไม่เกินยอดนี้)</p>}
 
-      <form onSubmit={submit} className="stk-form">
+      <form onSubmit={submit} className="stk-form" noValidate>
         <div className="stk-modes cash-modes" role="tablist" aria-label="ประเภท">
           <button type="button" role="tab" aria-selected={type === "OUT"} className={`is-out${type === "OUT" ? " is-active" : ""}`} onClick={() => switchType("OUT")}><ArrowUpFromLine size={16} />จ่ายออก</button>
           <button type="button" role="tab" aria-selected={type === "IN"} className={`is-in${type === "IN" ? " is-active" : ""}`} onClick={() => switchType("IN")}><ArrowDownToLine size={16} />เติมเข้า</button>

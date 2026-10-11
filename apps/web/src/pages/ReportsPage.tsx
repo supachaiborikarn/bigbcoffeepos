@@ -24,7 +24,7 @@ const paymentLabels: Record<PaymentMethod | string, string> = {
 };
 const reportSourceLabels: Record<ReportSource, string> = {
   system: "ยอดขายในระบบ",
-  pospos: "POSPOS sales-only",
+  pospos: "ยอดขายนำเข้า",
   all: "ทั้งหมด"
 };
 
@@ -188,7 +188,7 @@ export default function ReportsPage() {
             </select>
             <select className="input" value={reportSource} onChange={e => setReportSource(e.target.value as ReportSource)}>
               <option value="system">ยอดขายในระบบ</option>
-              <option value="pospos">POSPOS sales-only</option>
+              <option value="pospos">ยอดขายนำเข้า</option>
               <option value="all">ทั้งหมด</option>
             </select>
             <input className="input" type="date" aria-label="ตั้งแต่วันที่" value={reportRange.from} max={reportRange.to} onChange={e => setReportRange({...reportRange, from: e.target.value})} aria-invalid={Boolean(rangeError)} />
@@ -248,7 +248,7 @@ export default function ReportsPage() {
                   <small className="muted">{summary.sourceBreakdown.system.orders.toLocaleString("th-TH")} บิล</small>
                 </div>
                 <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
-                  <span className="muted">POSPOS sales-only</span>
+                  <span className="muted">ยอดขายนำเข้า</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(summary.importedSalesOnlyRevenue)}</strong>
                   <small className="muted">{summary.importedSalesOnlyOrders.toLocaleString("th-TH")} บิล</small>
                 </div>

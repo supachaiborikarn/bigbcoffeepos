@@ -78,13 +78,17 @@
 .studio-app .sidebar--collapsed .sidebar__link { margin:4px 0; min-height:45px; padding:12px 0; }
 .studio-app .sidebar--collapsed .sidebar__footer { padding:10px 4px; }
 .studio-app .sidebar--collapsed .sidebar__user-panel { flex-direction:column; }
-.studio-app .topbar { height:77px; padding:14px 28px; background:var(--bg-surface); box-shadow:none; }
+.studio-app .topbar { height:auto; min-height:77px; padding:14px 28px; background:var(--bg-surface); box-shadow:none; }
 .studio-location { display:flex; align-items:center; gap:10px; min-width:0; }
 .studio-location>svg { color:var(--text-muted); flex-shrink:0; }
 .studio-location>div { min-width:0; }
 .studio-location small { display:block; font-size:12px; color:var(--text-muted); }
-.studio-location strong { display:block; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.studio-branch-select { color:var(--text-primary); background:transparent; border:0; font-weight:600; padding:3px 0; max-width:260px; font-size:13px; }
+.studio-location strong { display:block; font-size:13px; overflow-wrap:anywhere; white-space:normal; }
+.studio-branch-picker { position:relative; display:flex; align-items:center; gap:6px; min-width:0; cursor:pointer; }
+.studio-branch-picker strong { min-width:0; }
+.studio-branch-picker > svg { flex-shrink:0; }
+.studio-branch-picker:focus-within { outline:2px solid var(--brand); outline-offset:3px; border-radius:4px; }
+.studio-branch-select { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
 .studio-icon-button,.studio-menu-toggle { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:42px; height:42px; border:1px solid var(--border); background:var(--bg-surface); color:var(--text-secondary); border-radius:12px; text-decoration:none; }
 .studio-app .shift-status-pill { font-size:12px; padding:7px 10px; background:var(--bg-muted); box-shadow:none; white-space:nowrap; }
 .studio-app .shift-status-pill strong { color:var(--text-primary); }
@@ -184,11 +188,14 @@
   .studio-nav-close { display:grid; place-items:center; margin-left:auto; border:0; color:#dae8dc; background:none; }
   .studio-nav-scrim { display:block; position:fixed; inset:0; z-index:104; border:0; background:#071d16a3; backdrop-filter:blur(4px); }
   .studio-menu-toggle { display:inline-flex; width:36px; height:39px; border:0; }
-  .studio-app .topbar { padding:10px 12px; height:65px; gap:6px; }
+  .studio-app .topbar { padding:10px 12px; height:auto; min-height:65px; gap:6px; flex-wrap:wrap; }
+  .studio-app .topbar__left { flex:1 0 100%; }
+  .studio-app .topbar__right { flex:1; justify-content:flex-end; }
   .studio-app .topbar__left,.studio-app .topbar__right { gap:6px; }
-  .studio-location { gap:0; }
+  .studio-location { gap:0; flex:1; }
+  .studio-location > div { flex:1; }
   .studio-location>svg { display:none; }
-  .studio-location strong,.studio-branch-select { font-size:11px; max-width:160px; }
+  .studio-location strong { font-size:11px; }
   .studio-location small { font-size:11px; }
   .studio-app .topbar .shift-status-pill { display:none; }
   .studio-app .topbar__right>.btn { font-size:11px; min-height:36px; padding:7px 12px; }
@@ -693,12 +700,11 @@ span.rcv-costopt { cursor:default; color:var(--text-muted); font-size:12px; }
 .rcv-po.is-void { opacity:.65; }
 .rcv-po li.rcv-po__actions { display:flex; justify-content:flex-end; gap:8px; border-bottom:0; padding-top:10px; }
 .rcv-po li small { color:var(--text-muted); }
-/* L4: narrow carts wrap the member row; short screens (big zoom) scroll the whole
-   cart as one so the item list never shrinks to a sliver, with the pay button pinned */
+/* Short screens scroll the whole cart; payment stays after totals in that flow. */
 .studio-member-chip > div:first-child { flex:1 1 140px; }
 @media (max-height:520px) {
   .studio-app .studio-cart { overflow-y:auto !important; }
   .studio-app .studio-cart > .order-list { flex:none !important; overflow:visible !important; min-height:auto !important; }
   .studio-app .studio-cart .studio-checkout-dock { max-height:none !important; overflow:visible !important; }
-  .studio-app .studio-cart .studio-pay-button { position:sticky; bottom:0; z-index:2; }
+  .studio-app .studio-cart .studio-pay-button { position:static; }
 }

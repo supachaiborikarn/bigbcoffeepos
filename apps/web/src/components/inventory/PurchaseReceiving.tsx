@@ -248,7 +248,7 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
       const changed = po.costChanges?.length ?? 0;
       toast.success(`รับสินค้าเข้าสต็อกแล้ว ${rows.length} รายการ · ${money(grandTotal)}${changed ? ` · อัปเดตทุน ${changed} รายการ` : ""}`);
       if (changed) void loadIngredients();
-      await onReceived();
+      void Promise.resolve(onReceived()).catch((err: unknown) => toast.error(`รับสินค้าแล้ว แต่รีเฟรชข้อมูลไม่สำเร็จ: ${(err as Error).message}`));
       scanRef.current?.focus();
     } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
   }

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Customer, CartItem, DiscountRule, DiscountType, Order, PaymentMethod } from "../types";
-import { approveDiscount as requestDiscountApproval, createOrder, getActivePromotions, getOrderByIdempotencyKey, validateCoupon } from "../api";
+import { approveDiscount as requestDiscountApproval, createOrder, getActivePromotions, getMenu, getOrderByIdempotencyKey, validateCoupon } from "../api";
 import { useBranch } from "./BranchContext";
 import { useAuth } from "./AuthContext";
 import { useToast } from "./ToastContext";
@@ -42,6 +42,7 @@ export type HeldBill = {
   orderNote?: string;
   selectedMember?: Customer | null;
   appliedCoupon?: AppliedCoupon | null;
+  skipPromotions?: boolean;
 };
 
 type CartContextType = {
@@ -60,6 +61,7 @@ type CartContextType = {
   setItemNote: (id: string, note: string) => void;
   removeItem: (id: string) => void;
   clearCart: () => void;
+  restoreOrderAsNewBill: (order: Order) => Promise<boolean>;
   setDiscountType: (type: DiscountType) => void;
   setDiscountValue: (val: string) => void;
   addDiscountRule: (rule: DiscountRule) => void;
@@ -209,6 +211,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const addDiscountRule = useCallback((rule: DiscountRule) => {
     setDiscountRules((prev) => [...prev, rule]);
+    setAppliedCoupon(null);
+    setDiscountApproval(null);
   }, []);
 
   const removeDiscountRule = useCallback((id: string) => {
@@ -262,10 +266,25 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return totalDiscount;
   }, [computeRuleDiscount, subtotal]);
 
-  // Same order and rules as the server (orders.ts createOrder): best single auto
-  // promotion, then the coupon, then manual discounts; each capped by what's left.
+  const manualRules = useMemo<DiscountRule[]>(() => {
+    if (discountRules.length) return discountRules;
+    const val = Number(discountValue);
+    if (discountType === "PERCENT" && val > 0 && val <= 100) return [{ id: "legacy", label: `ลดทั้งบิล ${val}%`, type: "ORDER_PERCENT", value: val }];
+    if (discountType === "FIXED" && val > 0) return [{ id: "legacy", label: `ลดทั้งบิล ${val} บาท`, type: "ORDER_FIXED", value: val }];
+    return [];
+  }, [discountRules, discountType, discountValue]);
+
+  const couponBelowMinSpend = Boolean(appliedCoupon?.minSpend && subtotal < appliedCoupon.minSpend);
+  const couponRule = useMemo<DiscountRule | null>(() => {
+    if (!appliedCoupon || couponBelowMinSpend || !(appliedCoupon.value > 0) || manualRules.length) return null;
+    const isPercent = appliedCoupon.type.toUpperCase().includes("PERCENT");
+    if (isPercent && appliedCoupon.value > 100) return null;
+    return { id: `COUPON-${appliedCoupon.code}`, label: `คูปอง ${appliedCoupon.code}`, type: isPercent ? "ORDER_PERCENT" : "ORDER_FIXED", value: appliedCoupon.value };
+  }, [appliedCoupon, couponBelowMinSpend, manualRules]);
+
+  // A bill uses one source: manual discount, otherwise coupon, otherwise one auto promotion.
   const appliedPromotion = useMemo(() => {
-    if (skipPromotions) return null;
+    if (skipPromotions || manualRules.length || couponRule) return null;
     let best: DiscountRule | null = null;
     let bestAmount = 0;
     for (const rule of autoPromotions) {
@@ -275,26 +294,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
       if (amount > bestAmount) { best = rule; bestAmount = amount; }
     }
     return best;
-  }, [autoPromotions, skipPromotions, applyRules]);
-
-  const couponBelowMinSpend = Boolean(appliedCoupon?.minSpend && subtotal < appliedCoupon.minSpend);
-  const couponRule = useMemo<DiscountRule | null>(() => {
-    if (!appliedCoupon || couponBelowMinSpend || !(appliedCoupon.value > 0)) return null;
-    const isPercent = appliedCoupon.type.toUpperCase().includes("PERCENT");
-    if (isPercent && appliedCoupon.value > 100) return null;
-    return { id: `COUPON-${appliedCoupon.code}`, label: `คูปอง ${appliedCoupon.code}`, type: isPercent ? "ORDER_PERCENT" : "ORDER_FIXED", value: appliedCoupon.value };
-  }, [appliedCoupon, couponBelowMinSpend]);
-
-  const manualRules = useMemo<DiscountRule[]>(() => {
-    if (discountRules.length) return discountRules;
-    const val = Number(discountValue);
-    if (discountType === "PERCENT" && val > 0 && val <= 100) return [{ id: "legacy", label: `ลดทั้งบิล ${val}%`, type: "ORDER_PERCENT", value: val }];
-    if (discountType === "FIXED" && val > 0) return [{ id: "legacy", label: `ลดทั้งบิล ${val} บาท`, type: "ORDER_FIXED", value: val }];
-    return [];
-  }, [discountRules, discountType, discountValue]);
+  }, [autoPromotions, skipPromotions, applyRules, manualRules, couponRule]);
 
   const discountAmount = useMemo(
-    () => applyRules([...(appliedPromotion ? [appliedPromotion] : []), ...(couponRule ? [couponRule] : []), ...manualRules]),
+    () => applyRules(manualRules.length ? manualRules : couponRule ? [couponRule] : appliedPromotion ? [appliedPromotion] : []),
     [applyRules, appliedPromotion, couponRule, manualRules]
   );
 
@@ -302,18 +305,52 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const needsDiscountApproval = !canApproveOwnDiscount && !discountApproval && subtotal > 0 && manualRules.length > 0
     && applyRules(manualRules) >= subtotal * MANUAL_DISCOUNT_APPROVAL_RATIO;
 
+  const approvalDraftVersion = JSON.stringify([cart, selectedMember?.id, pointsToUse, discountType, discountValue, discountRules, appliedCoupon, skipPromotions]);
+  const approvalStateRef = useRef({ branchId: activeBranch?.id ?? null, version: approvalDraftVersion });
+  approvalStateRef.current = { branchId: activeBranch?.id ?? null, version: approvalDraftVersion };
+  const approvalMountedRef = useRef(true);
+  const approvalDraftRef = useRef(approvalDraftVersion);
+  useEffect(() => {
+    if (approvalDraftRef.current === approvalDraftVersion) return;
+    approvalDraftRef.current = approvalDraftVersion;
+    setDiscountApproval(null);
+    checkoutKeyRef.current = null;
+  }, [approvalDraftVersion]);
+  useEffect(() => {
+    approvalMountedRef.current = true;
+    return () => { approvalMountedRef.current = false; };
+  }, []);
+
   const approveDiscount = useCallback(async (pin: string) => {
     if (!activeBranch) throw new Error("เลือกสาขาก่อน");
-    const approval = await requestDiscountApproval(activeBranch.id, pin);
+    const idempotencyKey = checkoutKeyRef.current ?? makeCheckoutKey();
+    checkoutKeyRef.current = idempotencyKey;
+    const loyaltyPointsToUse = Math.min(Math.max(0, Math.floor(Number(pointsToUse) || 0)), selectedMember?.points ?? 0, Math.floor(Math.max(0, subtotal - discountAmount)));
+    const approval = await requestDiscountApproval(activeBranch.id, pin, {
+      idempotencyKey, items: cart, customerId: selectedMember?.id ?? null, loyaltyPointsToUse,
+      discountType, discountValue: Number(discountValue) || 0, discounts: discountRules,
+      couponCode: appliedCoupon?.code, skipPromotions
+    });
+    if (!approvalMountedRef.current || checkoutKeyRef.current !== idempotencyKey || approvalStateRef.current.branchId !== activeBranch.id || approvalStateRef.current.version !== approvalDraftVersion) throw new Error("รายการในบิลเปลี่ยนแล้ว กรุณาให้ผู้จัดการอนุมัติส่วนลดอีกครั้ง");
     setDiscountApproval(approval);
-    checkoutKeyRef.current = null;
-  }, [activeBranch]);
+  }, [activeBranch, cart, selectedMember, pointsToUse, subtotal, discountAmount, discountType, discountValue, discountRules, appliedCoupon, skipPromotions, approvalDraftVersion]);
   const clearDiscountApproval = useCallback(() => setDiscountApproval(null), []);
 
+  useEffect(() => {
+    if (!discountApproval) return;
+    let expiresAt = Date.now() + 15 * 60_000;
+    try {
+      const tokenExpiry = Number(JSON.parse(atob(discountApproval.token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).exp) * 1000;
+      if (Number.isFinite(tokenExpiry)) expiresAt = tokenExpiry;
+    } catch { /* the API still verifies the token before accepting payment */ }
+    const timer = window.setTimeout(() => setDiscountApproval(null), Math.max(0, expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [discountApproval]);
+
   const total = useMemo(() => {
-    const pointsDiscount = Math.min(Number(pointsToUse) || 0, Math.max(0, subtotal - discountAmount));
+    const pointsDiscount = Math.min(Math.max(0, Math.floor(Number(pointsToUse) || 0)), selectedMember?.points ?? 0, Math.floor(Math.max(0, subtotal - discountAmount)));
     return Math.round(Math.max(0, subtotal - discountAmount - pointsDiscount) * 100) / 100;
-  }, [subtotal, discountAmount, pointsToUse]);
+  }, [subtotal, discountAmount, pointsToUse, selectedMember?.points]);
 
   const applyCoupon = useCallback(async (code: string) => {
     const trimmed = code.trim();
@@ -324,6 +361,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     try {
       const coupon = await validateCoupon(trimmed);
       setAppliedCoupon(coupon);
+      setDiscountRules([]);
+      setDiscountType(null);
+      setDiscountValue("");
+      setDiscountApproval(null);
       toast.success(`ใช้คูปอง ${coupon.code} แล้ว`);
     } catch (e) {
       setAppliedCoupon(null);
@@ -332,6 +373,39 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [toast]);
 
   const removeCoupon = useCallback(() => setAppliedCoupon(null), []);
+
+  const restoreOrderAsNewBill = useCallback(async (order: Order) => {
+    if (!activeBranch || order.branchId !== activeBranch.id) { toast.error("เลือกสาขาของบิลนี้ก่อนเปิดบิลใหม่"); return false; }
+    if (cart.length) { toast.error("เคลียร์หรือพักตะกร้าปัจจุบันก่อนเปิดบิลใหม่"); return false; }
+    if (order.status !== "REFUNDED") { toast.error("คืนเงินบิลเดิมก่อนเปิดบิลกลับมาแก้"); return false; }
+    const version = approvalStateRef.current.version;
+    let restored: CartItem[];
+    try {
+      const menu = (await getMenu()).filter((item) => item.active && item.branchType === activeBranch.branchType);
+      if (!approvalMountedRef.current || approvalStateRef.current.branchId !== activeBranch.id || approvalStateRef.current.version !== version) throw new Error("บิลปัจจุบันเปลี่ยนแล้ว กรุณาเปิดบิลใหม่อีกครั้ง");
+      const byId = new Map(menu.map((item) => [item.id, item]));
+      const addOnPrices = new Map(menu.map((item) => [item.name.trim(), item.basePrice]));
+      restored = order.items.map((item) => {
+        const current = byId.get(item.menuItemId);
+        if (!current) throw new Error(`สินค้า ${item.name} ถูกปิดขายหรือไม่พบแล้ว กรุณาเลือกสินค้าใหม่`);
+        return {
+          id: makeId(), menuItemId: item.menuItemId, name: current.name, category: current.category, basePrice: current.basePrice,
+          qty: item.qty, modifiers: (item.modifiers ?? []).map((modifier) => {
+            if (modifier.name !== "Add-on") return { ...modifier };
+            const price = addOnPrices.get(modifier.value.trim());
+            if (price === undefined) throw new Error(`ตัวเลือก ${modifier.value} ถูกปิดขายหรือไม่พบแล้ว กรุณาเลือกสินค้าใหม่`);
+            return { ...modifier, price };
+          }), note: item.note
+        };
+      });
+    } catch (error) { toast.error((error as Error).message); return false; }
+    clearCart();
+    setCart(restored);
+    setOrderNote(`เปิดใหม่จากบิล #${order.id}`);
+    setSkipPromotions(true);
+    toast.success(`นำรายการบิล #${order.id} มาแก้ในบิลใหม่แล้ว · เลือกส่วนลดและสมาชิกอีกครั้งก่อนรับเงิน`);
+    return true;
+  }, [activeBranch, cart.length, clearCart, toast]);
 
   const holdCart = useCallback((label?: string) => {
     if (cart.length === 0) {
@@ -353,13 +427,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
       pointsToUse,
       selectedMember,
       appliedCoupon,
+      skipPromotions,
       orderNote
     };
     setHeldBills((prev) => [bill, ...prev]);
     clearCart();
     toast.success("พักบิลแล้ว");
     return true;
-  }, [cart, total, activeBranch, discountType, discountValue, discountRules, pointsToUse, selectedMember, appliedCoupon, orderNote, clearCart, toast]);
+  }, [cart, total, activeBranch, discountType, discountValue, discountRules, pointsToUse, selectedMember, appliedCoupon, skipPromotions, orderNote, clearCart, toast]);
 
   const restoreHeldBill = useCallback((id: string) => {
     if (cart.length > 0) {
@@ -373,6 +448,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setOrderNote(bill.orderNote || "");
     setSelectedMember(bill.selectedMember || null);
     setAppliedCoupon(bill.appliedCoupon || null);
+    setSkipPromotions(bill.skipPromotions === true);
     setDiscountType(bill.discountType);
     setDiscountValue(bill.discountValue);
     setDiscountRules(bill.discountRules);
@@ -395,6 +471,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (!activeShift || activeShift.branchId !== activeBranch.id) throw new Error("กรุณาเปิดกะของสาขานี้ก่อนขาย");
     const idempotencyKey = checkoutKeyRef.current ?? makeCheckoutKey();
     checkoutKeyRef.current = idempotencyKey;
+    const loyaltyPointsToUse = Math.min(Math.max(0, Math.floor(usablePoints)), selectedMember?.points ?? 0, Math.floor(Math.max(0, subtotal - discountAmount)));
     const draft = JSON.parse(sessionStorage.getItem(storageKey) || "{}");
     sessionStorage.setItem(storageKey, JSON.stringify({ ...draft, checkoutKey: idempotencyKey }));
     try {
@@ -413,7 +490,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           discountApprovalToken: discountApproval?.token,
           branchId: activeBranch.id,
           customerId,
-          loyaltyPointsToUse: usablePoints,
+          loyaltyPointsToUse,
           userId: user?.id,
           shiftId: activeShift.id,
           idempotencyKey,
@@ -438,15 +515,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
       }
       return order;
     } catch (e) {
+      if ((e as { code?: string })?.code === "DISCOUNT_APPROVAL_REQUIRED") setDiscountApproval(null);
       toast.error((e as Error).message);
       throw e;
     }
-  }, [cart, orderNote, storageKey, activeBranch, activeShift, user, discountType, discountValue, discountRules, appliedCoupon, skipPromotions, discountApproval, clearCart, refreshShift, toast]);
+  }, [cart, orderNote, storageKey, activeBranch, activeShift, user, discountType, discountValue, discountRules, appliedCoupon, skipPromotions, discountApproval, selectedMember?.points, subtotal, discountAmount, clearCart, refreshShift, toast]);
 
   return (
     <CartContext.Provider value={{
       cart, orderNote, setOrderNote, selectedMember, setSelectedMember, discountType, discountValue, discountRules, pointsToUse, scanFeedback,
-      addItem, updateQty, setItemNote, removeItem, clearCart, setDiscountType, setDiscountValue, addDiscountRule, removeDiscountRule, clearDiscountRules, setPointsToUse, setScanFeedback, checkout,
+      addItem, updateQty, setItemNote, removeItem, clearCart, restoreOrderAsNewBill, setDiscountType, setDiscountValue, addDiscountRule, removeDiscountRule, clearDiscountRules, setPointsToUse, setScanFeedback, checkout,
       subtotal, discountAmount, total,
       heldBills: visibleHeldBills, holdCart, restoreHeldBill, removeHeldBill,
       appliedCoupon, applyCoupon, removeCoupon, autoPromotions,

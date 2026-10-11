@@ -25,21 +25,23 @@ function toDate(value: unknown) {
 /**
  * Next number in its own series: PREFIX-branch-year-000001, one series per
  * prefix (document type), branch and year. Reads the highest number issued in
- * that series rather than counting rows, so deleted rows or other prefixes in
- * the same table never shift it; the field is unique, so a race just retries.
+ * that series rather than counting rows; number allocation is locked for the
+ * duration of creation, including branches that still use a legacy prefix.
  */
-async function nextRunningNo(prefix: string, branchId: number, table: string, field: string) {
-  const series = `${prefix}-${branchId}-${new Date().getFullYear()}-`;
-  const last = await db[table].findFirst({ where: { [field]: { startsWith: series } }, orderBy: { [field]: "desc" }, select: { [field]: true } });
-  const lastNo = last ? Number(String(last[field]).slice(series.length)) || 0 : 0;
+function runningYear() {
+  return new Intl.DateTimeFormat("en", { timeZone: "Asia/Bangkok", year: "numeric" }).format(new Date());
+}
+
+async function nextRunningNo(prefix: string, branchId: number, table: string, field: string, client = db, aliases: string[] = []) {
+  const series = `${prefix}-${branchId}-${runningYear()}-`;
+  const seriesPrefixes = [...new Set([prefix, ...aliases])].map((p) => `${p}-${branchId}-${runningYear()}-`);
+  const rows = await client[table].findMany({ where: { OR: seriesPrefixes.map((p) => ({ [field]: { startsWith: p } })) }, select: { [field]: true } });
+  const lastNo = rows.reduce((highest: number, row: any) => Math.max(highest, Number(String(row[field]).split("-").at(-1)) || 0), 0);
   return `${series}${String(lastNo + 1).padStart(6, "0")}`;
 }
 
-async function withRunningNo<T>(make: () => Promise<string>, create: (no: string) => Promise<T>) {
-  for (let attempt = 0; ; attempt += 1) {
-    try { return await create(await make()); }
-    catch (error: any) { if (error?.code !== "P2002" || attempt >= 4) throw error; }
-  }
+async function lockNumberSeries(tx: any, key: string) {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))::text AS locked`;
 }
 
 /** VAT inside an order: the stored figure, or (older orders saved before the VAT fix) derived the same way the receipt prints it. */
@@ -83,13 +85,17 @@ export async function createTaxInvoice(input: {
   buyerAddress?: string;
   buyerBranch?: string;
 }) {
-  const order = await db.order.findUnique({
+  return prisma.$transaction(async (tx: any) => {
+  // The status and existing invoice must be checked after the lock: another
+  // request may have issued an invoice or reversed the sale while we waited.
+  await tx.$queryRaw`SELECT id FROM orders WHERE id = ${input.orderId} FOR UPDATE`;
+  const order = await tx.order.findUnique({
     where: { id: input.orderId },
     include: { customer: true, branch: true }
   });
   if (!order) throw new Error("ไม่พบออเดอร์");
   if (!INVOICEABLE_ORDER_STATUSES.has(order.status)) throw new Error(`บิล #${order.id} ถูกยกเลิก/คืนเงินแล้ว ออกใบกำกับภาษีไม่ได้`);
-  const existing = await db.taxInvoice.findFirst({ where: { orderId: order.id, status: "ISSUED" }, select: { invoiceNo: true } });
+  const existing = await tx.taxInvoice.findFirst({ where: { orderId: order.id, status: "ISSUED" }, select: { invoiceNo: true } });
   if (existing) throw new Error(`บิล #${order.id} ออกใบกำกับภาษีแล้ว (${existing.invoiceNo})`);
 
   const buyerName = input.buyerName.trim();
@@ -107,9 +113,9 @@ export async function createTaxInvoice(input: {
   const vat = orderVat(order, setting);
   if (!vat.rate) throw new Error("ร้านตั้งค่าไม่คิด VAT จึงออกใบกำกับภาษีไม่ได้");
 
-  const invoice = await withRunningNo(
-    () => nextRunningNo("TAX", order.branchId, "taxInvoice", "invoiceNo"),
-    (invoiceNo) => db.taxInvoice.create({
+  await lockNumberSeries(tx, `tax-invoice:${order.branchId}:${runningYear()}`);
+  const invoiceNo = await nextRunningNo("TAX", order.branchId, "taxInvoice", "invoiceNo", tx);
+  const invoice = await tx.taxInvoice.create({
       data: {
         branchId: order.branchId,
         orderId: order.id,
@@ -130,10 +136,9 @@ export async function createTaxInvoice(input: {
         total: roundMoney(order.total)
       },
       include: { order: { include: { items: true } }, customer: true, branch: true }
-    })
-  ) as any;
+    });
 
-  await db.integrationOutbox.create({
+  await tx.integrationOutbox.create({
     data: {
       provider: "rd_tax",
       eventType: "TAX_INVOICE_ISSUED",
@@ -158,6 +163,7 @@ export async function createTaxInvoice(input: {
   });
 
   return hydrateInvoice(invoice);
+  }, { timeout: 20_000, maxWait: 10_000 });
 }
 
 /** Cancel an issued invoice (wrong buyer details, or the sale was reversed). The number stays used. */
@@ -592,6 +598,7 @@ export async function listBusinessDocuments(branchId?: number) {
 
 /** Each document type has its own running number series. */
 const DOCUMENT_PREFIX: Record<string, string> = { DELIVERY_NOTE: "DN", INVOICE: "INV", QUOTATION: "QT", CREDIT_NOTE: "CN" };
+const LEGACY_DOCUMENT_PREFIX: Record<string, string> = { DELIVERY_NOTE: "DELI", INVOICE: "INVO", QUOTATION: "QUOT", CREDIT_NOTE: "CRED" };
 export const DOCUMENT_STATUSES = ["DRAFT", "ISSUED", "PAID", "ACCEPTED", "VOID"] as const;
 // what each status may move to; VOID and converted (ACCEPTED) quotations are final
 const DOCUMENT_TRANSITIONS: Record<string, string[]> = {
@@ -612,12 +619,17 @@ function assertDocumentFields(input: { customerName?: string; total?: number }) 
 }
 
 export async function createBusinessDocument(input: { branchId: number; type: string; customerName?: string; total?: number; payload?: unknown }) {
-  const prefix = DOCUMENT_PREFIX[input.type];
-  if (!prefix) throw new Error("ประเภทเอกสารไม่ถูกต้อง");
+  const defaultPrefix = DOCUMENT_PREFIX[input.type];
+  if (!defaultPrefix) throw new Error("ประเภทเอกสารไม่ถูกต้อง");
   assertDocumentFields({ customerName: input.customerName ?? "", total: Number(input.total) });
-  const doc = await withRunningNo(
-    () => nextRunningNo(prefix, input.branchId, "businessDocument", "documentNo"),
-    (documentNo) => db.businessDocument.create({
+  const doc = await prisma.$transaction(async (tx: any) => {
+    await lockNumberSeries(tx, `business-document:${input.branchId}:${input.type}:${runningYear()}`);
+    const oldest = await tx.businessDocument.findFirst({ where: { branchId: input.branchId, type: input.type }, orderBy: { id: "asc" }, select: { documentNo: true } });
+    const aliases = [defaultPrefix, LEGACY_DOCUMENT_PREFIX[input.type]];
+    const oldPrefix = String(oldest?.documentNo ?? "").split("-")[0];
+    const prefix = aliases.includes(oldPrefix) ? oldPrefix : defaultPrefix;
+    const documentNo = await nextRunningNo(prefix, input.branchId, "businessDocument", "documentNo", tx, aliases);
+    return tx.businessDocument.create({
       data: {
         branchId: input.branchId,
         type: input.type,
@@ -626,8 +638,8 @@ export async function createBusinessDocument(input: { branchId: number; type: st
         total: roundMoney(Number(input.total)),
         payload: JSON.stringify(input.payload ?? {})
       }
-    })
-  );
+    });
+  });
   return hydrateDocument(doc);
 }
 
@@ -688,7 +700,7 @@ export async function getTaxExportRows(input: { from?: string; to?: string; bran
       branch: row.branch?.name ?? "",
       buyerName: row.buyerName,
       buyerTaxId: row.buyerTaxId,
-      vatRate: row.vatRate,
+      vatRate: row.vatRate > 0 ? row.vatRate : "ยังไม่ยืนยัน",
       // a voided invoice stays in the list (its number was used) but carries no amounts
       base: isVoid ? 0 : roundMoney(row.total - row.tax),
       tax: isVoid ? 0 : row.tax,

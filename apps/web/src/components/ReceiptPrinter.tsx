@@ -419,7 +419,7 @@ export function CashDrawerModal({ total, isSubmitting = false, errorMessage = nu
         <div className="cash-modal__actions">
           <button className="btn btn--ghost btn--full" onClick={onCancel} disabled={isSubmitting}>ยกเลิก</button>
           <button className="btn btn--primary btn--full" onClick={submitPayment} disabled={!isValid || isSubmitting}>
-            {isSubmitting ? "กำลังบันทึก..." : "รับเงินและพิมพ์ใบเสร็จ"}
+            {isSubmitting ? "กำลังบันทึก..." : "ยืนยันรับเงิน"}
           </button>
         </div>
       </div>

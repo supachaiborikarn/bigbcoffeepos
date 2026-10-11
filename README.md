@@ -60,6 +60,16 @@ npm run load:concurrency --workspace apps/api
 npm run browser:e2e --workspace apps/api
 ```
 
+ชุดตรวจปัญหา QA เดือนตุลาคมใช้ API จำลองและเบราว์เซอร์แยก โดยไม่แตะข้อมูลร้าน:
+```bash
+npm run qa:check
+```
+
+ชุดตรวจยอดเงิน สต็อก และเอกสารใช้เฉพาะฐานข้อมูลทดสอบ `benzpos_qa` บน localhost ซึ่งต้องสร้างและรัน migration ก่อน:
+```bash
+DATABASE_URL='postgresql://qa_user@127.0.0.1:5432/benzpos_qa?schema=public' QA_DISPOSABLE_DB=true npm run qa:database:check
+```
+
 Ops checks:
 ```bash
 npm run monitoring:check --workspace apps/api
@@ -78,6 +88,12 @@ API scripts ที่ตั้งใจให้ใช้ได้:
 - `ALLOW_MOCK_HISTORY=1 npm run mock-history:generate --workspace apps/api`: สร้างข้อมูล mock สำหรับ disposable/dev database เท่านั้น
 
 สคริปต์ทดลองที่มี credential หรือ path ส่วนตัวไม่ควรถูก commit; ให้ใช้ env vars หรือสคริปต์ local นอก repo แทน
+
+ล้างข้อมูล QA วันที่ 10–11 ตุลาคม 2026: รันจาก `apps/api` เพื่อสร้างรายการตรวจ โดยยังไม่แก้ฐานข้อมูล:
+```bash
+node --import tsx src/scripts/qa-cleanup-2026-10.ts --manifest /path/to/qa-manifest.json
+```
+ตรวจ ID และหลักฐานในไฟล์ก่อนตั้ง `reviewed=true`; การลบต้องได้รับอนุมัติและใช้ `--apply --manifest` โดยสคริปต์จะตรวจว่าข้อมูลยังตรงกับรายการเดิมและเก็บสต็อกปัจจุบัน ตั้งค่าร้าน พนักงาน และข้อมูลปิดกะไว้.
 
 ## Environment
 API:

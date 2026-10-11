@@ -69,8 +69,12 @@ export default function OrderQueuePage() {
     }
   };
 
+  // one request per bill at a time: a double click must not cancel twice
+  const [busyId, setBusyId] = useState<number | null>(null);
   const cancelOrder = async (order: Order) => {
+    if (busyId !== null) return;
     if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้`)) return;
+    setBusyId(order.id);
     try {
       await fetchJson(`${API_URL}/orders/${order.id}`, {
         method: "PATCH",
@@ -81,6 +85,8 @@ export default function OrderQueuePage() {
       void refreshShift().catch(() => {});
     } catch (error) {
       toast.error((error as Error).message);
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -141,6 +147,7 @@ export default function OrderQueuePage() {
                 className="btn btn--danger btn--full"
                 style={{ padding: "14px", fontSize: "16px" }}
                 onClick={() => cancelOrder(order)}
+                disabled={busyId !== null}
               >
                 <Ban size={18} /> ยกเลิกบิล
               </button>

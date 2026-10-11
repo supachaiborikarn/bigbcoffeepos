@@ -7,7 +7,7 @@ import type { ReceiptPrintJob } from "./printJob";
 import { getPaperWidth, PAPER_SPECS } from "./printerSettings";
 import { ESCPOS, padRow } from "../components/ReceiptPrinter";
 
-const SOURCE_LABELS: Record<string, string> = { system: "ยอดขายในระบบ", pospos: "POSPOS sales-only", all: "ทั้งหมด" };
+const SOURCE_LABELS: Record<string, string> = { system: "ยอดขายในระบบ", pospos: "ยอดขายนำเข้า", all: "ทั้งหมด" };
 const PAYMENT_LABELS: Record<PaymentMethod | string, string> = { CASH: "เงินสด", QR: "QR", CARD: "บัตร", EWALLET: "E-Wallet" };
 const TOP_ITEM_LIMIT = 10;
 
@@ -59,7 +59,7 @@ export function buildDailySummaryHtml(report: DailyCloseReport, widthMm: 58 | 80
   const paymentTotal = report.payments.reduce((sum, p) => sum + p.total, 0);
   const paymentCount = report.payments.reduce((sum, p) => sum + p.count, 0);
 
-  const sources = ([["ในระบบ", report.sourceBreakdown.system], ["POSPOS", report.sourceBreakdown.pospos], ["ทั้งหมด", report.sourceBreakdown.all]] as const)
+  const sources = ([["ในระบบ", report.sourceBreakdown.system], ["ยอดขายนำเข้า", report.sourceBreakdown.pospos], ["ทั้งหมด", report.sourceBreakdown.all]] as const)
     .map(([label, s]) => `<tr><td>${label}</td><td class="n">${num(s.orders)}</td><td class="n">${money(s.revenue)}</td></tr>`).join("");
   const payments = report.payments
     .map((p) => `<tr><td>${esc(PAYMENT_LABELS[p.method] ?? p.method)}</td><td class="n">${num(p.count)}</td><td class="n">${money(p.total)}</td></tr>`).join("");

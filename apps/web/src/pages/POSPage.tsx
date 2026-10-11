@@ -17,6 +17,7 @@ import ModifierModal from "../components/pos/ModifierModal";
 import CupStockStrip, { useCupStock } from "../components/pos/CupStockStrip";
 import { businessProfile } from "../utils/business";
 import { drinkAddOns, shouldUseModifierModal } from "../utils/menuRules";
+import { displayCategoryLabel } from "../utils/categoryLabel";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -314,12 +315,12 @@ export default function POSPage() {
       rule = { id: makeRuleId(), type: "ORDER_FIXED", value, maxDiscount, label: `ลดทั้งบิล ${formatMoney(value)}` };
     } else if (discountDraft.type === "CATEGORY_PERCENT") {
       if (!categoryName || !Number.isFinite(value) || value <= 0 || value > 100) return toast.error("เลือกหมวด และเปอร์เซ็นต์ต้องมากกว่า 0 ไม่เกิน 100");
-      rule = { id: makeRuleId(), type: "CATEGORY_PERCENT", category: categoryName, value, maxDiscount, label: `ลด ${categoryName} ${value}%` };
+      rule = { id: makeRuleId(), type: "CATEGORY_PERCENT", category: categoryName, value, maxDiscount, label: `ลด ${displayCategoryLabel(categoryName)} ${value}%` };
     } else if (discountDraft.type === "BUY_X_GET_Y") {
       const buyQty = Math.max(1, Math.floor(Number(discountDraft.buyQty) || 2));
       const getQty = Math.max(1, Math.floor(Number(discountDraft.getQty) || 1));
       if (!categoryName) return toast.error("เลือกหมวดโปรโมชันก่อน");
-      rule = { id: makeRuleId(), type: "BUY_X_GET_Y", category: categoryName, buyQty, getQty, maxDiscount, label: `${categoryName} ซื้อ ${buyQty} แถม ${getQty}` };
+      rule = { id: makeRuleId(), type: "BUY_X_GET_Y", category: categoryName, buyQty, getQty, maxDiscount, label: `${displayCategoryLabel(categoryName)} ซื้อ ${buyQty} แถม ${getQty}` };
     }
 
     if (rule) {
@@ -488,9 +489,9 @@ export default function POSPage() {
           <label className="studio-search"><Search size={20} /><input ref={searchInputRef} aria-label="ค้นหาสินค้า" placeholder={profile.type === "coffee" ? "ค้นหาเมนู เครื่องดื่ม หรือเบเกอรี่" : "ค้นหาสินค้า บริการ หรือรหัสสินค้า"} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={handleProductSearchKeyDown} /><kbd>F1</kbd></label>
           <label className="studio-scanner"><ScanBarcode size={20} /><input ref={scannerInputRef} aria-label="ยิงบาร์โค้ด" inputMode="none" placeholder="สแกนบาร์โค้ด" onKeyDown={(e) => { if (e.key === "Enter") { processBarcodeScan(e.currentTarget.value); e.currentTarget.value = ""; } }} /></label>
         </div>
-        <div className="studio-categories" aria-label="หมวดสินค้า">{categories.map((item) => <button key={item} aria-pressed={category === item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{item}<span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span></button>)}</div>
+        <div className="studio-categories" aria-label="หมวดสินค้า">{categories.map((item) => <button key={item} aria-pressed={category === item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{displayCategoryLabel(item)}<span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span></button>)}</div>
         </div>
-        <div className="studio-catalog-label"><strong>{category === "ทั้งหมด" ? "สินค้าทั้งหมด" : category}</strong><span role="status" className={scanFeedback.tone === "error" ? "negative" : ""}>{scanFeedback.tone === "idle" ? "แตะสินค้าเพื่อเพิ่มรายการ" : scanFeedback.message}</span></div>
+        <div className="studio-catalog-label"><strong>{category === "ทั้งหมด" ? "สินค้าทั้งหมด" : displayCategoryLabel(category)}</strong><span role="status" className={scanFeedback.tone === "error" ? "negative" : ""}>{scanFeedback.tone === "idle" ? "แตะสินค้าเพื่อเพิ่มรายการ" : scanFeedback.message}</span></div>
         <div className="pos-products-scroll studio-products-scroll"><ProductGrid menu={menu} category={category} search={search} branchType={activeBranch?.branchType} onItemClick={handleMenuItemClick} status={menuState} onRetry={loadMenu} /></div>
         {recipeCount === 0 && profile.type === "coffee" && <div className="studio-recipe-note">ยังไม่มีสูตรสำหรับตัดวัตถุดิบอัตโนมัติ</div>}
         {isCompact && cart.length > 0 && <button className="pos-cart-fab" onClick={() => setShowCartSheet(true)}><span className="pos-cart-fab__info"><ShoppingCart size={20} /><span>{cartCount} รายการ</span></span><span className="pos-cart-fab__pay">{formatMoney(payableTotal)} · ชำระเงิน →</span></button>}

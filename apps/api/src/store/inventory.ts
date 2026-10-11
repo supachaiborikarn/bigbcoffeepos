@@ -84,8 +84,15 @@ export async function updateIngredient(
 }
 
 export async function getInventoryItems(branchId: number) {
+  const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { branchType: true } });
+  if (!branch) return [];
   const ingredients = await prisma.ingredient.findMany({
-    where: { stocks: { some: { branchId } } },
+    where: { OR: [
+      { stocks: { some: { branchId } } },
+      { stocks: { some: { branch: { branchType: branch.branchType } } } },
+      { recipes: { some: { menuItem: { branchType: branch.branchType, active: true } } } },
+      { stocks: { none: {} }, recipes: { none: {} } }
+    ] },
     include: {
       stocks: {
         where: { branchId }

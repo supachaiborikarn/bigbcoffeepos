@@ -3,6 +3,7 @@ import { getCustomer } from "./customers.js";
 import { getCupStockRequirements, getCupStockRequirementsByOption } from "./cupStockSettings.js";
 import { getStoreSetting } from "./settings.js";
 import { log } from "../logger.js";
+import { getShiftSalesTotals } from "./shiftTotals.js";
 
 type Modifier = { name: string; value: string; price: number };
 type PaymentDetails = { cashReceived?: number; changeAmount?: number; paymentConfirmed?: boolean; referenceNo?: string };
@@ -34,6 +35,7 @@ type OrderItemDraft = {
 const PAYMENT_METHODS = new Set<PaymentMethod>(["CASH", "QR", "CARD", "EWALLET"]);
 const ALLOWED_STATUSES = new Set(["PAID", "READY", "CANCELLED", "REFUNDED"]);
 const REVERSAL_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
+const ORDER_ITEMS_INCLUDE = { include: { menuItem: { select: { category: true, basePrice: true } } } } as const;
 const DRINK_CATEGORIES = ["กาแฟ", "ชา", "นม/โกโก้", "เครื่องดื่ม", "เครื่องดื่มชง", "COLD", "FRAPPE", "Hot"];
 const checkoutTransactionRetries = Math.max(0, Math.floor(Number(process.env.CHECKOUT_TX_RETRIES || 5)));
 const MODIFIER_CATALOG = {
@@ -105,6 +107,8 @@ function hydrateOrder(row: any) {
     createdAt: row.createdAt.toISOString(),
     items: row.items.map((i: any) => ({
       ...i,
+      category: i.menuItem?.category ?? i.category ?? "",
+      menuBasePrice: i.menuItem?.basePrice ?? i.basePrice,
       modifiers: typeof i.modifiers === "string" ? JSON.parse(i.modifiers) : i.modifiers
     }))
   };
@@ -257,6 +261,10 @@ function computeDiscount(rules: DiscountRule[], subtotal: number, orderItems: Or
   });
 
   return { discountAmount: roundMoney(totalDiscount), applied };
+}
+
+export function selectBillDiscounts(manual: DiscountRule[], coupon: DiscountRule | null, promotions: DiscountRule[]) {
+  return manual.length ? manual : coupon ? [coupon] : promotions;
 }
 
 function normalizePaymentMethod(value: string): PaymentMethod {
@@ -498,7 +506,7 @@ function scheduleIntegrationOutbox(outboxPayload: Record<string, unknown>) {
 export async function getOrders(branchId?: number, limit?: number) {
   const orders = await prisma.order.findMany({
     where: branchId ? { branchId } : undefined,
-    include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } },
+    include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } },
     orderBy: { id: "desc" },
     ...(limit ? { take: limit } : {})
   });
@@ -508,7 +516,7 @@ export async function getOrders(branchId?: number, limit?: number) {
 export async function getOrder(id: number) {
   const order = await prisma.order.findUnique({
     where: { id },
-    include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
+    include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
   });
   return hydrateOrder(order);
 }
@@ -518,7 +526,7 @@ export async function getOrderByIdempotencyKey(idempotencyKey: string) {
   if (!key) return null;
   const order = await prisma.order.findUnique({
     where: { idempotencyKey: key },
-    include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
+    include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
   });
   return hydrateOrder(order);
 }
@@ -536,13 +544,22 @@ export async function updateOrderStatusWithContext(id: number, input: {
   if (!ALLOWED_STATUSES.has(status)) throw new Error("สถานะออเดอร์ไม่ถูกต้อง");
 
   if (REVERSAL_STATUSES.has(status)) {
+    const owner = await prisma.order.findUnique({ where: { id }, select: { shiftId: true } });
     const order = await prisma.$transaction(async (tx) => {
+      // All cash-changing actions take the shift lock before the order lock.
+      if (owner?.shiftId) await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${owner.shiftId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} FOR UPDATE`;
       const current = await tx.order.findUnique({
         where: { id },
-        include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
+        include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
       });
       if (!current) return null;
       if (REVERSAL_STATUSES.has(current.status)) return current;
+      // Claim the reversal atomically: a double-click sends two requests that both read
+      // PAID above; only the one whose conditional update wins may restore stock and
+      // take the bill off the shift (otherwise the shift went to −1 bill / −฿65).
+      const claimed = await tx.order.updateMany({ where: { id, status: { notIn: [...REVERSAL_STATUSES] } }, data: { status } });
+      if (claimed.count !== 1) return tx.order.findUnique({ where: { id }, include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } } });
       const issuedInvoice = await tx.taxInvoice.findFirst({ where: { orderId: current.id, status: "ISSUED" }, select: { invoiceNo: true } });
       if (issuedInvoice) throw new Error(`บิลนี้ออกใบกำกับภาษี ${issuedInvoice.invoiceNo} แล้ว ต้องยกเลิกใบกำกับก่อน`);
       const reversalPayload = {
@@ -626,25 +643,17 @@ export async function updateOrderStatusWithContext(id: number, input: {
       }
 
       if (current.shiftId) {
-        const cashAdd = current.paymentMethod === "CASH" ? -current.total : 0;
-        const qrAdd = current.paymentMethod === "QR" ? -current.total : 0;
-        const cardAdd = current.paymentMethod === "CARD" || current.paymentMethod === "EWALLET" ? -current.total : 0;
+        const shift = await tx.shift.findUniqueOrThrow({ where: { id: current.shiftId } });
         await tx.shift.update({
           where: { id: current.shiftId },
-          data: {
-            totalSales: { increment: -current.total },
-            totalOrders: { increment: -1 },
-            cashSales: { increment: cashAdd },
-            qrSales: { increment: qrAdd },
-            cardSales: { increment: cardAdd }
-          }
+          data: await getShiftSalesTotals(tx, shift)
         });
       }
 
       const updated = await tx.order.update({
         where: { id },
         data: { status },
-        include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
+        include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
       });
       await tx.orderEvent.create({
         data: {
@@ -662,11 +671,14 @@ export async function updateOrderStatusWithContext(id: number, input: {
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} FOR UPDATE`;
       const current = await tx.order.findUnique({ where: { id }, select: { status: true } });
+      if (!current) return null;
+      if (REVERSAL_STATUSES.has(current.status)) throw new Error("บิลนี้ถูกยกเลิก/คืนเงินแล้ว เปลี่ยนสถานะไม่ได้");
       const order = await tx.order.update({
         where: { id },
         data: { status },
-        include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
+        include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
       });
       await tx.orderEvent.create({
         data: {
@@ -680,8 +692,9 @@ export async function updateOrderStatusWithContext(id: number, input: {
       return order;
     });
     return hydrateOrder(updated);
-  } catch {
-    return null;
+  } catch (error: any) {
+    if (error?.code === "P2025") return null;
+    throw error;
   }
 }
 
@@ -842,9 +855,11 @@ export async function createOrder(input: {
   const validPromotionRules = input.skipPromotions ? [] : activePromotions.map(promotionToDiscountRule).filter((rule: DiscountRule | null): rule is DiscountRule => Boolean(rule));
   const bestPromotion = bestPromotionRule(validPromotionRules, subtotal, orderItems);
   const promotionRules = bestPromotion ? [bestPromotion] : [];
+  const fallbackRule = legacyDiscountRule(input.discountType, input.discountValue);
+  const manualRules = requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []);
 
   // Coupon: validate before pricing, then increment usage atomically inside the transaction.
-  const couponCode = typeof input.couponCode === "string" ? input.couponCode.trim().toUpperCase().slice(0, 40) : "";
+  const couponCode = !manualRules.length && typeof input.couponCode === "string" ? input.couponCode.trim().toUpperCase().slice(0, 40) : "";
   let coupon: any = null;
   if (couponCode) {
     coupon = await (prisma as any).coupon.findUnique({ where: { code: couponCode } }).catch(() => null);
@@ -856,13 +871,9 @@ export async function createOrder(input: {
   }
   const couponRule = coupon ? couponToDiscountRule(coupon) : null;
 
-  const fallbackRule = legacyDiscountRule(input.discountType, input.discountValue);
-  const manualRules = requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []);
-  const discountRules = [
-    ...promotionRules,
-    ...(couponRule ? [couponRule] : []),
-    ...manualRules
-  ];
+  // One discount source per bill: an explicit manual discount replaces a coupon,
+  // and a coupon replaces the automatically selected promotion.
+  const discountRules = selectBillDiscounts(manualRules, couponRule, promotionRules);
   const { discountAmount, applied: appliedDiscounts } = computeDiscount(discountRules, subtotal, orderItems);
   if (manualRules.length && subtotal > 0 && !input.canApproveDiscount) {
     const manualAmount = computeDiscount(manualRules, subtotal, orderItems).discountAmount;
@@ -918,6 +929,11 @@ export async function createOrder(input: {
     const transactionStartedAt = Date.now();
     try {
       order = await prisma.$transaction(async (tx) => {
+    if (input.shiftId) {
+      await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${input.shiftId} FOR UPDATE`;
+      const openShift = await tx.shift.findFirst({ where: { id: input.shiftId, branchId: input.branchId, status: "OPEN" } });
+      if (!openShift) throw new Error("กะนี้ปิดแล้วหรือเป็นกะของสาขาอื่น");
+    }
     const requiredStock = new Map<number, number>();
     const flexibleStock = new Map<number, number>();
     const recipes = await measureCheckoutStep("recipes", () => tx.recipe.findMany({
@@ -959,7 +975,7 @@ export async function createOrder(input: {
           }))
         }
       },
-      include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
+      include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
     }));
 
     await measureCheckoutStep("paymentCreate", () => tx.payment.create({
@@ -998,7 +1014,7 @@ export async function createOrder(input: {
     }
     await measureCheckoutStep("orderEventCreateMany", () => tx.orderEvent.createMany({ data: orderEvents }));
 
-    if (coupon) {
+    if (coupon && !manualRules.length) {
       const couponUpdate = await tx.coupon.updateMany({
         where: {
           id: coupon.id,
@@ -1029,18 +1045,11 @@ export async function createOrder(input: {
     await measureCheckoutStep("lotFefo", () => applyLotFefoDeductions(tx, input.branchId, requiredStock, flexibleStock));
 
     if (input.shiftId) {
-      const cashAdd = paymentMethod === "CASH" ? total : 0;
-      const qrAdd = paymentMethod === "QR" ? total : 0;
-      const cardAdd = paymentMethod === "CARD" || paymentMethod === "EWALLET" ? total : 0;
+      const shift = await tx.shift.findUniqueOrThrow({ where: { id: input.shiftId } });
+      const totals = await getShiftSalesTotals(tx, shift);
       const shiftUpdate = await measureCheckoutStep("shiftUpdate", () => tx.shift.updateMany({
         where: { id: input.shiftId, branchId: input.branchId, status: "OPEN" },
-        data: {
-          totalSales: { increment: total },
-          totalOrders: { increment: 1 },
-          cashSales: { increment: cashAdd },
-          qrSales: { increment: qrAdd },
-          cardSales: { increment: cardAdd }
-        }
+        data: totals
       }));
       if (shiftUpdate.count !== 1) throw new Error("กะนี้ปิดแล้วหรือเป็นกะของสาขาอื่น");
     }
@@ -1054,7 +1063,7 @@ export async function createOrder(input: {
       if (idempotencyKey && error?.code === "P2002") {
         const existingOrder = await prisma.order.findUnique({
           where: { idempotencyKey },
-          include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
+          include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
         });
         if (existingOrder) return hydrateOrder(existingOrder);
       }

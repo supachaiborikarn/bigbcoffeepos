@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "qa:api:check": "node scripts/api-regression-check.mjs",
+    "qa:ui:check": "node scripts/qa-ui-regression.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.38.0",

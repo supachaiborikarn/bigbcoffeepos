@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, ArrowLeftRight, ClipboardCheck, ClipboardList, History, Minus, Package, Plus, Search, Settings2, X } from "lucide-react";
 import { createIngredient, createStockAdjustment, getInventory, getMenu, getRecipes, getStockMovements, updateInventoryItem } from "../../api";
 import type { InventoryItem, StockMovement } from "../../types";
@@ -88,20 +88,24 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
   const [drinkNames, setDrinkNames] = useState<Set<string>>(new Set());
   const [recipeIngredientIds, setRecipeIngredientIds] = useState<Set<number>>(new Set());
   const [showDrinks, setShowDrinks] = useState(false);
+  const loadId = useRef(0);
+  const currentBranchId = useRef(branchId);
+  currentBranchId.current = branchId;
   const cups = useCupStock(activeBranch?.branchType === "coffee" ? branchId : undefined, loadedAtKey(items));
 
   const load = useCallback(async () => {
-    if (!branchId) return;
+    if (!branchId || branchId !== currentBranchId.current) return;
+    const requestId = ++loadId.current;
+    const current = () => requestId === loadId.current;
     try {
-      const [inventory, menu, recipes] = await Promise.all([getInventory(branchId), getMenu().catch(() => []), getRecipes().catch(() => [])]);
-      setRecipeIngredientIds(new Set(recipes.flatMap((r) => r.ingredients.map((i) => i.ingredientId))));
-      setDrinkNames(new Set(menu.filter((m) => (!activeBranch?.branchType || m.branchType === activeBranch.branchType) && (shouldUseModifierModal(m) || isCupVariantMenuItem(m))).map((m) => m.name.trim())));
-      setItems(inventory);
-      setLoadedAt(new Date());
-      setError("");
-    } catch (err) { setError((err as Error).message); } finally { setLoading(false); }
+      await Promise.allSettled([
+        getInventory(branchId).then((inventory) => { if (current()) { setItems(inventory); setLoadedAt(new Date()); setError(""); } }).catch((err) => { if (current()) setError((err as Error).message); }).finally(() => { if (current()) setLoading(false); }),
+        getRecipes().then((recipes) => { if (current()) setRecipeIngredientIds(new Set(recipes.flatMap((r) => r.ingredients.map((i) => i.ingredientId)))); }),
+        getMenu().then((menu) => { if (current()) setDrinkNames(new Set(menu.filter((m) => (!activeBranch?.branchType || m.branchType === activeBranch.branchType) && (shouldUseModifierModal(m) || isCupVariantMenuItem(m))).map((m) => m.name.trim()))); })
+      ]);
+    } catch (err) { if (current()) setError((err as Error).message); } finally { if (current()) setLoading(false); }
   }, [branchId, activeBranch?.branchType]);
-  useEffect(() => { setLoading(true); void load(); }, [load]);
+  useEffect(() => { setItems([]); setSelectedId(null); setLoading(true); void load(); return () => { loadId.current += 1; }; }, [load]);
   // Never hide something a recipe still deducts — that stock is real.
   const isDrink = useCallback((item: InventoryItem) => drinkNames.has(item.name.trim()) && !recipeIngredientIds.has(item.ingredientId), [drinkNames, recipeIngredientIds]);
   const stockItems = useMemo(() => showDrinks ? items : items.filter((item) => !isDrink(item)), [items, isDrink, showDrinks]);
@@ -303,7 +307,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
         <div className="stk-current__meta"><span className={`stk-badge is-${status}`}>{STATUS_LABEL[status]}</span><small>{item.reorderLevel > 0 ? `แจ้งเตือนเมื่อเหลือ ${fmtQty(item.reorderLevel)} ${item.unit}` : "ยังไม่ได้ตั้งจุดแจ้งเตือน"}</small></div>
       </div>
 
-      <form onSubmit={submit} className="stk-form">
+      <form onSubmit={submit} className="stk-form" noValidate>
         <div className="stk-modes" role="tablist" aria-label="ประเภทการปรับ">
           {(["in", "out", "count"] as Mode[]).map((m) => <button key={m} type="button" role="tab" aria-selected={mode === m} className={`is-${m}${mode === m ? " is-active" : ""}`} onClick={() => switchMode(m)}>
             {m === "in" ? <Plus size={16} /> : m === "out" ? <Minus size={16} /> : <ClipboardCheck size={16} />}{MODES[m].tab}
@@ -330,7 +334,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
 
       <details className="stk-settings">
         <summary><Settings2 size={15} /> ตั้งค่าสินค้านี้{canEditDetails ? " (ชื่อ หน่วย ต้นทุน บาร์โค้ด จุดแจ้งเตือน)" : " (จุดแจ้งเตือน)"}</summary>
-        <form onSubmit={saveDetails} className="stk-settings__grid">
+        <form onSubmit={saveDetails} className="stk-settings__grid" noValidate>
           {canEditDetails && <>
             <label className="stk-field stk-field--wide"><span>ชื่อสินค้า / วัตถุดิบ</span><input className="input" value={details.name} onChange={(e) => setDetails({ ...details, name: e.target.value })} /></label>
             <label className="stk-field"><span>หน่วยนับ</span><input className="input" value={details.unit} onChange={(e) => setDetails({ ...details, unit: e.target.value })} /></label>
@@ -372,7 +376,7 @@ function CreateDialog({ branchId, onClose, onCreated }: { branchId: number; onCl
   return <div className="stk-backdrop stk-backdrop--center" onClick={() => !saving && onClose()}>
     <div ref={ref} className="stk-dialog" role="dialog" aria-modal="true" aria-labelledby="stk-create-title" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
       <div className="stk-drawer__head"><div><span className="stk-eyebrow">สต็อกสาขา</span><h3 id="stk-create-title">เพิ่มรายการใหม่</h3></div><button className="studio-icon-button" onClick={onClose} disabled={saving} aria-label="ปิด"><X size={18} /></button></div>
-      <form onSubmit={submit} className="stk-settings__grid">
+      <form onSubmit={submit} className="stk-settings__grid" noValidate>
         <label className="stk-field stk-field--wide"><span>ชื่อสินค้า / วัตถุดิบ *</span><input className="input" autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="เช่น เป๊ปซี่ 340 มล." /></label>
         <div className="stk-field stk-field--wide"><span>หน่วยนับ *</span>
           <div className="stk-chips">{UNIT_SUGGESTIONS.map((u) => <button type="button" key={u} aria-pressed={form.unit === u} className={form.unit === u ? "is-active" : ""} onClick={() => setForm({ ...form, unit: u })}>{u}</button>)}</div>

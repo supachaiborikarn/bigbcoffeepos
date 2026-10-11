@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { createHash } from "node:crypto";
 
 const localJwtFallbackModes = new Set(["", "development", "test", "local"]);
 const nodeEnv = process.env.NODE_ENV || "";
@@ -29,16 +30,32 @@ export function generateToken(user: { id: number; name: string; role: string; br
   );
 }
 
-/** A manager's sign-off for one large discount at a branch; carried by the order instead of the PIN. */
-export function signDiscountApproval(approver: { id: number; name: string }, branchId: number) {
-  return jwt.sign({ kind: "discount-approval", approverId: approver.id, approverName: approver.name, branchId }, JWT_SECRET, { expiresIn: "12h" });
+function discountDraftIdentity(value: any) {
+  if (!value || typeof value.idempotencyKey !== "string" || !value.idempotencyKey.trim() || !Array.isArray(value.items) || !value.items.length) return null;
+  const draft = {
+    idempotencyKey: value.idempotencyKey.trim().slice(0, 120),
+    customerId: value.customerId == null ? null : Number(value.customerId),
+    items: value.items.map((item: any) => ({ menuItemId: Number(item.menuItemId), productUnitId: item.productUnitId == null ? null : Number(item.productUnitId), qty: Number(item.qty), modifiers: (Array.isArray(item.modifiers) ? item.modifiers : []).map((modifier: any) => ({ name: modifier.name, value: modifier.value })) })),
+    discountType: value.discountType ?? null, discountValue: Number(value.discountValue) || 0,
+    discounts: (Array.isArray(value.discounts) ? value.discounts : []).map((rule: any) => ({ type: rule.type, value: Number(rule.value) || 0, category: rule.category ?? null, buyQty: rule.buyQty ?? null, getQty: rule.getQty ?? null, maxDiscount: rule.maxDiscount ?? null })),
+    couponCode: String(value.couponCode ?? "").trim().toUpperCase(), skipPromotions: value.skipPromotions === true,
+    loyaltyPointsToUse: Number(value.loyaltyPointsToUse) || 0
+  };
+  return createHash("sha256").update(JSON.stringify(draft)).digest("hex");
 }
 
-export function verifyDiscountApproval(token: unknown, branchId: number): { approverId: number; approverName: string } | null {
+/** Approval belongs to one checkout key and its exact draft; checkout idempotency prevents replay into a second bill. */
+export function signDiscountApproval(approver: { id: number; name: string }, branchId: number, draft: unknown) {
+  const draftHash = discountDraftIdentity(draft);
+  if (!draftHash) throw new Error("กรุณาเลือกสินค้าและระบุบิลที่ต้องการอนุมัติส่วนลด");
+  return jwt.sign({ kind: "discount-approval", approverId: approver.id, approverName: approver.name, branchId, draftHash }, JWT_SECRET, { expiresIn: "15m" });
+}
+
+export function verifyDiscountApproval(token: unknown, branchId: number, draft: unknown): { approverId: number; approverName: string } | null {
   if (typeof token !== "string" || !token) return null;
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { kind?: string; approverId?: number; approverName?: string; branchId?: number };
-    if (payload.kind !== "discount-approval" || payload.branchId !== branchId || !payload.approverId) return null;
+    const payload = jwt.verify(token, JWT_SECRET) as { kind?: string; approverId?: number; approverName?: string; branchId?: number; draftHash?: string };
+    if (payload.kind !== "discount-approval" || payload.branchId !== branchId || !payload.approverId || !payload.draftHash || payload.draftHash !== discountDraftIdentity(draft)) return null;
     return { approverId: payload.approverId, approverName: payload.approverName ?? "" };
   } catch { return null; }
 }
@@ -51,7 +68,8 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
 
   const token = authHeader.substring(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { id: number; name: string; role: string; branchId?: number | null };
+    const payload = jwt.verify(token, JWT_SECRET) as { id: number; name: string; role: string; branchId?: number | null; kind?: string };
+    if (payload.kind || !Number.isInteger(payload.id) || payload.id <= 0 || !["admin", "manager", "cashier"].includes(payload.role)) throw new Error("Invalid session token");
     req.user = payload;
     next();
   } catch (err) {

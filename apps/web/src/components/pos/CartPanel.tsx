@@ -1,4 +1,5 @@
 import { modifierLabel } from "../../utils/modifierLabel";
+import { displayCategoryLabel } from "../../utils/categoryLabel";
 import { useState, type ReactNode } from "react";
 import { useCart } from "../../contexts/CartContext";
 import { useShift } from "../../contexts/ShiftContext";
@@ -577,7 +578,7 @@ export default function CartPanel(props: CartPanelProps) {
                   <select className="input" style={{ width: "100%" }} value={discountDraft.category} onChange={(e) => updateDiscountDraft({ category: e.target.value })}>
                     {promotionCategories.length === 0 && <option value="">ไม่มีหมวดสินค้า</option>}
                     {promotionCategories.map((item) => (
-                      <option key={item} value={item}>{item}</option>
+                      <option key={item} value={item}>{displayCategoryLabel(item)}</option>
                     ))}
                   </select>
                 </div>

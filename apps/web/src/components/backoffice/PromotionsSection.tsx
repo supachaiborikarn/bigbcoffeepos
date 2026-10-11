@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import { createCoupon, createPromotion, deleteCoupon, deletePromotion, getCoupons, getMenu, getPromotions, updateCoupon, updatePromotion } from "../../api";
 import type { Coupon, Promotion } from "../../types";
 import { useToast } from "../../contexts/ToastContext";
+import { displayCategoryLabel } from "../../utils/categoryLabel";
 import { Field, money, Section, SectionState, thaiDate, useSectionData } from "./shared";
 
 // Auto promotions (only the best single one applies to a bill) and coupons.
@@ -52,7 +53,7 @@ export default function PromotionsSection({ branchType }: { branchType?: string 
       <Field label="ชื่อโปร *"><input className="input" value={promo.name} maxLength={80} onChange={(e) => setPromo({ ...promo, name: e.target.value })} placeholder="เช่น ลดเปิดร้าน 10%" /></Field>
       <Field label="ประเภท"><select className="input" value={promo.type} onChange={(e) => setPromo({ ...promo, type: e.target.value })}>{Object.entries(PROMO_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
       <Field label={promo.type.includes("PERCENT") ? "ส่วนลด (%) *" : "ส่วนลด (บาท) *"} error={promoError}><input className="input" type="number" min="0" max={promo.type.includes("PERCENT") ? 100 : undefined} step="any" value={promo.value} onChange={(e) => setPromo({ ...promo, value: e.target.value })} aria-invalid={Boolean(promoError)} /></Field>
-      {promo.type === "CATEGORY_PERCENT" && <Field label="หมวดสินค้า *"><select className="input" value={promo.category} onChange={(e) => setPromo({ ...promo, category: e.target.value })}><option value="">เลือกหมวด</option>{categories.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>}
+      {promo.type === "CATEGORY_PERCENT" && <Field label="หมวดสินค้า *"><select className="input" value={promo.category} onChange={(e) => setPromo({ ...promo, category: e.target.value })}><option value="">เลือกหมวด</option>{categories.map((c) => <option key={c} value={c}>{displayCategoryLabel(c)}</option>)}</select></Field>}
       <Field label="เริ่ม (ไม่บังคับ)"><input className="input" type="date" value={promo.startAt} onChange={(e) => setPromo({ ...promo, startAt: e.target.value })} /></Field>
       <Field label="สิ้นสุด (ไม่บังคับ)" error={promoDateError}><input className="input" type="date" value={promo.endAt} onChange={(e) => setPromo({ ...promo, endAt: e.target.value })} /></Field>
     </div>
@@ -62,7 +63,7 @@ export default function PromotionsSection({ branchType }: { branchType?: string 
       {(list: Promotion[]) => <div className="bo-list">{list.map((p) => {
         const invalid = p.type.includes("PERCENT") ? !(p.value > 0 && p.value <= 100) : !(p.value > 0);
         return <div key={p.id} className="bo-list__row">
-          <span><strong>{p.name}</strong><small>{PROMO_TYPES[p.type] ?? p.type} · {describe(p.type, p.value)}{p.category ? ` · ${p.category}` : ""}{p.startAt || p.endAt ? ` · ${thaiDate(p.startAt, false)} – ${thaiDate(p.endAt, false)}` : ""}</small>
+          <span><strong>{p.name}</strong><small>{PROMO_TYPES[p.type] ?? p.type} · {describe(p.type, p.value)}{p.category ? ` · ${displayCategoryLabel(p.category)}` : ""}{p.startAt || p.endAt ? ` · ${thaiDate(p.startAt, false)} – ${thaiDate(p.endAt, false)}` : ""}</small>
             {invalid && <small className="negative">ค่าไม่ถูกต้อง ระบบไม่นำมาใช้ · ลบแล้วสร้างใหม่</small>}</span>
           <span className="bo-actions">
             <button type="button" className="btn btn--ghost" disabled={busy} onClick={() => act(() => updatePromotion(p.id, { active: !p.active }), p.active ? "ปิดโปรแล้ว" : "เปิดโปรแล้ว", promotions.reload)}>{p.active ? "ปิด" : "เปิด"}</button>

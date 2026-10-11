@@ -49,7 +49,7 @@ for (const payload of [null, {}, { shift: null }, { shift: { ...closedShift, id:
 globalThis.fetch = async () => new Response(JSON.stringify({ shift: closedShift }));
 assert.deepEqual((await api.closeShift(167, 0)).shift, closedShift);
 globalThis.fetch = async () => new Response(JSON.stringify({ error: 'Forbidden: insufficient role' }), { status: 403 });
-await assert.rejects(api.closeShift(167, 0), /ผู้จัดการหรือผู้ดูแลระบบ/);
+await assert.rejects(api.closeShift(167, 0), /บัญชีนี้ไม่มีสิทธิ์ปิดกะ/);
 globalThis.fetch = async () => new Response(JSON.stringify({ error: 'คุณไม่มีสิทธิ์เข้าถึงรายการของสาขานี้' }), { status: 403 });
 await assert.rejects(api.closeShift(167, 0), error => error.status === 403 && error.message.includes('สาขานี้'), 'branch restrictions keep their specific message');
 console.log('PASS API regressions: request deadlines, caller abort, checkout approval fields, verified shift close, Thai close permission error; no network or real browser storage');

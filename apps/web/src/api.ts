@@ -787,7 +787,7 @@ export async function closeShift(shiftId: number, closingCash: number, details?:
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 403 && error.message === "Forbidden: insufficient role") {
-      throw new Error("การปิดกะต้องให้ผู้จัดการหรือผู้ดูแลระบบเป็นผู้ดำเนินการ");
+      throw new Error("บัญชีนี้ไม่มีสิทธิ์ปิดกะ กรุณาติดต่อผู้ดูแลระบบ");
     }
     throw error;
   }

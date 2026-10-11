@@ -803,7 +803,7 @@ app.post("/api/shifts/open", requireBranchAccess((req) => parseId(req.body?.bran
     return res.status(201).json({ shift });
   } catch (e) { return res.status(400).json({ error: publicError(e) }); }
 });
-app.post("/api/shifts/:id/close", requireRecordBranch(async (req) => prisma.shift.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+app.post("/api/shifts/:id/close", requireRecordBranch(async (req) => prisma.shift.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {

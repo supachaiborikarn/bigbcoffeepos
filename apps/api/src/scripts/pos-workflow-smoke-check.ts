@@ -36,6 +36,11 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     pattern: /openShift[\s\S]*เปิดกะ/
   },
   {
+    name: "Cashier can close a shift only after branch access validation",
+    file: "apps/api/src/index.ts",
+    pattern: /app\.post\("\/api\/shifts\/:id\/close",\s*requireRecordBranch\([\s\S]*?requireRole\("admin",\s*"manager",\s*"cashier"\)/
+  },
+  {
     name: "Checkout is blocked without active shift",
     file: "apps/web/src/components/pos/CartPanel.tsx",
     pattern: /disabled=\{[^}]*cart\.length === 0[^}]*\|\|\s*isSubmitting[^}]*\|\|\s*!activeShift[^}]*\}/

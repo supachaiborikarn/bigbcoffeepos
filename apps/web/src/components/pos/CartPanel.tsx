@@ -1,11 +1,14 @@
 import { modifierLabel } from "../../utils/modifierLabel";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useCart } from "../../contexts/CartContext";
+import { useShift } from "../../contexts/ShiftContext";
+import { useDialogFocus } from "../../utils/useDialogFocus";
 import { motion, AnimatePresence } from "framer-motion";
-import { User, Tag, Plus, Minus, X, Search, UserPlus, Banknote, QrCode, CreditCard, Wallet, ArrowRight, ReceiptText } from "lucide-react";
+import { User, Tag, Plus, Minus, X, Search, UserPlus, Banknote, QrCode, CreditCard, Wallet, ArrowRight, ReceiptText, ShieldCheck } from "lucide-react";
 import type { Customer, DiscountRule, PaymentMethod, CartItem, Shift } from "../../types";
 
-const formatter = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
+// show satang when there are any (฿76.50) so every screen shows the amount actually charged
+const formatter = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 function formatMoney(v: number) {
   return formatter.format(v);
@@ -106,7 +109,28 @@ export default function CartPanel(props: CartPanelProps) {
 
   const [showMemberModal, setShowMemberModal] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
-  const { appliedCoupon, applyCoupon, removeCoupon, autoPromotions } = useCart();
+  const {
+    appliedCoupon, applyCoupon, removeCoupon, appliedPromotion, autoPromotions, skipPromotions, setSkipPromotions,
+    couponBelowMinSpend, needsDiscountApproval, discountApproval, approveDiscount, setItemNote
+  } = useCart();
+  const { loaded: shiftLoaded } = useShift();
+  const [approvalPin, setApprovalPin] = useState("");
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [approvalError, setApprovalError] = useState("");
+  async function handleApprove() {
+    if (approvalBusy || !approvalPin.trim()) return;
+    setApprovalBusy(true); setApprovalError("");
+    try { await approveDiscount(approvalPin.trim()); setApprovalPin(""); }
+    catch (e) { setApprovalError((e as Error).message); }
+    finally { setApprovalBusy(false); }
+  }
+  const draftValue = Number(discountDraft.value);
+  const draftIsPercent = discountDraft.type === "ORDER_PERCENT" || discountDraft.type === "CATEGORY_PERCENT";
+  const draftError = discountDraft.type === "BUY_X_GET_Y" || discountDraft.value.trim() === "" ? ""
+    : !Number.isFinite(draftValue) || draftValue <= 0 ? "ต้องมากกว่า 0"
+    : draftIsPercent && draftValue > 100 ? "เปอร์เซ็นต์ต้องไม่เกิน 100"
+    : discountDraft.type === "ORDER_FIXED" && draftValue > subtotal ? `ต้องไม่เกินยอดบิล ${formatMoney(subtotal)}`
+    : "";
   const [couponInput, setCouponInput] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
 
@@ -143,7 +167,7 @@ export default function CartPanel(props: CartPanelProps) {
       <div style={{ padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <div>
           <span className="studio-eyebrow">CURRENT ORDER</span><h2 style={{ fontSize: "20px" }}>{props.businessType === "oil_service" ? "รายการบริการ" : "บิลปัจจุบัน"}</h2>
-          <p className="muted" style={{ fontSize: "13px" }}>{activeShift ? `กะ #${activeShift.id}` : "ยังไม่ได้เปิดกะ"}</p>
+          <p className="muted" style={{ fontSize: "13px" }}>{activeShift ? `กะ #${activeShift.id}` : shiftLoaded ? "ยังไม่ได้เปิดกะ" : "กำลังตรวจกะ..."}</p>
         </div>
         <button type="button" className="btn btn--ghost" onClick={clearCart} style={{ fontSize: "13px" }}>ล้าง (F8)</button>
       </div>
@@ -181,6 +205,11 @@ export default function CartPanel(props: CartPanelProps) {
                         ))}
                       </div>
                     )}
+                    {/* per-line note for the barista, e.g. "แยกน้ำแข็ง" */}
+                    <button type="button" className="btn btn--ghost" style={{ minHeight: 0, padding: "2px 0", border: "none", fontSize: 12, color: item.note ? "var(--brand-hover)" : "var(--text-muted)" }}
+                      onClick={() => { const note = window.prompt(`หมายเหตุสำหรับ ${item.name}`, item.note ?? ""); if (note !== null) setItemNote(item.id, note); }}>
+                      {item.note ? `📝 ${item.note}` : "+ หมายเหตุ"}
+                    </button>
                     <div className="muted" style={{ fontSize: "13px", marginTop: 4, fontWeight: 600, color: "var(--brand)" }}>
                       {formatMoney(itemUnitPrice)}
                       {item.qty > 1 && (
@@ -218,7 +247,7 @@ export default function CartPanel(props: CartPanelProps) {
         {/* Row 1: Member Action / Tag */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           {selectedMember ? (
-            <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "space-between", background: "var(--brand-subtle)", padding: "6px 12px", borderRadius: "8px", border: "1px solid rgba(139, 94, 60, 0.15)" }}>
+            <div className="studio-member-chip" style={{ display: "flex", flex: 1, minWidth: 0, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 6, background: "var(--brand-subtle)", padding: "6px 12px", borderRadius: "8px", border: "1px solid rgba(139, 94, 60, 0.15)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "13px", minWidth: 0 }}>
                 <User size={15} style={{ color: "var(--brand)", flexShrink: 0 }} />
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -292,14 +321,18 @@ export default function CartPanel(props: CartPanelProps) {
           )}
         </div>
 
-        {/* Auto-applied promotions (server-side, shown so cash totals are correct) */}
+        {/* Auto promotion: the server applies only the best one; the cashier can turn it off for this bill */}
         {cart.length > 0 && autoPromotions.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {autoPromotions.map((promo) => (
-              <span key={promo.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#ecfdf5", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 600 }}>
-                <Tag size={12} /> {promo.label} (อัตโนมัติ)
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+            {appliedPromotion && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#ecfdf5", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 600 }}>
+                <Tag size={12} /> {appliedPromotion.label} (อัตโนมัติ)
               </span>
-            ))}
+            )}
+            {!appliedPromotion && !skipPromotions && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>ไม่มีโปรอัตโนมัติที่ใช้กับบิลนี้ได้</span>}
+            <button type="button" className="btn btn--ghost" style={{ minHeight: 0, padding: "3px 10px", fontSize: 12 }} aria-pressed={skipPromotions} onClick={() => setSkipPromotions(!skipPromotions)}>
+              {skipPromotions ? "เปิดโปรอัตโนมัติ" : "ไม่ใช้โปรบิลนี้"}
+            </button>
           </div>
         )}
 
@@ -308,6 +341,7 @@ export default function CartPanel(props: CartPanelProps) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, background: "#fff7ed", border: "1px solid #fdba74", padding: "6px 12px", borderRadius: "8px" }}>
             <span style={{ fontSize: "12px", color: "#9a3412", fontWeight: 600 }}>
               คูปอง {appliedCoupon.code} ({appliedCoupon.type.toUpperCase().includes("PERCENT") ? `${appliedCoupon.value}%` : `${appliedCoupon.value} บาท`})
+              {couponBelowMinSpend && <><br /><span style={{ color: "var(--danger)" }}>ยังไม่ถึงยอดขั้นต่ำ {formatMoney(appliedCoupon.minSpend ?? 0)} · ยังไม่ลด</span></>}
             </span>
             <button
               type="button"
@@ -345,9 +379,22 @@ export default function CartPanel(props: CartPanelProps) {
         {/* Member Point Summary Details */}
         {selectedMember && (
           <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "-4px", paddingLeft: "8px" }}>
-            แต้มสะสม: <strong>{selectedMember.points.toLocaleString("th-TH")}</strong> แต้ม (ใช้ได้สูงสุด {maxRedeemablePoints.toLocaleString("th-TH")} แต้ม)
+            แต้มสะสม: <strong>{selectedMember.points.toLocaleString("th-TH")}</strong> แต้ม (ใช้ได้สูงสุด {maxRedeemablePoints.toLocaleString("th-TH")} แต้ม · ได้ 1 แต้มต่อเครื่องดื่มชง 1 แก้ว)
           </div>
         )}
+
+        {/* Large manual discount: a manager signs off with their PIN before payment */}
+        {needsDiscountApproval && (
+          <div role="group" aria-label="อนุมัติส่วนลด" style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px", borderRadius: 8, background: "#fff7ed", border: "1px solid #fdba74" }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#9a3412", display: "flex", alignItems: "center", gap: 5 }}><ShieldCheck size={14} /> ส่วนลดตั้งแต่ 50% ของบิล ต้องให้ผู้จัดการใส่ PIN อนุมัติ</span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input className="input" type="password" inputMode="numeric" autoComplete="off" maxLength={8} value={approvalPin} onChange={(e) => setApprovalPin(e.target.value.replace(/\D/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") void handleApprove(); }} placeholder="PIN ผู้จัดการ" aria-label="PIN ผู้จัดการ" style={{ flex: 1, height: 36 }} />
+              <button type="button" className="btn btn--primary" style={{ height: 36 }} disabled={approvalBusy || approvalPin.length < 4} onClick={() => void handleApprove()}>{approvalBusy ? "..." : "อนุมัติ"}</button>
+            </div>
+            {approvalError && <span role="alert" style={{ fontSize: 12, color: "var(--danger)" }}>{approvalError}</span>}
+          </div>
+        )}
+        {discountApproval && <div style={{ fontSize: 12, color: "#065f46", display: "flex", alignItems: "center", gap: 5 }}><ShieldCheck size={14} /> ส่วนลดอนุมัติโดย {discountApproval.approverName}</div>}
 
         {/* Totals Summary */}
         <div style={{ background: "var(--bg-surface)", borderRadius: "10px", padding: "12px 16px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -409,19 +456,18 @@ export default function CartPanel(props: CartPanelProps) {
             borderRadius: "var(--radius)",
             boxShadow: "0 4px 12px rgba(139, 94, 60, 0.18)"
           }}
-          disabled={cart.length === 0 || isSubmitting || !activeShift}
+          disabled={cart.length === 0 || isSubmitting || !activeShift || needsDiscountApproval}
           onClick={handleCheckoutClick}
         >
-          {!activeShift ? "กรุณาเปิดกะก่อนขาย" : isSubmitting ? "กำลังทำรายการ..." : <>ชำระเงิน {formatMoney(total)} <ArrowRight size={19} /></>}
+          {!activeShift ? (shiftLoaded ? "กรุณาเปิดกะก่อนขาย" : "กำลังตรวจกะ...") : isSubmitting ? "กำลังทำรายการ..." : needsDiscountApproval ? "รอผู้จัดการอนุมัติส่วนลด" : <>ชำระเงิน {formatMoney(total)} <ArrowRight size={19} /></>}
         </button>
       </div>
 
       {/* ─── Member Selection Modal ─── */}
       {showMemberModal && (
-        <div className="modal-backdrop" onClick={() => setShowMemberModal(false)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(460px, calc(100vw - 32px))", padding: "24px", borderRadius: "12px", background: "var(--bg-surface)" }}>
+        <CartDialog titleId="member-dialog-title" width={460} onClose={() => setShowMemberModal(false)}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <h3 style={{ fontSize: "18px", margin: 0, color: "var(--ink)" }}>👤 ค้นหา / สมัครสมาชิก</h3>
+              <h3 id="member-dialog-title" style={{ fontSize: "18px", margin: 0, color: "var(--ink)" }}>👤 ค้นหา / สมัครสมาชิก</h3>
               <button type="button" className="btn btn--ghost" style={{ padding: "4px 8px" }} onClick={() => setShowMemberModal(false)}>ปิด</button>
             </div>
 
@@ -504,16 +550,14 @@ export default function CartPanel(props: CartPanelProps) {
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+        </CartDialog>
       )}
 
       {/* ─── Discount Selection Modal ─── */}
       {showDiscountModal && (
-        <div className="modal-backdrop" onClick={() => setShowDiscountModal(false)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="panel" onClick={e => e.stopPropagation()} style={{ width: "min(480px, calc(100vw - 32px))", padding: "24px", borderRadius: "12px", background: "var(--bg-surface)" }}>
+        <CartDialog titleId="discount-dialog-title" width={480} onClose={() => setShowDiscountModal(false)}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <h3 style={{ fontSize: "18px", margin: 0, color: "var(--ink)" }}>🏷️ ส่วนลด / โปรโมชัน</h3>
+              <h3 id="discount-dialog-title" style={{ fontSize: "18px", margin: 0, color: "var(--ink)" }}>🏷️ ส่วนลด / โปรโมชัน</h3>
               <button type="button" className="btn btn--ghost" style={{ padding: "4px 8px" }} onClick={() => setShowDiscountModal(false)}>ปิด</button>
             </div>
 
@@ -542,7 +586,8 @@ export default function CartPanel(props: CartPanelProps) {
                   <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>
                     {discountDraft.type === "ORDER_PERCENT" ? "เปอร์เซ็นต์ส่วนลด (%)" : "จำนวนเงินส่วนลด (บาท)"}
                   </label>
-                  <input className="input" style={{ width: "100%" }} value={discountDraft.value} onChange={(e) => updateDiscountDraft({ value: e.target.value })} inputMode="decimal" placeholder="เช่น 10, 50" />
+                  <input className="input" style={{ width: "100%" }} value={discountDraft.value} onChange={(e) => updateDiscountDraft({ value: e.target.value })} inputMode="decimal" placeholder={discountDraft.type === "ORDER_PERCENT" ? "1–100" : "เช่น 10, 50"} aria-invalid={Boolean(draftError)} aria-describedby="discount-value-error" />
+                  {draftError && <span id="discount-value-error" role="alert" style={{ display: "block", fontSize: 12, color: "var(--danger)", marginTop: 4 }}>{draftError}</span>}
                 </div>
               )}
 
@@ -562,7 +607,8 @@ export default function CartPanel(props: CartPanelProps) {
                   {isCategoryPromotion && (
                     <div>
                       <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}>เปอร์เซ็นต์ส่วนลด (%)</label>
-                      <input className="input" style={{ width: "100%" }} value={discountDraft.value} onChange={(e) => updateDiscountDraft({ value: e.target.value })} inputMode="decimal" placeholder="เปอร์เซ็นต์ส่วนลด" />
+                      <input className="input" style={{ width: "100%" }} value={discountDraft.value} onChange={(e) => updateDiscountDraft({ value: e.target.value })} inputMode="decimal" placeholder="1–100" aria-invalid={Boolean(draftError)} />
+                      {draftError && <span role="alert" style={{ display: "block", fontSize: 12, color: "var(--danger)", marginTop: 4 }}>{draftError}</span>}
                     </div>
                   )}
                   <div>
@@ -580,10 +626,11 @@ export default function CartPanel(props: CartPanelProps) {
                   handleAddDiscountRule();
                   setShowDiscountModal(false);
                 }}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || Boolean(draftError)}
               >
                 <Plus size={16} /> ยืนยันเพิ่มส่วนลด
               </button>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>ส่วนลดตั้งแต่ 50% ของบิล แคชเชียร์ต้องให้ผู้จัดการใส่ PIN อนุมัติ</p>
 
               {/* Active Discount Rules list */}
               {discountRules.length > 0 && (
@@ -605,9 +652,20 @@ export default function CartPanel(props: CartPanelProps) {
                 </div>
               )}
             </div>
-          </div>
-        </div>
+        </CartDialog>
       )}
     </section>
+  );
+}
+
+/** Backdrop + panel with role="dialog", focus trap and Escape (useDialogFocus). */
+function CartDialog({ titleId, width, onClose, children }: { titleId: string; width: number; onClose: () => void; children: ReactNode }) {
+  const ref = useDialogFocus(onClose);
+  return (
+    <div className="modal-backdrop" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="panel" onClick={(e) => e.stopPropagation()} style={{ width: `min(${width}px, calc(100vw - 32px))`, maxHeight: "calc(100dvh - 32px)", overflowY: "auto", padding: "24px", borderRadius: "12px", background: "var(--bg-surface)" }}>
+        {children}
+      </div>
+    </div>
   );
 }

@@ -6,7 +6,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 
-const money = (value: number) => `฿${value.toLocaleString("th-TH", { maximumFractionDigits: 0 })}`;
+const money = (value: number) => `฿${value.toLocaleString("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const date = (value?: string | null) => value ? new Date(value).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" }) : "ยังไม่เคยซื้อ";
 
 export default function CustomersPage() {
@@ -26,11 +26,15 @@ export default function CustomersPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([getCustomers(), getCustomerInsights({ inactiveDays: 60, limit: 5 }), user?.role === "admin" ? getUnassignedCustomers() : Promise.resolve([])])
+    setError("");
+    // the member list matters most; insights and the unassigned list are extras that may fail on their own
+    Promise.allSettled([getCustomers(), getCustomerInsights({ inactiveDays: 60, limit: 5 }), user?.role === "admin" ? getUnassignedCustomers() : Promise.resolve([])])
       .then(([items, summary, pending]) => {
         if (cancelled) return;
-        setCustomers(items); setInsights(summary); setUnassigned(pending);
-      }).catch((err) => { if (!cancelled) setError(err.message); })
+        if (items.status === "fulfilled") setCustomers(items.value); else setError(items.reason?.message ?? "โหลดสมาชิกไม่สำเร็จ");
+        if (summary.status === "fulfilled") setInsights(summary.value);
+        if (pending.status === "fulfilled") setUnassigned(pending.value);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [activeBranch?.id, user?.role]);
@@ -57,17 +61,17 @@ export default function CustomersPage() {
     <div className="studio-page-heading"><div><span className="studio-eyebrow">CUSTOMERS</span><h1>สมาชิกของร้าน</h1><p>{activeBranch?.name}</p></div><Users size={30} strokeWidth={1.4} /></div>
     <div className="studio-kpi-grid studio-customer-kpis">
       <div><span><Users size={14} /> สมาชิกในสาขา</span><strong>{customers.length.toLocaleString("th-TH")}</strong></div>
-      <div><span><Star size={14} /> คะแนนสะสมรวม</span><strong>{customers.reduce((sum, customer) => sum + customer.points, 0).toLocaleString("th-TH")}</strong></div>
+      <div><span><Star size={14} /> คะแนนสะสมรวม</span><strong>{customers.reduce((sum, customer) => sum + customer.points, 0).toLocaleString("th-TH")}</strong><small>ได้ 1 แต้มต่อเครื่องดื่มชง 1 แก้ว (ขนม/ของขายปลีกไม่ได้แต้ม)</small></div>
       <div><span>ยอดสมาชิก 30 วัน</span><strong>{money(insights?.summary.recentSpendTotal ?? 0)}</strong></div>
       <div><span><Clock size={14} /> ไม่กลับมา 60 วัน</span><strong>{insights?.summary.inactiveCustomers ?? 0}</strong></div>
     </div>
     <div className="studio-inventory-toolbar">
-      <div className="studio-tabs"><button className={tab === "branch" ? "is-active" : ""} onClick={() => setTab("branch")}>สมาชิกสาขานี้</button>{user?.role === "admin" && <button className={tab === "unassigned" ? "is-active" : ""} onClick={() => setTab("unassigned")}>รอจัดสาขา ({unassigned.length})</button>}</div>
+      <div className="studio-tabs"><button className={tab === "branch" ? "is-active" : ""} onClick={() => setTab("branch")}>สมาชิกสาขานี้ ({customers.length.toLocaleString("th-TH")})</button>{user?.role === "admin" && <button className={tab === "unassigned" ? "is-active" : ""} title="สมาชิกที่นำเข้าหรือสมัครโดยยังไม่ได้ผูกกับสาขาใด" onClick={() => setTab("unassigned")}>ยังไม่ผูกสาขา ({unassigned.length.toLocaleString("th-TH")})</button>}</div>
       <label className="studio-search"><Search size={18} /><input aria-label="ค้นหาสมาชิก" placeholder="ค้นหาชื่อ / เบอร์โทร" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
     </div>
     {error && <p className="studio-page-error" role="alert">โหลดข้อมูลไม่สำเร็จ: {error}</p>}
     {tab === "unassigned" && <p className="studio-catalog-help">รายชื่อเดิมที่ยังระบุสาขาไม่ได้ ให้ตรวจประวัติแล้วเลือกสาขาประจำของสมาชิก โดยประวัติการซื้อและแต้มเดิมยังอยู่ครบ</p>}
-    <section className="studio-member-list" aria-label={tab === "branch" ? "สมาชิกสาขานี้" : "สมาชิกรอจัดสาขา"}>
+    <section className="studio-member-list" aria-label={tab === "branch" ? "สมาชิกสาขานี้" : "สมาชิกที่ยังไม่ผูกสาขา"}>
       {loading ? <div className="empty">กำลังโหลดสมาชิก...</div> : filtered.map((customer) => {
         const history = unassigned.find((row) => row.id === customer.id)?.historicalBranchIds ?? [];
         return <article className="studio-member-row" key={customer.id}>
@@ -79,7 +83,7 @@ export default function CustomersPage() {
           </div>}
         </article>;
       })}
-      {!loading && !filtered.length && <div className="empty">{tab === "unassigned" && !search ? "ไม่มีสมาชิกรอจัดสาขา" : "ไม่พบสมาชิก"}</div>}
+      {!loading && !filtered.length && <div className="empty">{tab === "unassigned" && !search ? "ไม่มีสมาชิกที่ยังไม่ผูกสาขา" : "ไม่พบสมาชิก"}</div>}
     </section>
     {tab === "branch" && insights && <div className="studio-customer-insights">
       <section><h2>ลูกค้าที่ซื้อประจำ</h2><p>เรียงตามยอดซื้อสะสมของสาขานี้ · เฉลี่ย {money(insights.summary.averageSpendPerCustomer)} ต่อคน</p>{insights.highValueCustomers.map((customer) => <div key={customer.id}><span><strong>{customer.name}</strong><small>{customer.totalOrders} บิล · ล่าสุด {date(customer.lastOrderAt)}</small></span><strong>{money(customer.totalSpend)}</strong></div>)}{!insights.highValueCustomers.length && <div className="empty">ยังไม่มีประวัติซื้อของสมาชิก</div>}</section>

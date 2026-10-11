@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { getOrders, updateOrderStatus, getStoreSetting } from "../api";
+import { useAuth } from "../contexts/AuthContext";
+import { describeModifiers } from "../utils/modifierLabel";
 import { printReceipt } from "../components/ReceiptPrinter";
 import { getPrinterMode } from "../utils/printerSettings";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import type { Order, OrderStatus, PaymentMethod, StoreSetting } from "../types";
-import { Ban, CheckCircle2, Clock, Filter, Printer, Search, ShoppingBag } from "lucide-react";
+import { Ban, CheckCircle2, Clock, Printer, RefreshCw, RotateCcw, Search, ShoppingBag } from "lucide-react";
 
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   CASH: "เงินสด",
@@ -23,7 +25,7 @@ const STATUS_COLORS: Record<OrderStatus, { bg: string; color: string; label: str
 };
 
 function formatMoney(value: number) {
-  return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 }).format(value);
+  return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
 }
 
 function isSameLocalDay(value: string, base = new Date()) {
@@ -36,6 +38,8 @@ function isSameLocalDay(value: string, base = new Date()) {
 export default function OrdersPage() {
   const { activeBranch } = useBranch();
   const { activeShift, refreshShift } = useShift();
+  const { user } = useAuth();
+  const canRefund = user?.role === "admin" || user?.role === "manager";
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [activeTab, setActiveTab] = useState<"ALL" | OrderStatus>("ALL");
@@ -46,7 +50,8 @@ export default function OrdersPage() {
     if (!activeBranch) return;
     setLoading(true);
     try {
-      setOrders(await getOrders(activeBranch.id));
+      // the page shows the current shift / today; recent bills are plenty
+      setOrders(await getOrders(activeBranch.id, 300));
     } catch (error) {
       toast.error((error as Error).message);
     } finally {
@@ -153,6 +158,19 @@ export default function OrdersPage() {
     }
   };
 
+  const refundOrder = async (order: Order) => {
+    const reason = window.prompt(`คืนเงินบิล #${order.id} ยอด ${formatMoney(order.total)} (${PAYMENT_LABELS[order.paymentMethod]})\nระบบจะคืนสต็อก หักยอดขายของกะ และย้ายบิลไปแท็บ "คืนเงินแล้ว"\nระบุเหตุผล:`);
+    if (!reason?.trim()) return;
+    try {
+      await updateOrderStatus(order.id, "REFUNDED", reason.trim());
+      toast.success(`คืนเงินบิล #${order.id} แล้ว · อย่าลืมจ่ายเงินคืนลูกค้า ${formatMoney(order.total)}`);
+      await refresh();
+      void refreshShift().catch(() => {});
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  };
+
   return (
     <main className="container" style={{ padding: "32px", maxWidth: "1200px", margin: "0 auto", height: "100%", display: "flex", flexDirection: "column" }}>
       <div className="orders-heading">
@@ -176,8 +194,8 @@ export default function OrdersPage() {
               style={{ paddingLeft: 40, width: 260, borderRadius: 12 }}
             />
           </div>
-          <button className="btn btn--ghost" style={{ borderRadius: 12 }} onClick={refresh}>
-            <Filter size={18} /> รีเฟรช
+          <button className="btn btn--ghost" style={{ borderRadius: 12 }} onClick={refresh} disabled={loading}>
+            <RefreshCw size={18} /> รีเฟรช
           </button>
         </div>
       </div>
@@ -223,8 +241,11 @@ export default function OrdersPage() {
 
                 <div style={{ background: "var(--bg-subtle)", padding: 12, borderRadius: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                   {order.items.map((item) => (
-                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
-                      <span>{item.qty}x {item.name}</span>
+                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 14 }}>
+                      <span>{item.qty}x {item.name}
+                        {describeModifiers(item.modifiers) && <small style={{ display: "block", color: "var(--text-muted)", fontSize: 12 }}>{describeModifiers(item.modifiers)}</small>}
+                        {item.note && <small style={{ display: "block", color: "var(--brand)", fontSize: 12 }}>หมายเหตุ: {item.note}</small>}
+                      </span>
                       <strong>{formatMoney(item.lineTotal)}</strong>
                     </div>
                   ))}
@@ -239,6 +260,11 @@ export default function OrdersPage() {
                     {order.status === "PAID" && (
                       <button className="btn btn--primary" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => setReady(order)}>
                         <CheckCircle2 size={16} /> เสร็จสิ้น
+                      </button>
+                    )}
+                    {canRefund && (order.status === "PAID" || order.status === "READY") && (
+                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => refundOrder(order)}>
+                        <RotateCcw size={16} /> คืนเงิน
                       </button>
                     )}
                     {order.status !== "CANCELLED" && order.status !== "REFUNDED" && (

@@ -48,13 +48,18 @@ export function describeMovement(reason: string): { label: string; note?: string
   if (reason.startsWith("SALE-")) return { label: `ขาย · บิล #${ref("SALE-")}` };
   if (reason.startsWith("CANCELLED-")) return { label: `คืนสต็อก · ยกเลิกบิล #${ref("CANCELLED-")}` };
   if (reason.startsWith("REFUNDED-")) return { label: `คืนสต็อก · คืนเงินบิล #${ref("REFUNDED-")}` };
-  if (reason.startsWith("PO#")) return { label: `รับเข้าจากใบสั่งซื้อ #${ref("PO#")}` };
+  if (reason.startsWith("PO#")) return { label: `รับสินค้าเข้า · ใบรับ #${ref("PO#")}` };
+  if (reason.startsWith("PO_VOID#")) return { label: `ยกเลิกใบรับ #${ref("PO_VOID#")}` };
+  if (reason.startsWith("TRANSFER_CANCEL#")) return { label: `ยกเลิกใบโอน #${ref("TRANSFER_CANCEL#")} · ของกลับเข้าสต็อก` };
   if (reason.startsWith("TRANSFER_IN#")) return { label: `โอนเข้าจากสาขาอื่น #${ref("TRANSFER_IN#")}` };
   if (reason.startsWith("TRANSFER_OUT#")) return { label: `โอนออกไปสาขาอื่น #${ref("TRANSFER_OUT#")}` };
   if (reason.startsWith("RESTOCK_RECEIVE#")) return { label: `รับของจากคลัง #${ref("RESTOCK_RECEIVE#")}` };
   if (reason === "RESTOCK_DISPATCH") return { label: "ส่งของจากคลัง" };
   if (reason === "STOCK_EDIT") return { label: "แก้ยอดคงเหลือ" };
-  if (reason.startsWith("STOCKTAKE#")) return { label: `นับสต็อก (รอบ #${ref("STOCKTAKE#")})` };
+  if (reason.startsWith("STOCKTAKE#")) {
+    const [round, note] = ref("STOCKTAKE#").split(/:\s*(.*)/s);
+    return { label: `นับสต็อก (รอบ #${round})`, note: note || undefined };
+  }
   if (reason === "ADJUSTMENT") return { label: "ปรับสต็อก" };
   const match = /^(RECEIVE|OUT|COUNT)(?::\s*(.*))?$/.exec(reason);
   if (match) return { label: { RECEIVE: "รับเข้า", OUT: "ตัดออก", COUNT: "นับสต็อก" }[match[1] as "RECEIVE" | "OUT" | "COUNT"], note: match[2] || undefined };
@@ -309,7 +314,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
         <label className="stk-field"><span>{cfg.field} ({item.unit})</span>
           <input className="input stk-amount" type="number" inputMode="decimal" min="0" step="any" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
         </label>
-        {mode !== "count" && <div className="stk-quick" aria-label="เพิ่มจำนวนเร็ว">{QUICK_ADD.map((n) => <button type="button" key={n} onClick={() => setAmount(String((Number(amount) || 0) + n))}>+{n}</button>)}</div>}
+        {mode !== "count" && <div className="stk-quick" aria-label="เพิ่มจำนวนเร็ว">{QUICK_ADD.map((n) => <button type="button" key={n} aria-label={`${mode === "out" ? "ตัดออก" : "รับเข้า"}เพิ่ม ${n}`} onClick={() => setAmount(String((Number(amount) || 0) + n))}>{mode === "out" ? "−" : "+"}{n}</button>)}</div>}
 
         {cfg.reasons.length > 0 && <div className="stk-field"><span>เหตุผล</span><div className="stk-chips">{cfg.reasons.map((r) => <button type="button" key={r} aria-pressed={reason === r} className={reason === r ? "is-active" : ""} onClick={() => setReason(r)}>{r}</button>)}</div></div>}
         <label className="stk-field"><span>หมายเหตุ (ไม่บังคับ)</span><input className="input" value={note} maxLength={120} onChange={(e) => setNote(e.target.value)} placeholder={mode === "in" ? "เช่น ร้าน/ผู้ขาย เลขบิล" : mode === "out" ? "เช่น วันหมดอายุ สาเหตุ" : "เช่น นับตอนปิดร้าน"} /></label>

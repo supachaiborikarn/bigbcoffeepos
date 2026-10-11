@@ -37,6 +37,14 @@ export function setPaperWidth(width: 58 | 80) {
   localStorage.setItem('bbpos.print.width', String(width));
   window.dispatchEvent(new Event('bbpos-printer-settings'));
 }
+/** Print the receipt as soon as a sale is paid (per device). Off = print on demand from the order. */
+export function getAutoPrint(): boolean {
+  try { return localStorage.getItem('bbpos.print.auto') !== '0'; } catch { return true; }
+}
+export function setAutoPrint(on: boolean) {
+  localStorage.setItem('bbpos.print.auto', on ? '1' : '0');
+  window.dispatchEvent(new Event('bbpos-printer-settings'));
+}
 export const printerLabels: Record<PrinterMode, string> = {
   browser: 'พิมพ์ผ่านเบราว์เซอร์ / AirPrint', passprnt: 'Star PassPRNT · iPad USB', native: 'แอป iOS · Star USB', rawbt: 'RawBT · Android'
 };

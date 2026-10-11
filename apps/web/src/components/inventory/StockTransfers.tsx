@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, PackageCheck, Plus, Search, Trash2 } from "lucide-react";
-import { createStockTransfer, getStockTransfers, receiveStockTransfer } from "../../api";
+import { cancelStockTransfer, createStockTransfer, getStockTransfers, receiveStockTransfer } from "../../api";
 import type { InventoryItem, StockTransfer } from "../../types";
 import { useBranch } from "../../contexts/BranchContext";
 import { useToast } from "../../contexts/ToastContext";
 
-// Move stock between branches. The sender creates a transfer; stock moves only
-// when the receiving branch presses "รับของ" (both sides get TRANSFER movements).
+// Move stock between branches of the same business. Stock leaves the sender when
+// the transfer is sent (never more than it has) and arrives when the receiving
+// branch presses "รับของ"; the sender can cancel until then to get it back.
 
 const fmt = (v: number) => v.toLocaleString("th-TH", { maximumFractionDigits: 3 });
 const when = (iso: string | null) => iso ? new Date(iso).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "-";
@@ -14,7 +15,8 @@ const when = (iso: string | null) => iso ? new Date(iso).toLocaleString("th-TH",
 export default function StockTransfers({ branchId, items, onChanged }: { branchId: number; items: InventoryItem[]; onChanged: () => void }) {
   const toast = useToast();
   const { branches } = useBranch();
-  const others = branches.filter((b) => b.id !== branchId && b.active !== false);
+  const myType = branches.find((b) => b.id === branchId)?.branchType;
+  const others = branches.filter((b) => b.id !== branchId && b.active !== false && (!myType || b.branchType === myType));
   const [transfers, setTransfers] = useState<StockTransfer[] | null>(null);
   const [toBranchId, setToBranchId] = useState<number>(others[0]?.id ?? 0);
   const [lines, setLines] = useState<Array<{ ingredientId: number; qty: string }>>([]);
@@ -34,18 +36,25 @@ export default function StockTransfers({ branchId, items, onChanged }: { branchI
     return items.filter((item) => item.name.toLowerCase().includes(q) && !lines.some((l) => l.ingredientId === item.ingredientId)).slice(0, 8);
   }, [pick, items, lines]);
 
-  const valid = toBranchId > 0 && lines.length > 0 && lines.every((l) => Number(l.qty) > 0);
+  const overStock = (l: { ingredientId: number; qty: string }) => Number(l.qty) > (byId.get(l.ingredientId)?.stockQty ?? 0);
+  const valid = toBranchId > 0 && lines.length > 0 && lines.every((l) => Number(l.qty) > 0 && !overStock(l));
   async function send() {
     if (!valid || busy) return;
-    const over = lines.find((l) => Number(l.qty) > (byId.get(l.ingredientId)?.stockQty ?? 0));
-    if (over && !window.confirm(`${byId.get(over.ingredientId)?.name} โอนมากกว่ายอดคงเหลือในระบบ ยืนยันส่งต่อ?`)) return;
+    if (!window.confirm(`ส่งของ ${lines.length} รายการไป ${branchName(toBranchId)}?\nสต็อกสาขานี้จะถูกหักทันที และเข้าสาขาปลายทางเมื่อเขากด "รับของ"`)) return;
     setBusy(true);
     try {
       await createStockTransfer({ fromBranchId: branchId, toBranchId, note: note.trim() || undefined, items: lines.map((l) => ({ ingredientId: l.ingredientId, qty: Number(l.qty) })) });
-      toast.success(`สร้างใบโอนไป ${branchName(toBranchId)} แล้ว · รอปลายทางกด "รับของ"`);
+      toast.success(`ส่งของไป ${branchName(toBranchId)} แล้ว · รอปลายทางกด "รับของ"`);
       setLines([]); setNote("");
       await load();
+      onChanged();
     } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
+  }
+  async function cancel(t: StockTransfer) {
+    if (!window.confirm(`ยกเลิกใบโอน #${t.id} ไป ${branchName(t.toBranchId)}?\nของจะกลับเข้าสต็อกสาขานี้`)) return;
+    setBusy(true);
+    try { await cancelStockTransfer(t.id); toast.success(`ยกเลิกใบโอน #${t.id} แล้ว ของกลับเข้าสต็อก`); await load(); onChanged(); }
+    catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
   }
   async function receive(t: StockTransfer) {
     if (!window.confirm(`รับของจาก ${branchName(t.fromBranchId)} (${t.items?.length ?? 0} รายการ) เข้าสต็อกสาขานี้?`)) return;
@@ -54,9 +63,10 @@ export default function StockTransfers({ branchId, items, onChanged }: { branchI
     catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
   }
 
-  const incoming = (transfers ?? []).filter((t) => t.toBranchId === branchId && t.status !== "RECEIVED");
-  const outgoing = (transfers ?? []).filter((t) => t.fromBranchId === branchId && t.status !== "RECEIVED");
-  const done = (transfers ?? []).filter((t) => t.status === "RECEIVED").slice(0, 15);
+  const pending = (t: StockTransfer) => t.status !== "RECEIVED" && t.status !== "CANCELLED";
+  const incoming = (transfers ?? []).filter((t) => t.toBranchId === branchId && pending(t));
+  const outgoing = (transfers ?? []).filter((t) => t.fromBranchId === branchId && pending(t));
+  const done = (transfers ?? []).filter((t) => t.status === "RECEIVED" || t.status === "CANCELLED").slice(0, 15);
   const itemList = (t: StockTransfer) => (t.items ?? []).map((i) => `${i.ingredient?.name ?? `#${i.ingredientId}`} ${fmt(i.qty)}${i.ingredient?.unit ? ` ${i.ingredient.unit}` : ""}`).join(" · ");
 
   return <div className="xfer">
@@ -82,8 +92,8 @@ export default function StockTransfers({ branchId, items, onChanged }: { branchI
         {lines.length > 0 && <div className="xfer-lines">{lines.map((line) => {
           const item = byId.get(line.ingredientId);
           return <div key={line.ingredientId} className="xfer-line">
-            <span><strong>{item?.name}</strong><small>คงเหลือ {fmt(item?.stockQty ?? 0)} {item?.unit}</small></span>
-            <input className="input" type="number" inputMode="decimal" min="0" step="any" value={line.qty} placeholder="จำนวน" aria-label={`จำนวนโอน ${item?.name}`} onChange={(e) => setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, qty: e.target.value } : l))} />
+            <span><strong>{item?.name}</strong><small className={overStock(line) ? "negative" : undefined}>คงเหลือ {fmt(item?.stockQty ?? 0)} {item?.unit}{overStock(line) ? " · โอนเกินยอดคงเหลือไม่ได้" : ""}</small></span>
+            <input className={`input${overStock(line) ? " is-invalid" : ""}`} type="number" inputMode="decimal" min="0" max={item?.stockQty} step="any" value={line.qty} placeholder="จำนวน" aria-label={`จำนวนโอน ${item?.name}`} aria-invalid={overStock(line)} onChange={(e) => setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, qty: e.target.value } : l))} />
             <button type="button" className="studio-icon-button" aria-label={`เอา ${item?.name} ออก`} onClick={() => setLines((ls) => ls.filter((l) => l.ingredientId !== line.ingredientId))}><Trash2 size={16} /></button>
           </div>;
         })}</div>}
@@ -94,14 +104,15 @@ export default function StockTransfers({ branchId, items, onChanged }: { branchI
 
     {outgoing.length > 0 && <section className="xfer-card">
       <h3>ส่งออกแล้ว · รอปลายทางรับ ({outgoing.length})</h3>
-      {outgoing.map((t) => <div key={t.id} className="xfer-row"><div><strong>#{t.id} · ไป {branchName(t.toBranchId)}</strong><small>{when(t.createdAt)}</small><p>{itemList(t)}</p></div><span className="stk-badge is-low">รอรับ</span></div>)}
+      {outgoing.map((t) => <div key={t.id} className="xfer-row"><div><strong>#{t.id} · ไป {branchName(t.toBranchId)}</strong><small>{when(t.createdAt)} · หักสต็อกแล้ว ระหว่างส่ง</small><p>{itemList(t)}</p></div>
+        <span style={{ display: "flex", gap: 8, alignItems: "center" }}><span className="stk-badge is-low">รอรับ</span><button type="button" className="btn btn--ghost" disabled={busy} onClick={() => cancel(t)}>ยกเลิก</button></span></div>)}
     </section>}
 
     <section className="xfer-card">
       <h3>ประวัติการโอน</h3>
       {transfers === null ? <p className="stk-hint">กำลังโหลด...</p> : done.length ? done.map((t) => <div key={t.id} className="xfer-row">
-        <div><strong>#{t.id} · {t.fromBranchId === branchId ? `ส่งไป ${branchName(t.toBranchId)}` : `รับจาก ${branchName(t.fromBranchId)}`}</strong><small>รับเมื่อ {when(t.receivedAt)}</small><p>{itemList(t)}</p></div>
-        <span className="stk-badge is-ok">รับแล้ว</span>
+        <div><strong>#{t.id} · {t.fromBranchId === branchId ? `ส่งไป ${branchName(t.toBranchId)}` : `รับจาก ${branchName(t.fromBranchId)}`}</strong><small>{t.status === "CANCELLED" ? "ยกเลิกแล้ว · ของกลับต้นทาง" : `รับเมื่อ ${when(t.receivedAt)}`}</small><p>{itemList(t)}</p></div>
+        {t.status === "CANCELLED" ? <span className="stk-badge is-out">ยกเลิก</span> : <span className="stk-badge is-ok">รับแล้ว</span>}
       </div>) : <p className="stk-hint">ยังไม่มีประวัติการโอน</p>}
     </section>
   </div>;

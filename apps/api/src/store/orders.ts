@@ -1,6 +1,7 @@
 import prisma from "../prisma.js";
 import { getCustomer } from "./customers.js";
 import { getCupStockRequirements, getCupStockRequirementsByOption } from "./cupStockSettings.js";
+import { getStoreSetting } from "./settings.js";
 import { log } from "../logger.js";
 
 type Modifier = { name: string; value: string; price: number };
@@ -136,8 +137,8 @@ function normalizeRule(rule: DiscountRule): DiscountRule | null {
   const maxDiscount = rule.maxDiscount === undefined ? undefined : Math.max(0, Number(rule.maxDiscount));
 
   if (rule.type === "ORDER_PERCENT") {
-    if (!Number.isFinite(value) || value <= 0) return null;
-    return { ...rule, value: Math.min(value, 100), maxDiscount, label: rule.label || `ลดทั้งบิล ${value}%` };
+    if (!Number.isFinite(value) || value <= 0 || value > 100) return null;
+    return { ...rule, value, maxDiscount, label: rule.label || `ลดทั้งบิล ${value}%` };
   }
 
   if (rule.type === "ORDER_FIXED") {
@@ -146,8 +147,8 @@ function normalizeRule(rule: DiscountRule): DiscountRule | null {
   }
 
   if (rule.type === "CATEGORY_PERCENT") {
-    if (!rule.category || !Number.isFinite(value) || value <= 0) return null;
-    return { ...rule, value: Math.min(value, 100), maxDiscount, label: rule.label || `ลดหมวด ${rule.category} ${value}%` };
+    if (!rule.category || !Number.isFinite(value) || value <= 0 || value > 100) return null;
+    return { ...rule, value, maxDiscount, label: rule.label || `ลดหมวด ${rule.category} ${value}%` };
   }
 
   if (rule.type === "BUY_X_GET_Y") {
@@ -158,6 +159,29 @@ function normalizeRule(rule: DiscountRule): DiscountRule | null {
   }
 
   return null;
+}
+
+/** Manual discounts at or above this share of the bill need a manager/admin (or a manager's PIN). */
+export const MANUAL_DISCOUNT_APPROVAL_RATIO = 0.5;
+
+/** Reject (not silently clamp) an invalid manual discount so the cashier sees why. */
+function assertValidManualRule(rule: DiscountRule) {
+  const value = Number(rule?.value ?? 0);
+  if ((rule?.type === "ORDER_PERCENT" || rule?.type === "CATEGORY_PERCENT") && (!Number.isFinite(value) || value <= 0 || value > 100)) {
+    throw new Error("ส่วนลดเปอร์เซ็นต์ต้องมากกว่า 0 และไม่เกิน 100%");
+  }
+  if (rule?.type === "ORDER_FIXED" && (!Number.isFinite(value) || value <= 0)) throw new Error("ส่วนลดต้องมากกว่า 0 บาท");
+}
+
+/** Auto promotions don't stack: only the one worth most on this bill applies. */
+function bestPromotionRule(rules: DiscountRule[], subtotal: number, orderItems: OrderItemDraft[]) {
+  let best: DiscountRule | null = null;
+  let bestAmount = 0;
+  for (const rule of rules) {
+    const amount = computeDiscount([rule], subtotal, orderItems).discountAmount;
+    if (amount > bestAmount) { best = rule; bestAmount = amount; }
+  }
+  return best;
 }
 
 function legacyDiscountRule(discountType: DiscountType, discountValue: number): DiscountRule | null {
@@ -471,11 +495,12 @@ function scheduleIntegrationOutbox(outboxPayload: Record<string, unknown>) {
   }, 0);
 }
 
-export async function getOrders(branchId?: number) {
+export async function getOrders(branchId?: number, limit?: number) {
   const orders = await prisma.order.findMany({
     where: branchId ? { branchId } : undefined,
     include: { items: true, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } },
-    orderBy: { id: "desc" }
+    orderBy: { id: "desc" },
+    ...(limit ? { take: limit } : {})
   });
   return orders.map(hydrateOrder);
 }
@@ -518,6 +543,8 @@ export async function updateOrderStatusWithContext(id: number, input: {
       });
       if (!current) return null;
       if (REVERSAL_STATUSES.has(current.status)) return current;
+      const issuedInvoice = await tx.taxInvoice.findFirst({ where: { orderId: current.id, status: "ISSUED" }, select: { invoiceNo: true } });
+      if (issuedInvoice) throw new Error(`บิลนี้ออกใบกำกับภาษี ${issuedInvoice.invoiceNo} แล้ว ต้องยกเลิกใบกำกับก่อน`);
       const reversalPayload = {
         previousStatus: current.status,
         newStatus: status,
@@ -672,6 +699,10 @@ export async function createOrder(input: {
   couponCode?: string;
   paymentDetails?: PaymentDetails;
   idempotencyKey?: string | null;
+  /** cashier turned auto promotions off for this bill */
+  skipPromotions?: boolean;
+  /** seller is a manager/admin, or a manager's PIN was verified for this bill */
+  canApproveDiscount?: boolean;
 }) {
   const checkoutStartedAt = Date.now();
   let preflightMs = 0;
@@ -720,11 +751,12 @@ export async function createOrder(input: {
       },
       orderBy: [{ minQty: "desc" }, { id: "desc" }]
     }).catch(() => []),
-    prisma.storeSetting.findUnique({ where: { branchId: input.branchId } })
+    // same defaults (VAT 7% included) as the settings page and the printed receipt
+    getStoreSetting(input.branchId)
   ]);
   if (!branch) throw new Error("ไม่พบสาขาที่ระบุ");
   if (input.customerId && !customer) throw new Error("ไม่พบสมาชิกที่ระบุ");
-  if (storeSetting && !parsePaymentMethods(storeSetting.paymentMethods).includes(paymentMethod)) {
+  if (!storeSetting.paymentMethods.includes(paymentMethod)) {
     throw new Error("วิธีชำระเงินนี้ถูกปิดไว้");
   }
   // New/unstocked branches can opt in to selling without enough stock (stock can go negative).
@@ -800,10 +832,16 @@ export async function createOrder(input: {
     },
     orderBy: { id: "asc" }
   }).catch(() => []);
+  if (Array.isArray(input.discounts)) input.discounts.forEach(assertValidManualRule);
+  if (input.discountType === "PERCENT" && input.discountValue > 100) throw new Error("ส่วนลดเปอร์เซ็นต์ต้องมากกว่า 0 และไม่เกิน 100%");
+  if (input.discountValue < 0) throw new Error("ส่วนลดติดลบไม่ได้");
   const requestedRules = Array.isArray(input.discounts)
     ? input.discounts.map(normalizeRule).filter((rule): rule is DiscountRule => Boolean(rule))
     : [];
-  const promotionRules = activePromotions.map(promotionToDiscountRule).filter((rule: DiscountRule | null): rule is DiscountRule => Boolean(rule));
+  // invalid promotions (e.g. 150%) are skipped by normalizeRule rather than zeroing the bill
+  const validPromotionRules = input.skipPromotions ? [] : activePromotions.map(promotionToDiscountRule).filter((rule: DiscountRule | null): rule is DiscountRule => Boolean(rule));
+  const bestPromotion = bestPromotionRule(validPromotionRules, subtotal, orderItems);
+  const promotionRules = bestPromotion ? [bestPromotion] : [];
 
   // Coupon: validate before pricing, then increment usage atomically inside the transaction.
   const couponCode = typeof input.couponCode === "string" ? input.couponCode.trim().toUpperCase().slice(0, 40) : "";
@@ -813,16 +851,25 @@ export async function createOrder(input: {
     if (!coupon || coupon.active === false) throw new Error("คูปองไม่ถูกต้องหรือถูกปิดใช้งาน");
     if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) throw new Error("คูปองหมดอายุแล้ว");
     if (coupon.maxUses != null && coupon.usedCount >= coupon.maxUses) throw new Error("คูปองถูกใช้ครบจำนวนแล้ว");
+    if (Number(coupon.minSpend) > 0 && subtotal < Number(coupon.minSpend)) throw new Error(`คูปองนี้ใช้ได้เมื่อซื้อครบ ฿${Number(coupon.minSpend).toLocaleString("th-TH")}`);
+    if (!couponToDiscountRule(coupon)) throw new Error("คูปองนี้ตั้งมูลค่าไม่ถูกต้อง ใช้ไม่ได้");
   }
   const couponRule = coupon ? couponToDiscountRule(coupon) : null;
 
   const fallbackRule = legacyDiscountRule(input.discountType, input.discountValue);
+  const manualRules = requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []);
   const discountRules = [
     ...promotionRules,
     ...(couponRule ? [couponRule] : []),
-    ...(requestedRules.length ? requestedRules : (fallbackRule ? [fallbackRule] : []))
+    ...manualRules
   ];
   const { discountAmount, applied: appliedDiscounts } = computeDiscount(discountRules, subtotal, orderItems);
+  if (manualRules.length && subtotal > 0 && !input.canApproveDiscount) {
+    const manualAmount = computeDiscount(manualRules, subtotal, orderItems).discountAmount;
+    if (manualAmount >= subtotal * MANUAL_DISCOUNT_APPROVAL_RATIO) {
+      throw new Error(`DISCOUNT_APPROVAL_REQUIRED: ส่วนลดตั้งแต่ ${MANUAL_DISCOUNT_APPROVAL_RATIO * 100}% ของบิลต้องให้ผู้จัดการอนุมัติ (ใส่ PIN ผู้จัดการ)`);
+    }
+  }
 
   const discountable = Math.max(0, subtotal - discountAmount);
   const availablePoints = customer ? customer.points : 0;
@@ -1037,5 +1084,6 @@ export async function createOrder(input: {
     if (process.env.CHECKOUT_SYNC_OUTBOX === "1") await writeIntegrationOutbox(outboxPayload);
     else scheduleIntegrationOutbox(outboxPayload);
   }
-  return hydrateOrder(order);
+  // which promotion / coupon / manual discount made up discountAmount, for the receipt
+  return { ...hydrateOrder(order), appliedDiscounts };
 }

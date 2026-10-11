@@ -66,6 +66,8 @@ type CreateOrderInput = {
   discountValue: number;
   discounts?: DiscountRule[];
   couponCode?: string;
+  skipPromotions?: boolean;
+  discountApprovalToken?: string;
   branchId: number;
   customerId: number | null;
   loyaltyPointsToUse: number;
@@ -222,7 +224,65 @@ async function flushScopedOfflineOrders() {
 
 type FetchJsonInit = RequestInit & { timeoutMs?: number };
 
+/** An error the server answered with (has an HTTP status), as opposed to a network failure. */
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public code?: string) { super(message); this.name = "ApiError"; }
+}
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = localStorage.getItem("bb_pos_token");
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const user = JSON.parse(localStorage.getItem("bb_pos_user") || "null");
+    const branchId = user && localStorage.getItem(`bb_pos_branch_id:${user.id}`);
+    if (branchId) headers["X-Branch-Id"] = branchId;
+  } catch { /* No restored session. */ }
+  return headers;
+}
+
+/**
+ * Download a protected file (CSV / Excel export). A plain <a href> can't send
+ * the Authorization header, so fetch it and hand the browser a blob instead.
+ */
+export async function downloadAuthedFile(url: string, filename: string) {
+  const response = await fetch(url, { headers: authHeaders() });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(typeof payload?.error === "string" ? payload.error : "ดาวน์โหลดไฟล์ไม่สำเร็จ");
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+const GET_RETRY_DELAYS = [500, 1500];
+
+/**
+ * fetchJson, plus: a read (GET) that fails at the network level (Failed to fetch /
+ * net::ERR_FAILED, e.g. a cold or overloaded server) is retried a couple of times
+ * before the page sees an error. Writes are never retried here: they carry
+ * idempotency keys or their own recovery.
+ */
 async function fetchJson<T>(input: RequestInfo, init?: FetchJsonInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetchJsonOnce<T>(input, init);
+    } catch (error) {
+      const network = error instanceof TypeError && !(error instanceof ApiError);
+      if (method !== "GET" || !network || attempt >= GET_RETRY_DELAYS.length) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, GET_RETRY_DELAYS[attempt]));
+    }
+  }
+}
+
+async function fetchJsonOnce<T>(input: RequestInfo, init?: FetchJsonInit): Promise<T> {
   const token = localStorage.getItem("bb_pos_token");
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -246,8 +306,8 @@ async function fetchJson<T>(input: RequestInfo, init?: FetchJsonInit): Promise<T
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const message = typeof payload?.error === "string" ? payload.error : "Request failed";
-      throw new Error(message);
+      const message = typeof payload?.error === "string" ? payload.error : `คำขอไม่สำเร็จ (${response.status})`;
+      throw new ApiError(message, response.status, typeof payload?.code === "string" ? payload.code : undefined);
     }
     return payload as T;
   } catch (error) {
@@ -556,9 +616,14 @@ export async function updateCupStockSettings(branchId: number, settings: Pick<Cu
   return payload.settings;
 }
 
-export async function getOrders(branchId: number) {
-  const payload = await fetchJson<{ items: Order[] }>(`${API_URL}/orders?branchId=${branchId}`);
+export async function getOrders(branchId: number, limit?: number) {
+  const payload = await fetchJson<{ items: Order[] }>(`${API_URL}/orders?branchId=${branchId}${limit ? `&limit=${limit}` : ""}`);
   return payload.items;
+}
+
+export async function getOrder(id: number) {
+  const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`);
+  return payload.order;
 }
 
 export async function getOrderByIdempotencyKey(idempotencyKey: string) {
@@ -598,6 +663,11 @@ async function createOrderOnline(input: CreateOrderInput) {
   return payload.order;
 }
 
+/** Manager/admin PIN -> approval token for a large manual discount on this branch's next bill. */
+export async function approveDiscount(branchId: number, pin: string) {
+  return fetchJson<{ token: string; approverName: string }>(`${API_URL}/discount-approvals`, { method: "POST", body: JSON.stringify({ branchId, pin }) });
+}
+
 export async function createOrder(input: OfflineOrderInput) {
   const request = { ...input, idempotencyKey: input.idempotencyKey || `checkout-${makeOfflineId()}` };
   try {
@@ -608,10 +678,10 @@ export async function createOrder(input: OfflineOrderInput) {
   }
 }
 
-export async function updateOrderStatus(id: number, status: OrderStatus) {
+export async function updateOrderStatus(id: number, status: OrderStatus, reason?: string) {
   const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ status })
+    body: JSON.stringify({ status, reason })
   });
   return payload.order;
 }
@@ -803,6 +873,10 @@ export async function createPurchase(input: {
   return payload.purchase;
 }
 
+export async function voidPurchase(id: number, reason: string) {
+  return (await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases/${id}/void`, { method: "POST", body: JSON.stringify({ reason }) })).purchase;
+}
+
 export async function approvePurchase(id: number) {
   const payload = await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases/${id}/approve`, {
     method: "POST",
@@ -948,12 +1022,12 @@ export async function getCoupons() {
   return payload.items;
 }
 
-export async function createCoupon(input: { code: string; type: string; value: number; maxUses?: number | null; expiresAt?: string; active?: boolean }) {
+export async function createCoupon(input: { code: string; type: string; value: number; maxUses?: number | null; minSpend?: number; expiresAt?: string; active?: boolean }) {
   const payload = await fetchJson<{ item: Coupon }>(`${API_URL}/coupons`, { method: "POST", body: JSON.stringify(input) });
   return payload.item;
 }
 
-export async function updateCoupon(id: number, input: Partial<{ type: string; value: number; maxUses: number | null; expiresAt: string | null; active: boolean }>) {
+export async function updateCoupon(id: number, input: Partial<{ type: string; value: number; maxUses: number | null; minSpend: number; expiresAt: string | null; active: boolean }>) {
   const payload = await fetchJson<{ item: Coupon }>(`${API_URL}/coupons/${id}`, { method: "PUT", body: JSON.stringify(input) });
   return payload.item;
 }
@@ -963,7 +1037,7 @@ export async function deleteCoupon(id: number) {
 }
 
 export async function validateCoupon(code: string) {
-  const payload = await fetchJson<{ coupon: { code: string; type: string; value: number } }>(`${API_URL}/coupons/validate`, {
+  const payload = await fetchJson<{ coupon: { code: string; type: string; value: number; minSpend?: number } }>(`${API_URL}/coupons/validate`, {
     method: "POST",
     body: JSON.stringify({ code })
   });
@@ -980,6 +1054,30 @@ export async function getBusinessDocuments(branchId?: number) {
 export async function createBusinessDocument(input: { branchId: number; type: string; customerName?: string; total?: number; payload?: Record<string, unknown> }) {
   const payload = await fetchJson<{ item: BusinessDocument }>(`${API_URL}/business-documents`, { method: "POST", body: JSON.stringify(input) });
   return payload.item;
+}
+
+export async function updateBusinessDocument(id: number, input: { customerName?: string; total?: number; note?: string }) {
+  return (await fetchJson<{ item: BusinessDocument }>(`${API_URL}/business-documents/${id}`, { method: "PUT", body: JSON.stringify(input) })).item;
+}
+
+export async function setBusinessDocumentStatus(id: number, status: BusinessDocument["status"], reason?: string) {
+  return (await fetchJson<{ item: BusinessDocument }>(`${API_URL}/business-documents/${id}/status`, { method: "POST", body: JSON.stringify({ status, reason }) })).item;
+}
+
+export async function convertQuotationToInvoice(id: number) {
+  return (await fetchJson<{ item: BusinessDocument }>(`${API_URL}/business-documents/${id}/convert`, { method: "POST" })).item;
+}
+
+export async function voidTaxInvoice(id: number, reason: string) {
+  return (await fetchJson<{ invoice: TaxInvoice }>(`${API_URL}/tax-invoices/${id}/void`, { method: "POST", body: JSON.stringify({ reason }) })).invoice;
+}
+
+export async function cancelStockTransfer(id: number) {
+  return (await fetchJson<{ transfer: StockTransfer }>(`${API_URL}/stock-transfers/${id}/cancel`, { method: "POST" })).transfer;
+}
+
+export async function cancelStockCount(id: number) {
+  return (await fetchJson<{ stockCount: StockCount }>(`${API_URL}/stock-counts/${id}/cancel`, { method: "POST" })).stockCount;
 }
 
 export function getTaxExportUrl(params: { from?: string; to?: string; branchId?: number }) {

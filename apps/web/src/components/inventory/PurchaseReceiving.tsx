@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ChevronDown, Link2, PackagePlus, ScanBarcode, Trash2, X } from "lucide-react";
-import { createPurchase, getIngredients, getRecipes, updateIngredient } from "../../api";
+import { CalendarClock, ChevronDown, Link2, PackagePlus, ScanBarcode, Trash2, X } from "lucide-react";
+import { createPurchase, getIngredients, getRecipes, updateIngredient, voidPurchase } from "../../api";
 import type { Ingredient, InventoryItem, MenuItem, PurchaseOrder } from "../../types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -10,12 +10,18 @@ import { useToast } from "../../contexts/ToastContext";
 // Enter). A code resolves to the stock item's own barcode first (+1 per scan),
 // then through the product that carries it: menu item barcode/SKU -> its
 // single-ingredient recipe -> stock item (+recipe qty per scan). An admin can
-// bind an unknown code to a stock item right here. Receiving as admin can also
-// move each item's shared cost to this bill's price. The bill being keyed in
-// is kept as a per-branch draft in this browser until it is received.
+// bind an unknown code to a stock item right here. A line can be bought in packs
+// (2 ลัง × 12 = 24 ชิ้น) and carry an expiry date (makes a lot for FEFO).
+// Receiving as admin can also move each item's shared cost to the weighted
+// average with this bill. The bill being keyed in is kept as a per-branch draft
+// in this browser until it is received; a wrong receipt is voided (stock reversed).
 
 // totalInput keeps the line total exactly as typed (e.g. "10.") while it drives unitCost
-type Line = { ingredientId: number; qty: string; unitCost: string; totalInput?: string };
+// qty and unitCost are per purchase unit; packSize = stock units in one purchase unit
+type Line = { ingredientId: number; qty: string; unitCost: string; totalInput?: string; packSize?: string; expiryDate?: string; lotNo?: string; showLot?: boolean };
+
+/** Units that are counted, so 2.5 of them is a typo (mirrors the server). */
+const COUNTED_UNITS = new Set(["ชิ้น", "ขวด", "กระป๋อง", "แพ็ค", "ใบ", "ซอง", "กล่อง", "ลัง", "ถุง", "แก้ว", "อัน", "ห่อ", "หลอด", "ฝา", "ถ้วย", "ลูก", "ตัว", "แผ่น", "ม้วน", "คู่"]);
 type Draft = { supplier: string; note: string; lines: Line[] };
 type CodeHit = { ingredientId: number; step: number; productName: string };
 
@@ -199,14 +205,20 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
   const rows = draft.lines.map((line) => {
     const qty = num(line.qty);
     const cost = num(line.unitCost);
+    const pack = line.packSize === undefined || line.packSize === "" ? 1 : num(line.packSize);
     const total = Number.isFinite(qty) && Number.isFinite(cost) ? qty * cost : NaN;
-    return { line, ingredient: ingredientById.get(line.ingredientId), qty, cost, total, valid: qty > 0 && cost >= 0 };
+    const ingredient = ingredientById.get(line.ingredientId);
+    const stockQty = qty > 0 && pack > 0 ? round(qty * pack, 4) : NaN;
+    const stockCost = cost >= 0 && pack > 0 ? round(cost / pack, 4) : NaN;
+    const fraction = Boolean(ingredient && COUNTED_UNITS.has(ingredient.unit.trim()) && Number.isFinite(stockQty) && Math.abs(stockQty - Math.round(stockQty)) > 1e-9);
+    const valid = qty > 0 && cost >= 0 && pack > 0 && !fraction;
+    return { line, ingredient, qty, cost, pack, total, stockQty, stockCost, fraction, valid };
   });
   const grandTotal = rows.reduce((sum, r) => sum + (Number.isFinite(r.total) ? r.total : 0), 0);
   const invalidCount = rows.filter((r) => !r.valid).length;
   const canSubmit = rows.length > 0 && invalidCount === 0 && !busy;
   // lines whose price differs from the item's current shared cost (฿0 lines never change it)
-  const costDiffs = rows.filter((r) => r.ingredient && r.cost > 0 && Math.abs(r.cost - r.ingredient.costPerUnit) > 0.004);
+  const costDiffs = rows.filter((r) => r.ingredient && r.stockCost > 0 && Math.abs(r.stockCost - r.ingredient.costPerUnit) > 0.004);
   const willUpdateCost = isAdmin && updateCost && costDiffs.length > 0;
 
   const suppliers = useMemo(() => [...new Set(purchases.map((p) => p.supplier).filter((s) => s && s !== "ไม่ระบุผู้ขาย"))].slice(0, 20), [purchases]);
@@ -214,7 +226,7 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
   async function submit() {
     if (!canSubmit) return;
     const supplier = draft.supplier.trim() || "ไม่ระบุผู้ขาย";
-    const costLine = willUpdateCost ? `\nและอัปเดตทุนต่อหน่วยเป็นราคาบิลนี้ ${costDiffs.length} รายการ` : "";
+    const costLine = willUpdateCost ? `\nและอัปเดตทุนแบบถัวเฉลี่ยกับราคาบิลนี้ ${costDiffs.length} รายการ` : "";
     if (!window.confirm(`รับสินค้าเข้าสต็อก ${rows.length} รายการ รวม ${money(grandTotal)}\nจาก ${supplier}?${costLine}`)) return;
     setBusy(true);
     try {
@@ -222,7 +234,14 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
         branchId,
         supplier: draft.supplier.trim(),
         note: draft.note.trim(),
-        items: rows.map((r) => ({ ingredientId: r.line.ingredientId, qty: r.qty, unitCost: r.cost })),
+        items: rows.map((r) => ({
+          ingredientId: r.line.ingredientId,
+          qty: r.stockQty,
+          unitCost: r.stockCost,
+          description: r.pack !== 1 ? `${fmt(r.qty)} × ${fmt(r.pack)} ${r.ingredient?.unit ?? ""}`.trim() : "",
+          expiryDate: r.line.expiryDate || null,
+          lotNo: r.line.lotNo?.trim() || undefined
+        })),
         updateCost: isAdmin && updateCost
       });
       setDraft(emptyDraft);
@@ -231,6 +250,26 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
       if (changed) void loadIngredients();
       await onReceived();
       scanRef.current?.focus();
+    } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
+  }
+
+  /** Void a receipt (stock reversed); with reload, its lines come back as the draft to fix and receive again. */
+  async function voidReceipt(po: PurchaseOrder, reload: boolean) {
+    if (reload && (draft.lines.length || draft.supplier.trim())) return toast.error("ล้างหรือรับบิลที่กำลังกรอกก่อน แล้วค่อยแก้ใบรับเก่า");
+    const reason = window.prompt(`${reload ? "แก้ไข" : "ยกเลิก"}ใบรับ #${po.id} (${po.supplier})\nสต็อกที่รับเข้าจะถูกหักออก${reload ? " แล้วโหลดรายการกลับมาให้แก้" : ""}\nระบุเหตุผล:`, reload ? "แก้ไขรายการ" : "");
+    if (!reason?.trim()) return;
+    setBusy(true);
+    try {
+      await voidPurchase(po.id, reason.trim());
+      if (reload) {
+        setDraft({
+          supplier: po.supplier === "ไม่ระบุผู้ขาย" ? "" : po.supplier,
+          note: po.note,
+          lines: (po.items ?? []).filter((i) => i.ingredientId).map((i) => ({ ingredientId: i.ingredientId, qty: String(i.qty), unitCost: String(i.unitCost) }))
+        });
+        toast.success(`ยกเลิกใบรับ #${po.id} แล้ว · แก้รายการด้านบนแล้วกดรับเข้าใหม่`);
+      } else toast.success(`ยกเลิกใบรับ #${po.id} แล้ว สต็อกถูกหักคืน`);
+      await onReceived();
     } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
   }
 
@@ -280,29 +319,42 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
 
     <div className="rcv-table" role="table" aria-label="รายการรับเข้า">
       <div className="rcv-row rcv-row--head" role="row">
-        <span role="columnheader">สินค้า</span><span role="columnheader">จำนวน</span><span role="columnheader">ทุน/หน่วย</span><span role="columnheader">รวม</span><span role="columnheader" aria-label="ลบ" />
+        <span role="columnheader">สินค้า</span><span role="columnheader">จำนวน</span><span role="columnheader">ทุน/หน่วยที่ซื้อ</span><span role="columnheader">รวม</span><span role="columnheader" aria-label="ลบ" />
       </div>
-      {rows.map(({ line, ingredient, qty, cost, total }) => {
+      {rows.map(({ line, ingredient, qty, total, pack, stockQty, stockCost, fraction }) => {
         const stock = stockById.get(line.ingredientId)?.stockQty ?? 0;
         const unit = ingredient?.unit ?? "";
         const oldCost = ingredient?.costPerUnit ?? 0;
-        const costChanged = oldCost > 0 && Number.isFinite(cost) && Math.abs(cost - oldCost) > 0.004;
+        const costChanged = oldCost > 0 && Number.isFinite(stockCost) && stockCost > 0 && Math.abs(stockCost - oldCost) > 0.004;
+        const patch = (p: Partial<Line>) => setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, ...p } : l));
         return <div role="row" key={line.ingredientId} className={`rcv-row${flashId === line.ingredientId ? " is-flash" : ""}`}>
           <span role="cell" className="stk-name"><strong>{ingredient?.name ?? `สินค้า #${line.ingredientId}`}</strong>
-            <small>คงเหลือ {fmt(stock)}{qty > 0 ? <> → <b>{fmt(round(stock + qty, 3))}</b></> : null} {unit}</small></span>
+            <small>คงเหลือ {fmt(stock)}{stockQty > 0 ? <> → <b>{fmt(round(stock + stockQty, 3))}</b></> : null} {unit}</small>
+            {fraction && <small className="negative">{unit}ต้องเป็นจำนวนเต็ม</small>}
+            <button type="button" className="rcv-lot-toggle" aria-expanded={Boolean(line.showLot)} onClick={() => patch({ showLot: !line.showLot })}><CalendarClock size={12} aria-hidden /> {line.expiryDate ? `หมดอายุ ${new Date(line.expiryDate).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "2-digit" })}` : "lot / วันหมดอายุ"}</button></span>
           <span role="cell" className="rcv-num" data-label="จำนวน">
             <input ref={(el) => { if (el) qtyRefs.current.set(line.ingredientId, el); else qtyRefs.current.delete(line.ingredientId); }}
               className={`input${line.qty !== "" && !(qty > 0) ? " is-invalid" : ""}`} type="number" inputMode="decimal" min="0" step="any" value={line.qty} placeholder="0"
               aria-label={`จำนวนรับเข้า ${ingredient?.name}`}
               onChange={(e) => setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, qty: e.target.value, totalInput: undefined } : l))}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); scanRef.current?.focus(); } }} />
-            <em>{unit}</em>
+            <em>{pack !== 1 ? "หน่วยซื้อ" : unit}</em>
+            {/* buying in packs: stock gets qty × pack size */}
+            <label className="rcv-pack">× <input className="input" type="number" inputMode="numeric" min="1" step="any" value={line.packSize ?? "1"} aria-label={`จำนวน${unit}ต่อหน่วยซื้อ (เช่น ลัง) ${ingredient?.name}`}
+              onChange={(e) => {
+                // keep the cost per stock unit; the price per pack scales with the pack size
+                const nextPack = num(e.target.value);
+                const cost = num(line.unitCost);
+                patch({ packSize: e.target.value, totalInput: undefined, ...(nextPack > 0 && pack > 0 && Number.isFinite(cost) ? { unitCost: String(round(cost / pack * nextPack, 4)) } : {}) });
+              }} /> {unit} ต่อหน่วยซื้อ</label>
+            {pack !== 1 && stockQty > 0 && <small>= {fmt(stockQty)} {unit}</small>}
           </span>
           <span role="cell" className="rcv-num" data-label="ทุน/หน่วย">
             <input className="input" type="number" inputMode="decimal" min="0" step="any" value={line.unitCost} placeholder="0.00"
               aria-label={`ต้นทุนต่อหน่วย ${ingredient?.name}`}
               onChange={(e) => setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, unitCost: e.target.value, totalInput: undefined } : l))} />
-            {costChanged && <small className={cost > oldCost ? "negative" : "positive"}>เดิม {money(oldCost)}</small>}
+            {pack !== 1 && stockCost >= 0 && <small>= {money(stockCost)}/{unit}</small>}
+            {costChanged && <small className={stockCost > oldCost ? "negative" : "positive"}>ทุนเดิม {money(oldCost)}/{unit}</small>}
           </span>
           <span role="cell" className="rcv-num" data-label="รวม">
             {/* typing the bill's line total back-fills the unit cost */}
@@ -313,6 +365,11 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
               onChange={(e) => { const raw = e.target.value; const t = num(raw); setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, totalInput: raw, unitCost: Number.isFinite(t) && qty > 0 ? String(round(t / qty, 4)) : "" } : l)); }} />
           </span>
           <span role="cell"><button type="button" className="studio-icon-button" aria-label={`เอา ${ingredient?.name} ออก`} onClick={() => setLines((ls) => ls.filter((l) => l.ingredientId !== line.ingredientId))}><Trash2 size={16} /></button></span>
+          {line.showLot && <span role="cell" className="rcv-lot">
+            <label>วันหมดอายุ <input className="input" type="date" value={line.expiryDate ?? ""} onChange={(e) => patch({ expiryDate: e.target.value })} /></label>
+            <label>เลข lot <input className="input" value={line.lotNo ?? ""} maxLength={40} onChange={(e) => patch({ lotNo: e.target.value })} placeholder="ไม่บังคับ" /></label>
+            <small>ใส่วันหมดอายุ = ระบบตัดของที่หมดอายุก่อนออกก่อน (FEFO)</small>
+          </span>}
         </div>;
       })}
       {!rows.length && <div className="rcv-placeholder"><ScanBarcode size={28} aria-hidden /><strong>ยังไม่มีรายการในบิลนี้</strong><span>สแกนบาร์โค้ดหรือค้นหาชื่อสินค้าด้านบนเพื่อเริ่ม</span></div>}
@@ -321,10 +378,10 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
     <div className="rcv-bar">
       <div>
         <strong>{rows.length} รายการ · {money(grandTotal)}</strong>
-        <span>{invalidCount ? `กรอกจำนวน/ต้นทุนให้ครบอีก ${invalidCount} รายการ` : rows.length ? "พร้อมรับเข้าสต็อก" : "ร่างบิลจะถูกจำไว้ในเครื่องนี้"}</span>
+        <span>{invalidCount ? `แก้จำนวน/ต้นทุนให้ถูกต้องอีก ${invalidCount} รายการ` : rows.length ? "พร้อมรับเข้าสต็อก" : "ร่างบิลจะถูกจำไว้ในเครื่องนี้"}</span>
       </div>
       {costDiffs.length > 0 && (isAdmin
-        ? <label className="rcv-costopt"><input type="checkbox" checked={updateCost} onChange={(e) => setUpdateCost(e.target.checked)} /> อัปเดตทุนเป็นราคาบิลนี้ ({costDiffs.length} รายการ)</label>
+        ? <label className="rcv-costopt"><input type="checkbox" checked={updateCost} onChange={(e) => setUpdateCost(e.target.checked)} /> อัปเดตทุนแบบถัวเฉลี่ย (ของเดิมในสต็อก + บิลนี้) {costDiffs.length} รายการ</label>
         : <span className="rcv-costopt">ราคาต่างจากทุนเดิม {costDiffs.length} รายการ · ทุนกลางแก้ได้โดยผู้ดูแลระบบ</span>)}
       {(rows.length > 0 || draft.supplier || draft.note) && <button type="button" className="btn btn--ghost" disabled={busy} onClick={() => { if (window.confirm("ล้างบิลที่กำลังกรอกทั้งหมด?")) setDraft(emptyDraft); }}>ล้าง</button>}
       <button type="button" className="btn btn--primary" disabled={!canSubmit} onClick={submit}>{busy ? "กำลังบันทึก..." : "รับเข้าสต็อก"}</button>
@@ -334,17 +391,23 @@ export default function PurchaseReceiving({ branchId, branchType, inventory, men
       <h3>ประวัติรับเข้า</h3>
       {purchases.length ? purchases.slice(0, 8).map((po) => {
         const open = openPo === po.id;
-        return <div key={po.id} className={`rcv-po${open ? " is-open" : ""}`}>
+        const isVoid = po.status === "VOID";
+        return <div key={po.id} className={`rcv-po${open ? " is-open" : ""}${isVoid ? " is-void" : ""}`}>
           <button type="button" aria-expanded={open} onClick={() => setOpenPo(open ? null : po.id)}>
-            <span><strong>{po.supplier || "ไม่ระบุผู้ขาย"}</strong><small>#{po.id} · {when(po.receivedAt)} · {po.itemCount ?? po.items?.length ?? 0} รายการ{po.note ? ` · ${po.note}` : ""}</small></span>
+            <span><strong>{po.supplier || "ไม่ระบุผู้ขาย"}{isVoid && <span className="stk-badge is-out" style={{ marginLeft: 6 }}>ยกเลิก</span>}</strong><small>ใบรับ #{po.id} · {when(po.receivedAt)} · {po.itemCount ?? po.items?.length ?? 0} รายการ{po.note ? ` · ${po.note}` : ""}{isVoid && po.voidReason ? ` · ยกเลิก: ${po.voidReason}` : ""}</small></span>
             <b>{money(po.totalCost)}</b>
             <ChevronDown size={16} aria-hidden />
           </button>
           {open && <ul>{(po.items ?? []).map((item, i) => <li key={item.id ?? i}>
-            <span>{item.ingredientName ?? ingredientById.get(item.ingredientId)?.name ?? `#${item.ingredientId}`}</span>
+            <span>{item.ingredientName ?? ingredientById.get(item.ingredientId)?.name ?? `#${item.ingredientId}`}{item.description ? <small> ({item.description})</small> : null}</span>
             <span>{fmt(item.qty)} {item.unit ?? ""} × {money(item.unitCost)}</span>
             <b>{money(item.lineTotal ?? item.qty * item.unitCost)}</b>
-          </li>)}{!po.items?.length && <li className="stk-hint">ไม่มีรายละเอียดรายการ</li>}</ul>}
+          </li>)}{!po.items?.length && <li className="stk-hint">ไม่มีรายละเอียดรายการ</li>}
+            {!isVoid && <li className="rcv-po__actions">
+              <button type="button" className="btn btn--ghost" disabled={busy} onClick={() => voidReceipt(po, true)}>แก้ไข</button>
+              <button type="button" className="btn btn--ghost" style={{ color: "var(--danger)" }} disabled={busy} onClick={() => voidReceipt(po, false)}>ยกเลิกใบรับ</button>
+            </li>}
+          </ul>}
         </div>;
       }) : <p className="stk-hint">ยังไม่มีการรับสินค้าเข้าสาขานี้</p>}
     </section>

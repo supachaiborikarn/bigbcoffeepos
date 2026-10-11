@@ -28,7 +28,7 @@ import PurchaseReceiving from "../components/inventory/PurchaseReceiving";
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
   currency: "THB",
-  maximumFractionDigits: 0
+  minimumFractionDigits: 0, maximumFractionDigits: 2
 });
 
 const branchTypeLabels: Record<MenuItem["branchType"], string> = {
@@ -286,8 +286,9 @@ export default function InventoryPage() {
     setSearchParams(next, { replace: true });
   };
 
+  // same rule as the stock list (StockManager.stockStatus): at/below the alert level, or out (≤ 0)
   const lowStockItems = useMemo(
-    () => inventory.filter((item) => item.reorderLevel > 0 && item.stockQty <= item.reorderLevel),
+    () => inventory.filter((item) => item.stockQty <= 0 || (item.reorderLevel > 0 && item.stockQty <= item.reorderLevel)),
     [inventory]
   );
 
@@ -395,15 +396,39 @@ export default function InventoryPage() {
       .map((line) => {
         const ingredientId = Number(line.ingredientId);
         const qty = toNumber(line.qty);
+        if (qty === null || qty <= 0) return null;
         const item = inventory.find((stockItem) => stockItem.ingredientId === ingredientId);
-        if (!item || qty === null || qty <= 0) return null;
-        return { ...item, qty };
+        if (item) return { ...item, qty, notStockedHere: false };
+        // in the recipe but never stocked at this branch: still show it (the count above includes it)
+        const known = ingredients.find((i) => i.id === ingredientId);
+        return { ingredientId, name: known?.name ?? `วัตถุดิบ #${ingredientId}`, unit: known?.unit ?? "", costPerUnit: known?.costPerUnit ?? 0, stockQty: 0, reorderLevel: 0, qty, notStockedHere: true };
       })
-      .filter((item): item is InventoryItem & { qty: number } => Boolean(item));
-  }, [inventory, recipeLines]);
+      .filter((item): item is InventoryItem & { qty: number; notStockedHere: boolean } => Boolean(item));
+  }, [inventory, ingredients, recipeLines]);
+
+  /** Stock movement report: the latest 500 movements of this branch as CSV (opens in Excel). */
+  const exportMovements = async () => {
+    if (!activeBranch) return;
+    try {
+      const rows = await getStockMovements(activeBranch.id, { limit: 500 });
+      const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const unitOf = new Map(inventory.map((i) => [i.ingredientId, i.unit]));
+      const lines = rows.map((m) => {
+        const info = describeMovement(m.reason);
+        return [new Date(m.createdAt).toLocaleString("sv-SE", { timeZone: "Asia/Bangkok" }).slice(0, 16), ingredientNameById.get(m.ingredientId) ?? `#${m.ingredientId}`, m.qty, unitOf.get(m.ingredientId) ?? "", info.label, info.note ?? ""].map(esc).join(",");
+      });
+      const csv = "\uFEFF" + ["วันที่เวลา", "สินค้า", "จำนวน (+เข้า/−ออก)", "หน่วย", "ประเภท", "หมายเหตุ"].map(esc).join(",") + "\n" + lines.join("\n");
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `stock-movements_${activeBranch.id}_${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" })}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { toast.error(`Export ไม่สำเร็จ: ${(err as Error).message}`); }
+  };
 
   const refreshInventory = async () => {
-    const [menuItems, ingredientItems] = await Promise.all([getMenu(), getIngredients()]);
+    // receivable = stocked here, plus anything this branch's recipes use (so recipes never look empty)
+    const [menuItems, ingredientItems] = await Promise.all([getMenu(), getIngredients({ receivable: true })]);
     const branchType = activeBranch?.branchType;
     const matchesActiveBranch = (item: MenuItem) => !branchType || item.branchType === branchType;
     setMenu(menuItems);
@@ -420,18 +445,21 @@ export default function InventoryPage() {
       return;
     }
 
-    const [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport, cupSettings] = await Promise.all([
+    // each part updates on its own, so e.g. a slow coverage report can't leave the receipt history stale
+    const [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport, cupSettings] = await Promise.allSettled([
       getInventory(activeBranch.id),
       getStockMovements(activeBranch.id, { limit: 20 }),
       getPurchases(activeBranch.id),
       getRecipeCoverage({ branchId: activeBranch.id }),
       getCupStockSettings(activeBranch.id)
     ]);
-    setInventory(inventoryItems);
-    setMovements(movementItems.slice(0, 20));
-    setPurchases(purchaseItemsFromApi);
-    setRecipeCoverage(coverageReport);
-    setCupStockDrafts(cupSettings);
+    if (inventoryItems.status === "fulfilled") setInventory(inventoryItems.value);
+    if (movementItems.status === "fulfilled") setMovements(movementItems.value.slice(0, 20));
+    if (purchaseItemsFromApi.status === "fulfilled") setPurchases(purchaseItemsFromApi.value);
+    if (coverageReport.status === "fulfilled") setRecipeCoverage(coverageReport.value);
+    if (cupSettings.status === "fulfilled") setCupStockDrafts(cupSettings.value);
+    const failed = [inventoryItems, movementItems, purchaseItemsFromApi, coverageReport, cupSettings].filter((r) => r.status === "rejected").length;
+    if (failed) toast.error(`โหลดข้อมูลสต็อกบางส่วนไม่สำเร็จ (${failed} ส่วน) กดรีเฟรชหน้าเพื่อลองใหม่`);
   };
 
   useEffect(() => {
@@ -945,7 +973,7 @@ export default function InventoryPage() {
             <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{activeProductCount}</strong>
           </div>
           <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>แจ้งเตือนสต็อกต่ำ</span>
+            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>ใกล้หมด / หมดแล้ว</span>
             <strong className={lowStockItems.length ? "negative" : "positive"} style={{ display: "block", fontSize: "28px", color: lowStockItems.length > 0 ? "var(--warning)" : "var(--success)", marginTop: "4px" }}>{lowStockItems.length}</strong>
           </div>
         </div>
@@ -1515,7 +1543,7 @@ export default function InventoryPage() {
                     <div key={item.ingredientId} className="recipe-line">
                       <div>
                         <strong>{item.name}</strong>
-                        <small>คงเหลือ {item.stockQty} {item.unit} · จุดสั่งซื้อ {item.reorderLevel}</small>
+                        <small>{item.notStockedHere ? "ยังไม่มีสต็อกที่สาขานี้ · รับสินค้าเข้าก่อนขาย" : `คงเหลือ ${item.stockQty} ${item.unit} · จุดสั่งซื้อ ${item.reorderLevel}`}</small>
                       </div>
                       <div className="recipe-line__qty">
                         <input
@@ -1587,6 +1615,7 @@ export default function InventoryPage() {
                 <h2>ประวัติเข้า/ออกสต็อก</h2>
                 <p className="muted">ขาย รับเข้า ตัดออก นับสต็อก และโอน ของสาขานี้</p>
               </div>
+              <button type="button" className="btn btn--ghost" onClick={exportMovements}>Export CSV</button>
             </div>
             <div className="panel__body">
               <p className="stk-hint">ปรับสต็อกรายสินค้า (รับเข้า / ตัดออก / นับสต็อกจริง) ได้ที่แท็บ <button type="button" className="btn btn--ghost" style={{ minHeight: 0, padding: "2px 8px" }} onClick={() => setActiveTab("ingredients")}>สต็อกวัตถุดิบ</button></p>

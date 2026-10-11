@@ -33,10 +33,13 @@ export default function StockCountSheet({ branchId, items, onPosted }: { branchI
     .map(([id, v]) => ({ item: byId.get(Number(id)), qty: Number(v) }))
     .filter((row): row is { item: InventoryItem; qty: number } => Boolean(row.item));
   const changed = counted.filter((row) => Math.abs(row.qty - row.item.stockQty) > 1e-9);
+  // typed but unusable (negative / not a number): block saving until fixed
+  const invalid = Object.entries(draft).filter(([, v]) => v.trim() !== "" && !(Number.isFinite(Number(v)) && Number(v) >= 0));
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return items.filter((item) => (!onlyStocked || item.stockQty !== 0 || draft[item.ingredientId] !== undefined) && (!q || item.name.toLowerCase().includes(q)));
+    // a search always looks through everything, including items at 0 (e.g. counting a new delivery)
+    return items.filter((item) => (q ? `${item.name} ${item.barcode ?? ""}`.toLowerCase().includes(q) : !onlyStocked || item.stockQty !== 0 || draft[item.ingredientId] !== undefined));
   }, [items, search, onlyStocked, draft]);
 
   async function submit() {
@@ -56,29 +59,30 @@ export default function StockCountSheet({ branchId, items, onPosted }: { branchI
     <p className="stk-hint">นับของจริงแล้วกรอกเฉพาะรายการที่นับ ช่องที่เว้นว่างจะไม่ถูกเปลี่ยน · ระบบจำค่าที่กรอกไว้ในเครื่องนี้จนกว่าจะบันทึก</p>
     <div className="count-sheet__tools">
       <label className="studio-search stk-search"><Search size={18} /><input aria-label="ค้นหาในใบนับ" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่อสินค้า" /></label>
-      <label className="count-sheet__toggle"><input type="checkbox" checked={onlyStocked} onChange={(e) => setOnlyStocked(e.target.checked)} /> แสดงเฉพาะรายการที่มียอดในระบบ</label>
+      <label className="count-sheet__toggle"><input type="checkbox" checked={onlyStocked} onChange={(e) => setOnlyStocked(e.target.checked)} /> ซ่อนรายการที่ยอดเป็น 0 (ค้นหาจะเห็นทุกรายการ)</label>
     </div>
     <div className="stk-table count-table" role="table" aria-label="ใบนับสต็อก">
       <div className="count-row count-row--head" role="row"><span role="columnheader">สินค้า</span><span role="columnheader">ในระบบ</span><span role="columnheader">นับได้</span><span role="columnheader">ส่วนต่าง</span></div>
       {visible.map((item) => {
         const raw = draft[item.ingredientId] ?? "";
-        const has = raw.trim() !== "" && Number.isFinite(Number(raw));
+        const bad = raw.trim() !== "" && !(Number.isFinite(Number(raw)) && Number(raw) >= 0);
+        const has = raw.trim() !== "" && !bad;
         const diff = has ? Math.round((Number(raw) - item.stockQty) * 1000) / 1000 : null;
         return <div className={`count-row${has ? " is-filled" : ""}`} role="row" key={item.ingredientId}>
           <span role="cell" className="stk-name"><strong>{item.name}</strong><small>หน่วย: {item.unit}</small></span>
           <span role="cell" className="stk-cell" data-label="ในระบบ">{fmt(item.stockQty)}</span>
-          <span role="cell"><input className="input count-input" type="number" inputMode="decimal" min="0" step="any" aria-label={`นับได้ ${item.name}`} value={raw} placeholder="—"
+          <span role="cell"><input className={`input count-input${bad ? " is-invalid" : ""}`} aria-invalid={bad} type="number" inputMode="decimal" min="0" step="any" aria-label={`นับได้ ${item.name}`} value={raw} placeholder="—"
             onChange={(e) => setDraft((d) => { const next = { ...d }; if (e.target.value === "") delete next[item.ingredientId]; else next[item.ingredientId] = e.target.value; return next; })} /></span>
-          <span role="cell" className={`stk-cell count-diff ${diff === null ? "" : diff > 0 ? "positive" : diff < 0 ? "negative" : ""}`} data-label="ส่วนต่าง">{diff === null ? "" : diff === 0 ? "ตรง" : `${diff > 0 ? "+" : ""}${fmt(diff)}`}</span>
+          <span role="cell" className={`stk-cell count-diff ${diff === null ? "" : diff > 0 ? "positive" : diff < 0 ? "negative" : ""}`} data-label="ส่วนต่าง">{bad ? "ต้องไม่ติดลบ" : diff === null ? "" : diff === 0 ? "ตรง" : `${diff > 0 ? "+" : ""}${fmt(diff)}`}</span>
         </div>;
       })}
       {!visible.length && <div className="empty">ไม่มีรายการ</div>}
     </div>
     <div className="count-sheet__bar">
-      <div><strong>กรอกแล้ว {counted.length} รายการ</strong><span>ยอดจะเปลี่ยน {changed.length} รายการ</span></div>
+      <div><strong>กรอกแล้ว {counted.length} รายการ</strong><span className={invalid.length ? "negative" : undefined}>{invalid.length ? `ค่าที่ใช้ไม่ได้ ${invalid.length} รายการ (ติดลบ) แก้ก่อนบันทึก` : `ยอดจะเปลี่ยน ${changed.length} รายการ`}</span></div>
       <input className="input" value={note} maxLength={120} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุรอบนับ (ไม่บังคับ)" aria-label="หมายเหตุรอบนับ" />
       {Object.keys(draft).length > 0 && <button type="button" className="btn btn--ghost" disabled={saving} onClick={() => { if (window.confirm("ล้างค่าที่กรอกทั้งหมด?")) setDraft({}); }}>ล้าง</button>}
-      <button type="button" className="btn btn--primary" disabled={!counted.length || saving} onClick={submit}><ClipboardCheck size={16} /> {saving ? "กำลังบันทึก..." : "บันทึกผลนับ"}</button>
+      <button type="button" className="btn btn--primary" disabled={!counted.length || invalid.length > 0 || saving} onClick={submit}><ClipboardCheck size={16} /> {saving ? "กำลังบันทึก..." : "บันทึกผลนับ"}</button>
     </div>
   </div>;
 }

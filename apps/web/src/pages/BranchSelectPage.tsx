@@ -8,7 +8,7 @@ const ROLE_LABELS: Record<string, string> = { admin: "ผู้ดูแลร�
 
 export default function BranchSelectPage() {
   const { user, logout } = useAuth();
-  const { branches, activeBranch, setBranchId, loading } = useBranch();
+  const { branches, activeBranch, setBranchId, loading, error, reload } = useBranch();
 
   if (loading) return <div className="route-loading">กำลังตรวจสอบสาขา...</div>;
   if (!user) return <Navigate to="/login" replace />;
@@ -19,10 +19,14 @@ export default function BranchSelectPage() {
       <div style={{ maxWidth: 480, width: "100%", animation: "slideUp 200ms cubic-bezier(0.16, 1, 0.3, 1)" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <BrandLogo style={{ width: 92, height: 92, objectFit: "contain", margin: "0 auto 16px", display: "block" }} />
-          <h1 style={{ marginBottom: 6, fontSize: 22 }}>{branches.length ? "เลือกพื้นที่ทำงาน" : "บัญชียังไม่มีสาขาที่เปิดใช้งาน"}</h1>
+          <h1 style={{ marginBottom: 6, fontSize: 22 }}>{branches.length ? "เลือกพื้นที่ทำงาน" : error ? "โหลดรายการสาขาไม่สำเร็จ" : "บัญชียังไม่มีสาขาที่เปิดใช้งาน"}</h1>
           <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-            <strong>{user.name}</strong> · {ROLE_LABELS[user.role]}{branches.length === 0 && " — ให้ผู้ดูแลตรวจสอบสาขาที่ผูกกับบัญชีนี้"}
+            <strong>{user.name}</strong> · {ROLE_LABELS[user.role]}{branches.length === 0 && !error && " — ให้ผู้ดูแลตรวจสอบสาขาที่ผูกกับบัญชีนี้"}
           </p>
+          {error && <div role="alert" style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+            <span style={{ color: "var(--danger)", fontSize: 13 }}>{error} · ตรวจอินเทอร์เน็ตแล้วลองใหม่</span>
+            <button type="button" className="btn btn--primary" onClick={reload}>ลองใหม่</button>
+          </div>}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

@@ -5,6 +5,7 @@ import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import type { Order } from "../types";
 import { Ban, CheckCircle2 } from "lucide-react";
+import { describeModifiers } from "../utils/modifierLabel";
 
 const fetchJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const token = localStorage.getItem("bb_pos_token");
@@ -121,7 +122,8 @@ export default function OrderQueuePage() {
                 <div key={item.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "16px" }}>
                   <span>
                     <strong>{item.qty}x</strong> {item.name}
-                    {item.note && <span className="muted" style={{ fontSize: "13px" }}> — {item.note}</span>}
+                    {describeModifiers(item.modifiers) && <span style={{ display: "block", fontSize: "14px", fontWeight: 600, color: "var(--brand-hover)" }}>{describeModifiers(item.modifiers)}</span>}
+                    {item.note && <span className="muted" style={{ display: "block", fontSize: "13px" }}>หมายเหตุ: {item.note}</span>}
                   </span>
                 </div>
               ))}

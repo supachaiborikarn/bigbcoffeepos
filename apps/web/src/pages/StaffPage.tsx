@@ -227,9 +227,9 @@ export default function StaffPage() {
                 </select>
               </div>
               <div>
-                <label style={{ display: "block", marginBottom: 8, fontWeight: 500 }}>สาขาประจำ (ถ้ามี)</label>
-                <select className="input" value={formData.branchId} onChange={e => setFormData({...formData, branchId: e.target.value})}>
-                  <option value="">-- ไม่ระบุ (เห็นทุกสาขา) --</option>
+                <label style={{ display: "block", marginBottom: 8, fontWeight: 500 }}>สาขาประจำ{formData.role !== "admin" ? <span style={{ color: "var(--danger)" }}> *</span> : " (ไม่บังคับ)"}</label>
+                <select className="input" value={formData.branchId} required={formData.role !== "admin"} aria-required={formData.role !== "admin"} onChange={e => setFormData({...formData, branchId: e.target.value})}>
+                  <option value="">{formData.role === "admin" ? "-- ไม่ระบุ (เห็นทุกสาขา) --" : "-- เลือกสาขา --"}</option>
                   {branches.map(b => (
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}

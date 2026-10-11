@@ -15,7 +15,7 @@ import TimeClockDialog from "../shift/TimeClockDialog";
 const formatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
   currency: "THB",
-  maximumFractionDigits: 0
+  minimumFractionDigits: 0, maximumFractionDigits: 2
 });
 
 const DENOMINATIONS = [1000, 500, 100, 50, 20, 10, 5, 2, 1] as const;
@@ -60,11 +60,14 @@ function cashCountLines(counts: CashCounts) {
   }).filter((line) => line.count > 0);
 }
 
+/** Mirrors the server: cash short/over by this much needs a reason to close the shift. */
+const VARIANCE_REASON_THRESHOLD = 100;
+
 export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleAppearance }: { onOpenMenu: () => void; mobileOpen: boolean; appearance: string; onToggleAppearance: () => void }) {
   const { user } = useAuth();
   const { branches, activeBranch, setBranchId } = useBranch();
   const profile = businessProfile(activeBranch?.branchType);
-  const { activeShift, openShift, closeShift, loading } = useShift();
+  const { activeShift, openShift, closeShift, loading, loaded: shiftLoaded } = useShift();
   const toast = useToast();
   const [showShiftModal, setShowShiftModal] = useState<"open" | "close" | null>(null);
   const [openingCash, setOpeningCash] = useState("");
@@ -119,6 +122,11 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
 
   async function handleCloseShift() {
     if (!activeShift) return;
+    if (Math.abs(liveDifference) >= VARIANCE_REASON_THRESHOLD && !closingNote.trim()) {
+      toast.error(`เงิน${liveDifference < 0 ? "ขาด" : "เกิน"} ${formatMoney(Math.abs(liveDifference))} ต้องระบุเหตุผลในหมายเหตุก่อนปิดกะ`);
+      return;
+    }
+    if (Math.round(liveDifference * 100) !== 0 && !window.confirm(`ยืนยันปิดกะ\nเงินที่ควรมี ${formatMoney(expectedCash)}\nนับได้ ${formatMoney(countedCash)}\nส่วนต่าง ${liveDifference > 0 ? "+" : ""}${formatMoney(liveDifference)}`)) return;
     const lines = cashCountLines(closeCounts);
     const cashCounts = Object.fromEntries(lines.map((line) => [String(line.denomination), line.count]));
 
@@ -187,7 +195,9 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
               <Wallet size={17} /><span>เงินเข้า/ออก</span>
             </button>
           )}
-          {activeShift ? (
+          {!shiftLoaded ? (
+            <button className="btn btn--ghost" disabled>กำลังตรวจกะ...</button>
+          ) : activeShift ? (
             <button className="btn btn--ghost" onClick={openCloseModal}>
               ปิดกะ
             </button>
@@ -318,7 +328,11 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
                   value={closingNote}
                   onChange={(event) => setClosingNote(event.target.value)}
                   placeholder="หมายเหตุปิดกะ เช่น ฝากเงินธนาคาร, เงินขาด/เกิน"
+                  aria-invalid={Math.abs(liveDifference) >= VARIANCE_REASON_THRESHOLD && !closingNote.trim()}
                 />
+                {Math.abs(liveDifference) >= VARIANCE_REASON_THRESHOLD && <p className={closingNote.trim() ? "muted" : "negative"} style={{ fontSize: 12, marginTop: 6 }}>
+                  เงิน{liveDifference < 0 ? "ขาด" : "เกิน"} {formatMoney(Math.abs(liveDifference))} · ต้องระบุเหตุผลก่อนปิดกะ
+                </p>}
               </section>
             </div>
 

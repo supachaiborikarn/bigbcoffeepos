@@ -13,7 +13,7 @@ type Props = {
 const formatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
   currency: "THB",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 0, maximumFractionDigits: 2,
 });
 
 const TOP_SELLER_FLAGS = ["popular", "topSeller", "top_seller", "bestSeller", "best_seller", "featured", "recommended"];

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getCustomerDisplay } from "../api";
 import { useBranch } from "../contexts/BranchContext";
 
-const money = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
+const money = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 export default function CustomerDisplayPage() {
   const { activeBranch } = useBranch();

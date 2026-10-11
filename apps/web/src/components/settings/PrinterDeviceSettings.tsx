@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getPaperWidth, getPrinterMode, isAndroidDevice, isIOSDevice, PAPER_SPECS, printerLabels, setPaperWidth, setPrinterMode, type PrinterMode } from "../../utils/printerSettings";
+import { getAutoPrint, getPaperWidth, getPrinterMode, isAndroidDevice, isIOSDevice, PAPER_SPECS, printerLabels, setAutoPrint, setPaperWidth, setPrinterMode, type PrinterMode } from "../../utils/printerSettings";
 import { printReceipt } from "../ReceiptPrinter";
 import { useBranch } from "../../contexts/BranchContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -8,6 +8,7 @@ import type { Order } from "../../types";
 export default function PrinterDeviceSettings() {
   const [mode,setMode] = useState(getPrinterMode);
   const [width,setWidth] = useState(getPaperWidth);
+  const [autoPrint,setAuto] = useState(getAutoPrint);
   const {activeBranch} = useBranch();
   const toast=useToast();
   const test = () => {
@@ -26,6 +27,7 @@ export default function PrinterDeviceSettings() {
       {isAndroidDevice() && <option value="rawbt">{printerLabels.rawbt}</option>}
       {mode==='native' && <option value="native">{printerLabels.native}</option>}
     </select></label>
+    <label style={{display:'flex',alignItems:'center',gap:8}}><input type="checkbox" checked={autoPrint} onChange={e=>{setAutoPrint(e.target.checked);setAuto(e.target.checked);}} /> พิมพ์ใบเสร็จอัตโนมัติหลังชำระเงิน</label>
     <fieldset className="paper-picker">
       <legend>ขนาดกระดาษเครื่องพิมพ์ความร้อน</legend>
       <div className="paper-picker__options">{([58, 80] as const).map(value => <button type="button" key={value} aria-pressed={width===value} className={width===value?'is-active':''} onClick={()=>{setPaperWidth(value);setWidth(value);}}>

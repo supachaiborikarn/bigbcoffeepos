@@ -45,7 +45,14 @@ export default function PrintCenter() {
       const win = popup || window.open('', 'bbpos_receipt', 'width=420,height=700');
       if (!win) { update('เปิดหน้าพิมพ์ไม่ได้ อนุญาตหน้าต่างป๊อปอัปแล้วกดพิมพ์อีกครั้ง'); setOpen(true); return; }
       win.document.open(); win.document.write(value.job.html); win.document.close();
-      win.onafterprint = () => { win.close(); if (current.current?.attempt === value.attempt) update('ปิดหน้าต่างพิมพ์แล้ว กรุณาตรวจว่าใบเสร็จออกครบ'); };
+      win.onafterprint = () => {
+        win.close();
+        if (current.current?.attempt !== value.attempt) return;
+        update('ปิดหน้าต่างพิมพ์แล้ว กรุณาตรวจว่าใบเสร็จออกครบ');
+        // nothing left to do: clear the banner after a moment instead of leaving it up
+        window.clearTimeout(timeout.current);
+        timeout.current = window.setTimeout(() => { if (current.current?.attempt === value.attempt && !current.current.awaiting) save(null); }, 8_000);
+      };
       printWhenReady(win, win.document, () => {
         if (current.current?.attempt !== value.attempt) return;
         update('เปิดหน้าพิมพ์ไม่สำเร็จ · บิลยังบันทึกอยู่ กดพิมพ์อีกครั้ง'); setOpen(true);

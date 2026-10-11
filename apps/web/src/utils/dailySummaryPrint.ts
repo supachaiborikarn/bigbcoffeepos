@@ -11,7 +11,7 @@ const SOURCE_LABELS: Record<string, string> = { system: "ยอดขายใ�
 const PAYMENT_LABELS: Record<PaymentMethod | string, string> = { CASH: "เงินสด", QR: "QR", CARD: "บัตร", EWALLET: "E-Wallet" };
 const TOP_ITEM_LIMIT = 10;
 
-const moneyFormatter = new Intl.NumberFormat("th-TH", { maximumFractionDigits: 0 });
+const moneyFormatter = new Intl.NumberFormat("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const money = (v: number) => `${v < 0 ? "-" : ""}฿${moneyFormatter.format(Math.abs(v))}`;
 const num = (v: number) => v.toLocaleString("th-TH");
 const thaiDate = (value: string) => new Date(`${value}T12:00:00+07:00`).toLocaleDateString("th-TH", { dateStyle: "medium", timeZone: "Asia/Bangkok" });

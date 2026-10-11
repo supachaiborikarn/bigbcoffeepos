@@ -226,7 +226,7 @@ model Order {
   items    OrderItem[]
   payments Payment[]
   events   OrderEvent[]
-  taxInvoice TaxInvoice?
+  taxInvoices TaxInvoice[]
 
   @@index([branchId])
   @@index([shiftId])
@@ -342,6 +342,8 @@ model Purchase {
   note      String   @default("")
   total     Float    @default(0)
   status    String   @default("RECEIVED")
+  voidedAt  DateTime? @map("voided_at")
+  voidReason String  @default("") @map("void_reason")
   approvedByUserId Int? @map("approved_by_user_id")
   approvedAt DateTime? @map("approved_at")
   createdAt DateTime @default(now()) @map("created_at")
@@ -392,13 +394,20 @@ model StoreSetting {
 model TaxInvoice {
   id          Int      @id @default(autoincrement())
   branchId    Int      @map("branch_id")
-  orderId     Int      @unique @map("order_id")
+  orderId     Int      @map("order_id")
   customerId  Int?     @map("customer_id")
   invoiceNo   String   @unique @map("invoice_no")
   buyerName   String   @map("buyer_name")
   buyerTaxId  String   @default("") @map("buyer_tax_id")
   buyerAddress String  @default("") @map("buyer_address")
   buyerBranch String   @default("") @map("buyer_branch")
+  sellerName  String   @default("") @map("seller_name")
+  sellerTaxId String   @default("") @map("seller_tax_id")
+  sellerAddress String @default("") @map("seller_address")
+  sellerBranch String  @default("") @map("seller_branch")
+  vatRate     Float    @default(0) @map("vat_rate")
+  voidedAt    DateTime? @map("voided_at")
+  voidReason  String   @default("") @map("void_reason")
   subtotal    Float    @default(0)
   discountAmount Float @default(0) @map("discount_amount")
   tax         Float    @default(0)
@@ -411,6 +420,7 @@ model TaxInvoice {
   order    Order     @relation(fields: [orderId], references: [id])
   customer Customer? @relation(fields: [customerId], references: [id])
 
+  @@index([orderId])
   @@index([branchId])
   @@index([createdAt])
   @@map("tax_invoices")
@@ -647,6 +657,7 @@ model InventoryLot {
   lotNo        String   @default("") @map("lot_no")
   qty          Float    @default(0)
   expiryDate   DateTime? @map("expiry_date")
+  purchaseId   Int?     @map("purchase_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
   branch     Branch     @relation(fields: [branchId], references: [id])
@@ -654,6 +665,7 @@ model InventoryLot {
 
   @@index([branchId])
   @@index([expiryDate])
+  @@index([purchaseId])
   @@map("inventory_lots")
 }
 
@@ -694,6 +706,7 @@ model Coupon {
   type      String
   value     Float    @default(0)
   maxUses   Int?     @map("max_uses")
+  minSpend  Float    @default(0) @map("min_spend")
   usedCount Int      @default(0) @map("used_count")
   expiresAt DateTime? @map("expires_at")
   active    Boolean  @default(true)

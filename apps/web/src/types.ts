@@ -288,6 +288,8 @@ export type Order = {
   cashReceived?: number | null;
   changeAmount?: number | null;
   items: OrderItem[];
+  /** only on the checkout response: each discount by name (promotion, coupon, manual) */
+  appliedDiscounts?: Array<{ label: string; amount: number }>;
 };
 
 export type PurchaseOrderItem = {
@@ -298,6 +300,10 @@ export type PurchaseOrderItem = {
   qty: number;
   unitCost: number;
   lineTotal?: number;
+  /** how it was bought, e.g. "2 ลัง × 12" */
+  description?: string;
+  lotNo?: string;
+  expiryDate?: string | null;
 };
 
 export type PurchaseOrder = {
@@ -307,7 +313,9 @@ export type PurchaseOrder = {
   supplier: string;
   note: string;
   totalCost: number;
-  status: "RECEIVED" | "APPROVED";
+  status: "RECEIVED" | "APPROVED" | "VOID";
+  voidReason?: string;
+  voidedAt?: string | null;
   receivedAt: string;
   createdAt: string;
   itemCount?: number;
@@ -326,13 +334,21 @@ export type TaxInvoice = {
   buyerTaxId: string;
   buyerAddress: string;
   buyerBranch: string;
+  sellerName: string;
+  sellerTaxId: string;
+  sellerAddress: string;
+  sellerBranch: string;
+  vatRate: number;
+  voidedAt: string | null;
+  voidReason: string;
   subtotal: number;
   discountAmount: number;
   tax: number;
   total: number;
-  status: string;
+  status: "ISSUED" | "VOID" | string;
   eTaxStatus: string;
   createdAt: string;
+  order?: { id: number; createdAt: string; paymentMethod: string; items: Array<{ name: string; qty: number; unitPrice: number; lineTotal: number; modifiers: Array<{ name: string; value: string; price?: number }> }> };
 };
 
 export type StockCount = {
@@ -362,8 +378,14 @@ export type PriceRule = { id: number; menuItemId: number | null; customerTier: s
 export type InventoryLot = { id: number; branchId: number; ingredientId: number; lotNo: string; qty: number; expiryDate: string | null; createdAt: string; ingredient?: Ingredient };
 export type ProductVariant = { id: number; menuItemId: number; sku: string | null; barcode: string | null; optionName: string; optionValue: string; priceDelta: number; active: boolean };
 export type Promotion = { id: number; name: string; type: DiscountRuleType; value: number; category: string; startAt: string | null; endAt: string | null; active: boolean; createdAt: string };
-export type Coupon = { id: number; code: string; type: DiscountRuleType; value: number; maxUses: number | null; usedCount: number; expiresAt: string | null; active: boolean; createdAt: string };
-export type BusinessDocument = { id: number; branchId: number; type: string; documentNo: string; customerName: string; total: number; status: string; payload: string; createdAt: string };
+export type Coupon = { id: number; code: string; type: DiscountRuleType; value: number; maxUses: number | null; minSpend: number; usedCount: number; expiresAt: string | null; active: boolean; createdAt: string };
+export type BusinessDocumentType = "DELIVERY_NOTE" | "INVOICE" | "QUOTATION" | "CREDIT_NOTE";
+export type BusinessDocument = {
+  id: number; branchId: number; type: BusinessDocumentType; documentNo: string; customerName: string; total: number;
+  status: "DRAFT" | "ISSUED" | "PAID" | "ACCEPTED" | "VOID";
+  payload: { note?: string; voidReason?: string; fromQuotation?: string; convertedTo?: string };
+  createdAt: string;
+};
 export type MarketplaceConnection = { id: number; branchId: number; provider: string; shopName: string; status: string; config: Record<string, unknown>; updatedAt: string };
 export type CompareReport = {
   a: { orders: number; revenue: number; averageTicket: number };

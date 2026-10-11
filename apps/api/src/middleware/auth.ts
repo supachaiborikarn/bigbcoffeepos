@@ -29,6 +29,20 @@ export function generateToken(user: { id: number; name: string; role: string; br
   );
 }
 
+/** A manager's sign-off for one large discount at a branch; carried by the order instead of the PIN. */
+export function signDiscountApproval(approver: { id: number; name: string }, branchId: number) {
+  return jwt.sign({ kind: "discount-approval", approverId: approver.id, approverName: approver.name, branchId }, JWT_SECRET, { expiresIn: "12h" });
+}
+
+export function verifyDiscountApproval(token: unknown, branchId: number): { approverId: number; approverName: string } | null {
+  if (typeof token !== "string" || !token) return null;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { kind?: string; approverId?: number; approverName?: string; branchId?: number };
+    if (payload.kind !== "discount-approval" || payload.branchId !== branchId || !payload.approverId) return null;
+    return { approverId: payload.approverId, approverName: payload.approverName ?? "" };
+  } catch { return null; }
+}
+
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {

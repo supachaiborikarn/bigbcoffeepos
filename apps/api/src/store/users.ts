@@ -31,6 +31,13 @@ export async function authenticatePin(pin: string) {
   return { id: user.id, name: user.name, role: user.role as UserRole, branchId: user.branchId };
 }
 
+/** PIN of an active manager/admin, used to approve a large discount at the till. */
+export async function verifyApproverPin(pin: unknown) {
+  if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) return null;
+  const user = await authenticatePin(pin);
+  return user && (user.role === "admin" || user.role === "manager") ? user : null;
+}
+
 export async function getUsers() {
   return prisma.user.findMany({
     select: { id: true, name: true, role: true, active: true, createdAt: true, branchId: true, branch: { select: { id: true, name: true } } },

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import type { User } from "../types";
-import { getCurrentUser, loginWithPin as apiLoginWithPin } from "../api";
+import { ApiError, getCurrentUser, loginWithPin as apiLoginWithPin } from "../api";
 
 type AuthContextType = {
   user: User | null;
@@ -33,10 +33,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(current);
         setToken(savedToken);
         localStorage.setItem(USER_KEY, JSON.stringify(current));
-      }).catch(() => {
+      }).catch((err) => {
         if (cancelled) return;
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
+        // Only a real "token rejected" ends the session. A dropped connection or a
+        // busy server must not log the cashier out mid-shift: keep the saved user.
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(USER_KEY);
+          return;
+        }
+        try { setUser(JSON.parse(savedUser)); setToken(savedToken); }
+        catch { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); }
       }).finally(() => { if (!cancelled) setLoading(false); });
     } else setLoading(false);
     return () => { cancelled = true; };

@@ -45,14 +45,23 @@ function sourceSql(source: ReportSource, alias: "orders" | "o") {
   `;
 }
 
+// Report dates are Thai calendar days (the shop's day), not UTC days.
+const dayStart = (day: string) => new Date(`${day.slice(0, 10)}T00:00:00.000+07:00`);
+const dayEnd = (day: string) => new Date(`${day.slice(0, 10)}T23:59:59.999+07:00`);
+export function assertReportRange(input: { from?: string; to?: string }) {
+  for (const day of [input.from, input.to]) if (day && Number.isNaN(dayStart(day).getTime())) throw new Error("รูปแบบวันที่ไม่ถูกต้อง");
+  if (input.from && input.to && input.from.slice(0, 10) > input.to.slice(0, 10)) throw new Error("วันเริ่มต้องไม่หลังวันสิ้นสุด");
+}
+const bangkokTime = (date: Date) => date.toLocaleString("sv-SE", { timeZone: "Asia/Bangkok" }).slice(0, 16);
+
 function buildOrderWhere(input: ReportInput) {
   const source = normalizeReportSource(input.source);
   const where: Prisma.OrderWhereInput = {
     status: { notIn: ["CANCELLED", "REFUNDED"] },
     ...sourceWhere(source)
   };
-  if (input.from) where.createdAt = { gte: new Date(input.from) };
-  if (input.to) where.createdAt = { ...(where.createdAt as object), lte: new Date(input.to + "T23:59:59Z") };
+  if (input.from) where.createdAt = { gte: dayStart(input.from) };
+  if (input.to) where.createdAt = { ...(where.createdAt as object), lte: dayEnd(input.to) };
   if (input.branchId) where.branchId = input.branchId;
   return where;
 }
@@ -120,14 +129,14 @@ export async function getSalesSummary(input: ReportInput) {
   }));
 
   const dailyRows = await prisma.$queryRaw<Array<{ date: Date; orders: bigint; revenue: number | null }>>`
-    SELECT date_trunc('day', created_at) AS date, COUNT(*) AS orders, SUM(total) AS revenue
+    SELECT date_trunc('day', (created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Bangkok') AS date, COUNT(*) AS orders, SUM(total) AS revenue
     FROM orders
     WHERE status NOT IN ('CANCELLED', 'REFUNDED')
       AND (${input.branchId ?? null}::int IS NULL OR branch_id = ${input.branchId ?? null}::int)
-      AND (${input.from ?? null}::text IS NULL OR created_at >= ${input.from ? new Date(input.from) : null})
-      AND (${input.to ?? null}::text IS NULL OR created_at <= ${input.to ? new Date(input.to + "T23:59:59Z") : null})
+      AND (${input.from ?? null}::text IS NULL OR created_at >= ${input.from ? dayStart(input.from) : null})
+      AND (${input.to ?? null}::text IS NULL OR created_at <= ${input.to ? dayEnd(input.to) : null})
       ${sourceSql(source, "orders")}
-    GROUP BY date_trunc('day', created_at)
+    GROUP BY 1
     ORDER BY date ASC
   `;
   const daily = dailyRows.map((row) => ({
@@ -151,6 +160,9 @@ export async function getSalesSummary(input: ReportInput) {
   };
 }
 
+// each line's share of what the bill actually took after discounts and points
+const NET_FACTOR = Prisma.sql`CASE WHEN o.subtotal > 0 THEN GREATEST(o.subtotal - o.discount_amount - o.loyalty_points_used, 0) / o.subtotal ELSE 1 END`;
+
 export async function getProfitReport(input: ReportInput) {
   const source = normalizeReportSource(input.source);
 
@@ -167,17 +179,17 @@ export async function getProfitReport(input: ReportInput) {
       oi.menu_item_id AS "menuItemId",
       oi.name,
       SUM(oi.qty) AS "totalQty",
-      SUM(oi.line_total) AS revenue,
+      SUM(oi.line_total * ${NET_FACTOR}) AS revenue,
       COALESCE(mi.cost, 0) AS "costPerUnit",
       SUM(oi.qty * COALESCE(mi.cost, 0)) AS "totalCost",
-      SUM(oi.line_total) - SUM(oi.qty * COALESCE(mi.cost, 0)) AS profit
+      SUM(oi.line_total * ${NET_FACTOR}) - SUM(oi.qty * COALESCE(mi.cost, 0)) AS profit
     FROM order_items oi
     INNER JOIN orders o ON o.id = oi.order_id
     INNER JOIN menu_items mi ON mi.id = oi.menu_item_id
     WHERE o.status NOT IN ('CANCELLED', 'REFUNDED')
       AND (${input.branchId ?? null}::int IS NULL OR o.branch_id = ${input.branchId ?? null}::int)
-      AND (${input.from ?? null}::text IS NULL OR o.created_at >= ${input.from ? new Date(input.from) : null})
-      AND (${input.to ?? null}::text IS NULL OR o.created_at <= ${input.to ? new Date(input.to + "T23:59:59Z") : null})
+      AND (${input.from ?? null}::text IS NULL OR o.created_at >= ${input.from ? dayStart(input.from) : null})
+      AND (${input.to ?? null}::text IS NULL OR o.created_at <= ${input.to ? dayEnd(input.to) : null})
       ${sourceSql(source, "o")}
     GROUP BY oi.menu_item_id, oi.name, mi.cost
     ORDER BY profit DESC
@@ -242,29 +254,38 @@ export async function getOrdersCsvRows(input: ReportInput) {
       branch: { select: { name: true } },
       customer: { select: { name: true, phone: true } },
       user: { select: { name: true } },
-      items: { select: { name: true, qty: true, lineTotal: true, note: true } }
+      items: { select: { name: true, qty: true, lineTotal: true, note: true, modifiers: true } }
     },
     orderBy: { createdAt: "asc" }
   });
+  const settings = new Map((await prisma.storeSetting.findMany({ select: { branchId: true, vatMode: true, vatRate: true } })).map((s) => [s.branchId, s]));
 
   return orders.map((order) => {
     const isPosposSalesOnly = order.items.some((item) => item.name === SALES_ONLY_ITEM_NAME);
+    // bills saved before checkout stored VAT used 0; show the VAT the receipt printed (default: 7% included)
+    const setting = settings.get(order.branchId) ?? { vatMode: "INCLUSIVE", vatRate: 7 };
+    const rate = setting.vatMode !== "NONE" && setting.vatRate > 0 ? setting.vatRate : 0;
+    const tax = order.tax > 0 ? order.tax : setting.vatMode === "INCLUSIVE" && rate ? order.total * rate / (100 + rate) : 0;
+    const options = (raw: string) => {
+      try { return (JSON.parse(raw || "[]") as Array<{ value?: string }>).map((m) => m.value).filter(Boolean).join(", "); } catch { return ""; }
+    };
     return {
       id: order.id,
-      createdAt: order.createdAt.toISOString(),
+      createdAt: bangkokTime(order.createdAt),
       source: isPosposSalesOnly ? "POSPOS sales-only import" : "System POS",
       branch: order.branch.name,
       customer: order.customer ? `${order.customer.name} (${order.customer.phone})` : "",
       staff: order.user?.name ?? "",
-      status: order.status,
+      paymentStatus: { CANCELLED: "ยกเลิก", REFUNDED: "คืนเงิน" }[order.status as string] ?? "ชำระแล้ว",
+      fulfillmentStatus: order.status === "READY" ? "เสร็จแล้ว" : order.status === "PAID" ? "รอทำ" : "-",
       paymentMethod: order.paymentMethod,
       itemCount: order.items.length,
-      items: order.items.map((item) => `${item.qty}x ${item.name}`).join(" | "),
+      items: order.items.map((item) => `${item.qty}x ${item.name}${options(item.modifiers) ? ` (${options(item.modifiers)})` : ""}`).join(" | "),
       itemNotes: order.items.map((item) => item.note).filter(Boolean).join(" | "),
       subtotal: roundMoney(order.subtotal),
       discountAmount: roundMoney(order.discountAmount),
-      loyaltyPointsUsed: order.loyaltyPointsUsed,
-      tax: roundMoney(order.tax),
+      loyaltyPointsUsed: order.customer ? order.loyaltyPointsUsed : "",
+      tax: roundMoney(tax),
       total: roundMoney(order.total)
     };
   });

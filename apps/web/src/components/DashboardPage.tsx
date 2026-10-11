@@ -17,7 +17,7 @@ type LowStockItem = { ingredientId: number; name: string; unit: string; stockQty
 type Shift = { id: number; status: string; totalSales: number; totalOrders: number; cashSales: number; qrSales: number; cardSales: number; openedAt: string; closedAt: string | null };
 
 function formatMoney(v: number) {
-  return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
+  return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(v);
 }
 
 function getWeekRange() {

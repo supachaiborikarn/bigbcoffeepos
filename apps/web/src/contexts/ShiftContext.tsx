@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Shift, ShiftCloseResult } from "../types";
 import {
   getCurrentShift,
@@ -11,6 +11,8 @@ import { useAuth } from "./AuthContext";
 type ShiftContextType = {
   activeShift: Shift | null;
   loading: boolean;
+  /** false until this branch's shift has been looked up once — show "loading", not "no shift" */
+  loaded: boolean;
   openShift: (openingCash: number) => Promise<void>;
   closeShift: (closingCash: number, details?: { cashCounts?: Record<string, number>; note?: string }) => Promise<ShiftCloseResult>;
   refreshShift: () => Promise<void>;
@@ -23,21 +25,31 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<number | null>(null);
+  const branchRef = useRef<number | null>(null);
 
+  // Keeps showing the current shift while it re-checks (e.g. after each sale) and
+  // keeps it if the check fails, so the POS never flashes "ยังไม่ได้เปิดกะ" or locks
+  // the pay button because of a network hiccup. Only a branch switch clears it.
   const refreshShift = useCallback(async () => {
     if (!activeBranch) {
       setActiveShift(null);
       return;
     }
+    if (branchRef.current !== activeBranch.id) {
+      branchRef.current = activeBranch.id;
+      setActiveShift(null);
+      setLoadedFor(null);
+    }
     setLoading(true);
-    setActiveShift(null);
     try {
       const shift = await getCurrentShift(activeBranch.id);
-      setActiveShift(shift);
+      if (branchRef.current === activeBranch.id) setActiveShift(shift);
     } catch {
-      setActiveShift(null);
+      /* keep what we had; the next refresh will catch up */
     } finally {
       setLoading(false);
+      setLoadedFor(activeBranch.id);
     }
   }, [activeBranch]);
 
@@ -70,7 +82,7 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
   }, [activeShift]);
 
   return (
-    <ShiftContext.Provider value={{ activeShift, loading, openShift, closeShift, refreshShift }}>
+    <ShiftContext.Provider value={{ activeShift, loading, loaded: loadedFor === activeBranch?.id, openShift, closeShift, refreshShift }}>
       {children}
     </ShiftContext.Provider>
   );

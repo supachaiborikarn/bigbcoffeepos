@@ -80,14 +80,21 @@ export async function openShift(input: { branchId: number; userId?: number; open
   return getShift(shift.id);
 }
 
+/** Cash short/over by at least this much needs a written reason to close the shift. */
+export const SHIFT_VARIANCE_REASON_THRESHOLD = 100;
+
 export async function closeShift(id: number, closingCash: number, details?: ShiftCloseDetails) {
   const shift = await getShift(id);
   if (!shift) throw new Error("ไม่พบกะที่ระบุ");
   if (shift.status !== "OPEN") throw new Error("กะนี้ปิดไปแล้ว");
+  if (!Number.isFinite(closingCash) || closingCash < 0) throw new Error("ยอดเงินที่นับได้ไม่ถูกต้อง");
 
   const summary = await getShiftSummary(id);
   const expectedCash = summary?.cash.expectedCash ?? shift.openingCash + shift.cashSales;
-  const difference = closingCash - expectedCash;
+  const difference = Math.round((closingCash - expectedCash) * 100) / 100;
+  if (Math.abs(difference) >= SHIFT_VARIANCE_REASON_THRESHOLD && !details?.note?.trim()) {
+    throw new Error(`เงิน${difference < 0 ? "ขาด" : "เกิน"} ${Math.abs(difference).toLocaleString("th-TH")} บาท ต้องระบุเหตุผลในหมายเหตุปิดกะ`);
+  }
 
   await prisma.shift.update({
     where: { id },

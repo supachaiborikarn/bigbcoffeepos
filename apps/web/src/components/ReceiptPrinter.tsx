@@ -77,7 +77,12 @@ function renderSlip(data: ReceiptData, branchName: string, copyLabel?: string) {
   }).join("");
 
   const rows: string[] = [`<div class="r-row"><span>ยอดรวม</span><span>${formatMoney(data.subtotal)}</span></div>`];
-  if (data.discountAmount > 0) rows.push(`<div class="r-row"><span>ส่วนลด</span><span>-${formatMoney(data.discountAmount)}</span></div>`);
+  if (data.discountAmount > 0) {
+    // name each promotion / coupon when the checkout told us; otherwise one total line
+    const named = data.order?.appliedDiscounts ?? [];
+    if (named.length) named.forEach((d) => rows.push(`<div class="r-row"><span>${escapeHtml(d.label)}</span><span>-${formatMoney(d.amount)}</span></div>`));
+    else rows.push(`<div class="r-row"><span>ส่วนลด</span><span>-${formatMoney(data.discountAmount)}</span></div>`);
+  }
   if (data.pointsUsed > 0) rows.push(`<div class="r-row"><span>แลกแต้ม</span><span>-${formatMoney(data.pointsUsed)}</span></div>`);
 
   const vatMode = ss?.vatMode ?? "INCLUSIVE";
@@ -228,7 +233,11 @@ function escposSlip(data: ReceiptData, branchName: string, copyLabel?: string, c
 
   out += div;
   out += row("ยอดรวม", formatMoney(data.subtotal)) + "\n";
-  if (data.discountAmount > 0) out += row("ส่วนลด", "-" + formatMoney(data.discountAmount)) + "\n";
+  if (data.discountAmount > 0) {
+    const named = data.order?.appliedDiscounts ?? [];
+    if (named.length) named.forEach((d) => { out += row(d.label.slice(0, 20), "-" + formatMoney(d.amount)) + "\n"; });
+    else out += row("ส่วนลด", "-" + formatMoney(data.discountAmount)) + "\n";
+  }
   if (data.pointsUsed > 0) out += row("แลกแต้ม", "-" + formatMoney(data.pointsUsed)) + "\n";
   out += ESCPOS.boldOn + row("ยอดสุทธิ", "฿" + formatMoney(data.total)) + ESCPOS.boldOff + "\n";
 

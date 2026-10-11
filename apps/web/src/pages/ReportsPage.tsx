@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { getSalesSummary, getDailyCloseReport, getOrdersCsvUrl, API_URL } from "../api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getSalesSummary, getDailyCloseReport, getOrdersCsvUrl, downloadAuthedFile, API_URL } from "../api";
 import type { PaymentMethod, ReportSource, SalesSummary } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
@@ -14,7 +14,7 @@ function formatDateInput(date: Date) {
   return d.toISOString().slice(0, 10);
 }
 
-const formatter = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
+const formatter = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 function formatMoney(v: number) { return formatter.format(v); }
 const paymentLabels: Record<PaymentMethod | string, string> = {
   CASH: "เงินสด",
@@ -33,7 +33,9 @@ const fetchAuth = async <T,>(url: string): Promise<T> => {
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(url, { headers });
-  return res.json();
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof body?.error === "string" ? body.error : `โหลดไม่สำเร็จ (${res.status})`);
+  return body as T;
 };
 
 function downloadCsv(filename: string, rows: Record<string, any>[], columns: { key: string; label: string }[]) {
@@ -90,18 +92,26 @@ export default function ReportsPage() {
     return params.toString();
   }, [reportRange, reportBranchId, reportSource]);
 
+  const rangeError = reportRange.from && reportRange.to && reportRange.from > reportRange.to ? "วันเริ่มต้องไม่หลังวันสิ้นสุด" : "";
+  // toast changes identity on every toast; keep it out of refresh's deps or each error toast re-fetches
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
   const refresh = useCallback(async () => {
-    try {
-      const [s, p, st] = await Promise.all([
-        getSalesSummary({ from: reportRange.from, to: reportRange.to, branchId: reportBranchId ?? undefined, source: reportSource }),
-        fetchAuth<any>(`${API_URL}/reports/profit?${queryStr}`),
-        fetchAuth<any>(`${API_URL}/reports/staff?${queryStr}`)
-      ]);
-      setSummary(s);
-      setProfitData(p);
-      setStaffData(st);
-    } catch (e: any) { toast.error("โหลดรายงานไม่สำเร็จ"); }
-  }, [reportRange, reportBranchId, reportSource, queryStr, toast]);
+    if (rangeError) return;
+    // each part loads on its own: one failure no longer blanks the whole report
+    const [s, p, st] = await Promise.allSettled([
+      getSalesSummary({ from: reportRange.from, to: reportRange.to, branchId: reportBranchId ?? undefined, source: reportSource }),
+      fetchAuth<any>(`${API_URL}/reports/profit?${queryStr}`),
+      fetchAuth<any>(`${API_URL}/reports/staff?${queryStr}`)
+    ]);
+    if (s.status === "fulfilled") setSummary(s.value);
+    if (p.status === "fulfilled") setProfitData(p.value);
+    if (st.status === "fulfilled") setStaffData(st.value);
+    const failed = [s, p, st].map((r, i) => r.status === "rejected" ? `${["ยอดขาย", "กำไร", "พนักงาน"][i]}: ${(r.reason as Error).message}` : null).filter(Boolean) as string[];
+    setLoadErrors(failed);
+    if (failed.length) toastRef.current.error(`โหลดรายงานบางส่วนไม่สำเร็จ (${failed.length})`);
+  }, [reportRange, reportBranchId, reportSource, queryStr, rangeError]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -117,18 +127,9 @@ export default function ReportsPage() {
   const handleExportOrdersCsv = async () => {
     const url = getOrdersCsvUrl({ from: reportRange.from, to: reportRange.to, branchId: reportBranchId ?? undefined, source: reportSource });
     try {
-      const token = localStorage.getItem("bb_pos_token");
-      const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
-      if (!response.ok) throw new Error("Export failed");
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = `orders_${reportRange.from}_${reportRange.to}.csv`;
-      anchor.click();
-      URL.revokeObjectURL(objectUrl);
-    } catch {
-      toast.error("Export รายการออเดอร์ไม่สำเร็จ");
+      await downloadAuthedFile(url, `orders_${reportRange.from}_${reportRange.to}.csv`);
+    } catch (error) {
+      toast.error(`Export รายการออเดอร์ไม่สำเร็จ: ${(error as Error).message}`);
     }
   };
 
@@ -190,8 +191,9 @@ export default function ReportsPage() {
               <option value="pospos">POSPOS sales-only</option>
               <option value="all">ทั้งหมด</option>
             </select>
-            <input className="input" type="date" value={reportRange.from} onChange={e => setReportRange({...reportRange, from: e.target.value})} />
-            <input className="input" type="date" value={reportRange.to} onChange={e => setReportRange({...reportRange, to: e.target.value})} />
+            <input className="input" type="date" aria-label="ตั้งแต่วันที่" value={reportRange.from} max={reportRange.to} onChange={e => setReportRange({...reportRange, from: e.target.value})} aria-invalid={Boolean(rangeError)} />
+            <input className="input" type="date" aria-label="ถึงวันที่" value={reportRange.to} min={reportRange.from} onChange={e => setReportRange({...reportRange, to: e.target.value})} aria-invalid={Boolean(rangeError)} />
+            {rangeError && <span role="alert" className="negative" style={{ fontSize: 13, alignSelf: "center" }}>{rangeError}</span>}
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
               วันที่ใบส่งยอด
               <input className="input" type="date" value={summaryDate} title={shiftDay === summaryDate ? "วันที่เปิดกะปัจจุบัน" : undefined} onChange={e => { setSummaryDateTouched(true); setSummaryDate(e.target.value); }} />
@@ -204,6 +206,11 @@ export default function ReportsPage() {
             </button>
           </div>
         </div>
+
+        {loadErrors.length > 0 && <div className="bo-error" role="alert" style={{ margin: "0 24px 12px" }}>
+          <span>โหลดไม่สำเร็จ: {loadErrors.join(" · ")}</span>
+          <button type="button" className="btn btn--ghost" onClick={() => void refresh()}>ลองใหม่</button>
+        </div>}
 
         {/* Tabs */}
         <div className="tab-row" style={{ padding: "0 24px", borderBottom: "1px solid var(--border)" }}>
@@ -289,7 +296,7 @@ export default function ReportsPage() {
               </div>
               <div style={{ marginBottom: "24px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px" }}>
                 <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>
-                  <span className="muted">รายได้รวม</span>
+                  <span className="muted">รายได้สุทธิ (หลังส่วนลด)</span>
                   <strong style={{ display: "block", fontSize: "24px", marginTop: "8px" }}>{formatMoney(profitData.totalRevenue)}</strong>
                 </div>
                 <div style={{ padding: "20px", background: "var(--bg-muted)", borderRadius: "12px" }}>

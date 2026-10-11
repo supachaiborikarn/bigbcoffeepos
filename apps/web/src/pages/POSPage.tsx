@@ -9,7 +9,7 @@ import { useCart } from "../contexts/CartContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import { CashDrawerModal, printReceipt } from "../components/ReceiptPrinter";
-import { getPrinterMode } from "../utils/printerSettings";
+import { getAutoPrint, getPrinterMode } from "../utils/printerSettings";
 import { useDialogFocus } from "../utils/useDialogFocus";
 import ProductGrid from "../components/pos/ProductGrid";
 import CartPanel from "../components/pos/CartPanel";
@@ -21,7 +21,7 @@ import { drinkAddOns, shouldUseModifierModal } from "../utils/menuRules";
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
   currency: "THB",
-  maximumFractionDigits: 0
+  minimumFractionDigits: 0, maximumFractionDigits: 2
 });
 const paymentLabels: Record<PaymentMethod, string> = {
   CASH: "เงินสด",
@@ -30,6 +30,7 @@ const paymentLabels: Record<PaymentMethod, string> = {
   EWALLET: "E-Wallet"
 };
 const PAYMENT_METHODS: PaymentMethod[] = ["CASH", "QR", "CARD", "EWALLET"];
+const DEFAULT_PAYMENT_METHODS: PaymentMethod[] = ["CASH", "QR", "CARD"];
 const ROLE_LEVEL: Record<string, number> = { cashier: 1, manager: 2, admin: 3 };
 
 // Tracks a CSS media query in React so we can switch the POS between the
@@ -80,6 +81,7 @@ function makeRuleId() {
 
 export default function POSPage() {
   const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [menuState, setMenuState] = useState<"loading" | "ready" | "error">("loading");
   const [productUnits, setProductUnits] = useState<ProductUnit[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState("");
@@ -111,7 +113,7 @@ export default function POSPage() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const { activeBranch } = useBranch();
-  const { activeShift } = useShift();
+  const { activeShift, loaded: shiftLoaded } = useShift();
   const profile = businessProfile(activeBranch?.branchType);
   const addOnOptions = useMemo(() => drinkAddOns(menu), [menu]);
   const cupStock = useCupStock(profile.type === "coffee" ? activeBranch?.id : undefined, lastOrder?.id);
@@ -144,6 +146,12 @@ export default function POSPage() {
   } = useCart();
 
   const scannerInputRef = useRef<HTMLInputElement | null>(null);
+  const loadMenu = useCallback(() => {
+    setMenuState("loading");
+    getMenu()
+      .then((items) => { setMenu(items.filter((item) => item.branchType === activeBranch?.branchType)); setMenuState("ready"); })
+      .catch(() => setMenuState("error"));
+  }, [activeBranch?.branchType]);
 
   const refreshCustomers = async () => {
     const items = await getCustomers();
@@ -152,7 +160,7 @@ export default function POSPage() {
   };
 
   useEffect(() => {
-    getMenu().then((items) => setMenu(items.filter((item) => item.branchType === activeBranch?.branchType))).catch(() => {});
+    loadMenu();
     getProductUnits().then(setProductUnits).catch(() => setProductUnits([]));
     getRecipes().then((items) => setRecipeCount(items.length)).catch(() => setRecipeCount(null));
     refreshCustomers().catch(() => {});
@@ -203,8 +211,9 @@ export default function POSPage() {
       .slice(0, 8);
   }, [customers, memberQuery]);
   const enabledPaymentMethods = useMemo(() => {
+    // until the shop's settings arrive, show the server's default (no Wallet) so nothing appears then vanishes
     const configured = storeSetting?.paymentMethods.filter((method) => PAYMENT_METHODS.includes(method));
-    return configured?.length ? configured : PAYMENT_METHODS;
+    return configured?.length ? configured : DEFAULT_PAYMENT_METHODS;
   }, [storeSetting]);
 
   const maxRedeemablePoints = selectedMember
@@ -297,13 +306,14 @@ export default function POSPage() {
 
     let rule: DiscountRule | null = null;
     if (discountDraft.type === "ORDER_PERCENT") {
-      if (!Number.isFinite(value) || value <= 0) return toast.error("ใส่เปอร์เซ็นต์ส่วนลดให้ถูกต้อง");
+      if (!Number.isFinite(value) || value <= 0 || value > 100) return toast.error("เปอร์เซ็นต์ส่วนลดต้องมากกว่า 0 และไม่เกิน 100");
       rule = { id: makeRuleId(), type: "ORDER_PERCENT", value, maxDiscount, label: `ลดทั้งบิล ${value}%` };
     } else if (discountDraft.type === "ORDER_FIXED") {
       if (!Number.isFinite(value) || value <= 0) return toast.error("ใส่จำนวนเงินส่วนลดให้ถูกต้อง");
+      if (value > subtotal) return toast.error(`ส่วนลดต้องไม่เกินยอดบิล ${formatMoney(subtotal)}`);
       rule = { id: makeRuleId(), type: "ORDER_FIXED", value, maxDiscount, label: `ลดทั้งบิล ${formatMoney(value)}` };
     } else if (discountDraft.type === "CATEGORY_PERCENT") {
-      if (!categoryName || !Number.isFinite(value) || value <= 0) return toast.error("เลือกหมวดและเปอร์เซ็นต์ให้ถูกต้อง");
+      if (!categoryName || !Number.isFinite(value) || value <= 0 || value > 100) return toast.error("เลือกหมวด และเปอร์เซ็นต์ต้องมากกว่า 0 ไม่เกิน 100");
       rule = { id: makeRuleId(), type: "CATEGORY_PERCENT", category: categoryName, value, maxDiscount, label: `ลด ${categoryName} ${value}%` };
     } else if (discountDraft.type === "BUY_X_GET_Y") {
       const buyQty = Math.max(1, Math.floor(Number(discountDraft.buyQty) || 2));
@@ -344,7 +354,8 @@ export default function POSPage() {
     // Skip the blank receipt window when printing natively or via RawBT — those
     // paths print directly, so no browser print window is needed (and we avoid a
     // popup flashing open/closed on the Android tablet).
-    const receiptWindow = (getPrinterMode() === "browser" && typeof window !== "undefined")
+    const autoPrint = getAutoPrint();
+    const receiptWindow = (autoPrint && getPrinterMode() === "browser" && typeof window !== "undefined")
       ? window.open("", "bbpos_receipt", "width=380,height=640")
       : null;
     setIsSubmitting(true);
@@ -366,7 +377,8 @@ export default function POSPage() {
       setShowCartSheet(false);
       setPendingPaymentConfirm(null);
       // Printing failure must never be reported as a failed payment.
-      try {
+      // With auto-print off the success banner offers "ดูบิล / พิมพ์ซ้ำ" instead.
+      if (autoPrint) try {
       const printed = printReceipt({
         order,
         cart: cartSnapshot,
@@ -463,8 +475,8 @@ export default function POSPage() {
           </div>
         </div>
         <div className="studio-counter-strip">
-          <div><span className={`studio-live-dot${activeShift ? " is-live" : ""}`} /><span>{activeShift ? "พร้อมรับรายการ" : "เปิดกะเพื่อเริ่มขาย"}</span></div>
-          <span>{activeShift ? `${activeShift.totalOrders} บิลในกะนี้` : "ยังไม่มีกะที่เปิดอยู่"}</span>
+          <div><span className={`studio-live-dot${activeShift ? " is-live" : ""}`} /><span>{!shiftLoaded ? "กำลังตรวจกะ..." : activeShift ? "พร้อมรับรายการ" : "เปิดกะเพื่อเริ่มขาย"}</span></div>
+          <span>{!shiftLoaded ? "" : activeShift ? `${activeShift.totalOrders} บิลในกะนี้` : "ยังไม่มีกะที่เปิดอยู่"}</span>
           <CupStockStrip cups={cupStock} />
           <Link to="/orders">ดูรายการ <ArrowUpRight size={14} /></Link>
         </div>
@@ -479,7 +491,7 @@ export default function POSPage() {
         <div className="studio-categories" aria-label="หมวดสินค้า">{categories.map((item) => <button key={item} aria-pressed={category === item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{item}<span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span></button>)}</div>
         </div>
         <div className="studio-catalog-label"><strong>{category === "ทั้งหมด" ? "สินค้าทั้งหมด" : category}</strong><span role="status" className={scanFeedback.tone === "error" ? "negative" : ""}>{scanFeedback.tone === "idle" ? "แตะสินค้าเพื่อเพิ่มรายการ" : scanFeedback.message}</span></div>
-        <div className="pos-products-scroll studio-products-scroll"><ProductGrid menu={menu} category={category} search={search} branchType={activeBranch?.branchType} onItemClick={handleMenuItemClick} /></div>
+        <div className="pos-products-scroll studio-products-scroll"><ProductGrid menu={menu} category={category} search={search} branchType={activeBranch?.branchType} onItemClick={handleMenuItemClick} status={menuState} onRetry={loadMenu} /></div>
         {recipeCount === 0 && profile.type === "coffee" && <div className="studio-recipe-note">ยังไม่มีสูตรสำหรับตัดวัตถุดิบอัตโนมัติ</div>}
         {isCompact && cart.length > 0 && <button className="pos-cart-fab" onClick={() => setShowCartSheet(true)}><span className="pos-cart-fab__info"><ShoppingCart size={20} /><span>{cartCount} รายการ</span></span><span className="pos-cart-fab__pay">{formatMoney(payableTotal)} · ชำระเงิน →</span></button>}
       </section>

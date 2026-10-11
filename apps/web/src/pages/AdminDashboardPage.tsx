@@ -73,14 +73,23 @@ function formatMoney(v: number) {
     style: "currency",
     currency: "THB",
     minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(v);
 }
 
+/** Thai calendar date N days back (UTC would roll "today" over at 07:00). */
 function isoDaysAgo(daysBack: number) {
-  const d = new Date();
-  d.setDate(d.getDate() - daysBack);
-  return d.toISOString().slice(0, 10);
+  return new Date(Date.now() - daysBack * 86_400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
+}
+
+/** Run async work for each item, at most `limit` at a time (avoids ~20 parallel requests at once). */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) { const i = next++; results[i] = await fn(items[i]); }
+  }));
+  return results;
 }
 
 export default function AdminDashboardPage() {
@@ -92,6 +101,7 @@ export default function AdminDashboardPage() {
   const isAdmin = user?.role === "admin";
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [todaySummary, setTodaySummary] = useState<SalesSummary | null>(null);
   const [weekSummary, setWeekSummary] = useState<SalesSummary | null>(null);
   const [branchStats, setBranchStats] = useState<BranchStat[]>([]);
@@ -125,12 +135,13 @@ export default function AdminDashboardPage() {
     setLoading(true);
     const today = isoDaysAgo(0);
     const weekAgo = isoDaysAgo(6);
-    const [todayS, weekS, usersList, perBranch] = await Promise.all([
+    const [todayS, weekS, usersList] = await Promise.all([
       getSalesSummary({ from: today, to: today }).catch(() => null),
       getSalesSummary({ from: weekAgo, to: today }).catch(() => null),
-      getUsers().catch(() => [] as User[]),
-      Promise.all(
-        branches.map(async (b): Promise<BranchStat> => {
+      getUsers().catch(() => [] as User[])
+    ]);
+    const [perBranch] = await Promise.all([
+      mapLimit(branches, 2, async (b): Promise<BranchStat> => {
           const [sum, shift, inv] = await Promise.all([
             getSalesSummary({ from: today, to: today, branchId: b.id }).catch(() => null),
             getCurrentShift(b.id).catch(() => null),
@@ -147,13 +158,13 @@ export default function AdminDashboardPage() {
             shiftOpen: shift?.status === "OPEN",
           };
         })
-      ),
     ]);
     await Promise.all([loadPurchases(), loadSystem()]);
     setTodaySummary(todayS);
     setWeekSummary(weekS);
     setUsers(usersList);
     setBranchStats(perBranch);
+    setLoadError(!todayS || !weekS);
     setLoading(false);
   }, [branches, loadPurchases, loadSystem]);
 
@@ -330,6 +341,11 @@ export default function AdminDashboardPage() {
         </button>
       </div>
 
+      {loadError && !loading && <div className="bo-error" role="alert">
+        <span>โหลดยอดขายไม่สำเร็จ ตัวเลขด้านล่างอาจไม่ครบ</span>
+        <button type="button" className="btn btn--ghost" onClick={() => load()}>ลองใหม่</button>
+      </div>}
+
       {/* KPI cards */}
       <section className="dash-kpi-row">
         {kpis.map((kpi) => {
@@ -341,7 +357,7 @@ export default function AdminDashboardPage() {
               </span>
               <div>
                 <p className="dash-kpi__label">{kpi.label}</p>
-                <p className="dash-kpi__value">{loading && !todaySummary ? "—" : kpi.value}</p>
+                <p className="dash-kpi__value">{!todaySummary ? "—" : kpi.value}</p>
                 {kpi.change !== undefined && kpi.change !== 0 && (
                   <span
                     style={{

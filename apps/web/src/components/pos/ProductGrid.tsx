@@ -7,7 +7,7 @@ const PRODUCT_RENDER_LIMIT = 120;
 const priceFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
   currency: "THB",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 0, maximumFractionDigits: 2,
 });
 
 interface ProductGridProps {
@@ -16,9 +16,12 @@ interface ProductGridProps {
   search: string;
   branchType?: string;
   onItemClick: (item: MenuItem) => void;
+  /** menu fetch state: show loading / retry rather than "ไม่พบสินค้า" before the menu arrives */
+  status?: "loading" | "ready" | "error";
+  onRetry?: () => void;
 }
 
-export default function ProductGrid({ menu, category, search, branchType, onItemClick }: ProductGridProps) {
+export default function ProductGrid({ menu, category, search, branchType, onItemClick, status = "ready", onRetry }: ProductGridProps) {
   const [variantGroup, setVariantGroup] = useState<{ label: string; variants: MenuItem[] } | null>(null);
   // Defer the search term so heavy grid filtering/re-rendering never blocks the
   // search/scan input — keeps characters appearing instantly on iPad.
@@ -69,8 +72,10 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
   return (
     <div className="studio-product-grid">
       {productTiles.length === 0 ? (
-        <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px", color: "var(--text-muted)" }}>
-          ไม่พบสินค้า
+        <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px", color: "var(--text-muted)" }} role={status === "error" ? "alert" : undefined} aria-busy={status === "loading"}>
+          {status === "loading" && menu.length === 0 ? "กำลังโหลดเมนู..." : status === "error" && menu.length === 0
+            ? <>โหลดเมนูไม่สำเร็จ <button type="button" className="btn btn--ghost" onClick={onRetry}>ลองใหม่</button></>
+            : "ไม่พบสินค้า"}
         </div>
       ) : (
         <>

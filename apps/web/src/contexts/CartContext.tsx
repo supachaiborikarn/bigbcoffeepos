@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Customer, CartItem, DiscountRule, DiscountType, Order, PaymentMethod } from "../types";
-import { createOrder, getActivePromotions, getOrderByIdempotencyKey, validateCoupon } from "../api";
+import { approveDiscount as requestDiscountApproval, createOrder, getActivePromotions, getOrderByIdempotencyKey, validateCoupon } from "../api";
 import { useBranch } from "./BranchContext";
 import { useAuth } from "./AuthContext";
 import { useToast } from "./ToastContext";
@@ -8,7 +8,11 @@ import { useShift } from "./ShiftContext";
 
 type ScanFeedback = { tone: "idle" | "success" | "error"; message: string; code?: string };
 
-export type AppliedCoupon = { code: string; type: string; value: number };
+export type AppliedCoupon = { code: string; type: string; value: number; minSpend?: number };
+export type DiscountApproval = { token: string; approverName: string };
+
+/** Mirrors the server: manual discounts at or above this share of the bill need a manager. */
+export const MANUAL_DISCOUNT_APPROVAL_RATIO = 0.5;
 
 const PROMO_RULE_TYPES = new Set(["ORDER_PERCENT", "ORDER_FIXED", "CATEGORY_PERCENT", "BUY_X_GET_Y"]);
 
@@ -53,6 +57,7 @@ type CartContextType = {
   scanFeedback: ScanFeedback;
   addItem: (item: CartItem) => void;
   updateQty: (id: string, delta: number) => void;
+  setItemNote: (id: string, note: string) => void;
   removeItem: (id: string) => void;
   clearCart: () => void;
   setDiscountType: (type: DiscountType) => void;
@@ -74,6 +79,15 @@ type CartContextType = {
   applyCoupon: (code: string) => Promise<void>;
   removeCoupon: () => void;
   autoPromotions: DiscountRule[];
+  /** the single auto promotion the server will apply to this bill (they don't stack) */
+  appliedPromotion: DiscountRule | null;
+  skipPromotions: boolean;
+  setSkipPromotions: (skip: boolean) => void;
+  couponBelowMinSpend: boolean;
+  needsDiscountApproval: boolean;
+  discountApproval: DiscountApproval | null;
+  approveDiscount: (pin: string) => Promise<void>;
+  clearDiscountApproval: () => void;
 };
 
 const CartContext = createContext<CartContextType | null>(null);
@@ -127,13 +141,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [heldBills, setHeldBills] = useState<HeldBill[]>(saved.heldBills || []);
   const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(saved.appliedCoupon || null);
   const [autoPromotions, setAutoPromotions] = useState<DiscountRule[]>([]);
+  const [skipPromotions, setSkipPromotions] = useState<boolean>(saved.skipPromotions === true);
+  // approval token only lives in memory: a reload asks the manager again
+  const [discountApproval, setDiscountApproval] = useState<DiscountApproval | null>(null);
 
   const { activeShift, refreshShift } = useShift();
   const toast = useToast();
   const checkoutKeyRef = useRef<string | null>(saved.checkoutKey || null);
   useEffect(() => {
-    sessionStorage.setItem(storageKey, JSON.stringify({ cart, orderNote, selectedMember, pointsToUse, discountType, discountValue, discountRules, heldBills, appliedCoupon, checkoutKey: checkoutKeyRef.current }));
-  }, [storageKey, cart, orderNote, selectedMember, pointsToUse, discountType, discountValue, discountRules, heldBills, appliedCoupon]);
+    sessionStorage.setItem(storageKey, JSON.stringify({ cart, orderNote, selectedMember, pointsToUse, discountType, discountValue, discountRules, heldBills, appliedCoupon, skipPromotions, checkoutKey: checkoutKeyRef.current }));
+  }, [storageKey, cart, orderNote, selectedMember, pointsToUse, discountType, discountValue, discountRules, heldBills, appliedCoupon, skipPromotions]);
 
   const addItem = useCallback((item: CartItem) => {
     checkoutKeyRef.current = null;
@@ -145,6 +162,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setCart((prev) =>
       prev.map((item) => (item.id === id ? { ...item, qty: Math.max(1, item.qty + delta) } : item)).filter(i => i.qty > 0)
     );
+  }, []);
+
+  const setItemNote = useCallback((id: string, note: string) => {
+    checkoutKeyRef.current = null;
+    setCart((prev) => prev.map((item) => item.id === id ? { ...item, note: note.trim().slice(0, 120) || undefined } : item));
   }, []);
 
   const removeItem = useCallback((id: string) => {
@@ -162,6 +184,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setDiscountRules([]);
     setPointsToUse("");
     setAppliedCoupon(null);
+    setSkipPromotions(false);
+    setDiscountApproval(null);
     setScanFeedback({ tone: "idle", message: "พร้อมยิงบาร์โค้ด" });
   }, []);
 
@@ -189,12 +213,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const removeDiscountRule = useCallback((id: string) => {
     setDiscountRules((prev) => prev.filter((rule) => rule.id !== id));
+    setDiscountApproval(null);
   }, []);
 
   const clearDiscountRules = useCallback(() => {
     setDiscountRules([]);
     setDiscountType(null);
     setDiscountValue("");
+    setDiscountApproval(null);
   }, []);
 
   const computeRuleDiscount = useCallback((rule: DiscountRule, remainingSubtotal: number) => {
@@ -229,44 +255,60 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return Math.max(0, Math.min(remainingSubtotal, maxDiscount));
   }, [cart, subtotal]);
   
-  const ruleDiscount = useMemo(() => {
+  const round2 = (value: number) => Math.round(value * 100) / 100;
+  const applyRules = useCallback((rules: DiscountRule[]) => {
     let totalDiscount = 0;
-    // Server auto-applies active promotions first, then manual discount rules.
-    autoPromotions.forEach((rule) => {
-      totalDiscount += computeRuleDiscount(rule, Math.max(0, subtotal - totalDiscount));
-    });
-    discountRules.forEach((rule) => {
-      totalDiscount += computeRuleDiscount(rule, Math.max(0, subtotal - totalDiscount));
-    });
+    for (const rule of rules) totalDiscount = round2(totalDiscount + round2(computeRuleDiscount(rule, Math.max(0, subtotal - totalDiscount))));
+    return totalDiscount;
+  }, [computeRuleDiscount, subtotal]);
 
-    if (discountRules.length === 0) {
-      const remaining = Math.max(0, subtotal - totalDiscount);
-      const val = Number(discountValue);
-      if (discountType === "PERCENT" && Number.isFinite(val) && val > 0) {
-        totalDiscount += Math.min(remaining, subtotal * (val / 100));
-      } else if (discountType === "FIXED" && Number.isFinite(val) && val > 0) {
-        totalDiscount += Math.min(remaining, val);
-      }
+  // Same order and rules as the server (orders.ts createOrder): best single auto
+  // promotion, then the coupon, then manual discounts; each capped by what's left.
+  const appliedPromotion = useMemo(() => {
+    if (skipPromotions) return null;
+    let best: DiscountRule | null = null;
+    let bestAmount = 0;
+    for (const rule of autoPromotions) {
+      const isPercent = rule.type === "ORDER_PERCENT" || rule.type === "CATEGORY_PERCENT";
+      if (rule.type !== "BUY_X_GET_Y" && (!(Number(rule.value) > 0) || (isPercent && Number(rule.value) > 100))) continue;
+      const amount = applyRules([rule]);
+      if (amount > bestAmount) { best = rule; bestAmount = amount; }
     }
+    return best;
+  }, [autoPromotions, skipPromotions, applyRules]);
 
-    return Math.round(totalDiscount * 100) / 100;
-  }, [subtotal, discountType, discountValue, discountRules, autoPromotions, computeRuleDiscount]);
+  const couponBelowMinSpend = Boolean(appliedCoupon?.minSpend && subtotal < appliedCoupon.minSpend);
+  const couponRule = useMemo<DiscountRule | null>(() => {
+    if (!appliedCoupon || couponBelowMinSpend || !(appliedCoupon.value > 0)) return null;
+    const isPercent = appliedCoupon.type.toUpperCase().includes("PERCENT");
+    if (isPercent && appliedCoupon.value > 100) return null;
+    return { id: `COUPON-${appliedCoupon.code}`, label: `คูปอง ${appliedCoupon.code}`, type: isPercent ? "ORDER_PERCENT" : "ORDER_FIXED", value: appliedCoupon.value };
+  }, [appliedCoupon, couponBelowMinSpend]);
 
-  // Coupon discount mirrors the server's whole-bill coupon math so cash collection is correct.
-  const couponDiscount = useMemo(() => {
-    if (!appliedCoupon) return 0;
-    const remaining = Math.max(0, subtotal - ruleDiscount);
-    const type = appliedCoupon.type.toUpperCase();
-    const amount = type.includes("PERCENT")
-      ? remaining * ((appliedCoupon.value || 0) / 100)
-      : (appliedCoupon.value || 0);
-    return Math.round(Math.min(remaining, Math.max(0, amount)) * 100) / 100;
-  }, [appliedCoupon, subtotal, ruleDiscount]);
+  const manualRules = useMemo<DiscountRule[]>(() => {
+    if (discountRules.length) return discountRules;
+    const val = Number(discountValue);
+    if (discountType === "PERCENT" && val > 0 && val <= 100) return [{ id: "legacy", label: `ลดทั้งบิล ${val}%`, type: "ORDER_PERCENT", value: val }];
+    if (discountType === "FIXED" && val > 0) return [{ id: "legacy", label: `ลดทั้งบิล ${val} บาท`, type: "ORDER_FIXED", value: val }];
+    return [];
+  }, [discountRules, discountType, discountValue]);
 
   const discountAmount = useMemo(
-    () => Math.round((ruleDiscount + couponDiscount) * 100) / 100,
-    [ruleDiscount, couponDiscount]
+    () => applyRules([...(appliedPromotion ? [appliedPromotion] : []), ...(couponRule ? [couponRule] : []), ...manualRules]),
+    [applyRules, appliedPromotion, couponRule, manualRules]
   );
+
+  const canApproveOwnDiscount = user?.role === "admin" || user?.role === "manager";
+  const needsDiscountApproval = !canApproveOwnDiscount && !discountApproval && subtotal > 0 && manualRules.length > 0
+    && applyRules(manualRules) >= subtotal * MANUAL_DISCOUNT_APPROVAL_RATIO;
+
+  const approveDiscount = useCallback(async (pin: string) => {
+    if (!activeBranch) throw new Error("เลือกสาขาก่อน");
+    const approval = await requestDiscountApproval(activeBranch.id, pin);
+    setDiscountApproval(approval);
+    checkoutKeyRef.current = null;
+  }, [activeBranch]);
+  const clearDiscountApproval = useCallback(() => setDiscountApproval(null), []);
 
   const total = useMemo(() => {
     const pointsDiscount = Math.min(Number(pointsToUse) || 0, Math.max(0, subtotal - discountAmount));
@@ -367,6 +409,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
           discountValue: Number(discountValue) || 0,
           discounts: discountRules,
           couponCode: appliedCoupon?.code,
+          skipPromotions,
+          discountApprovalToken: discountApproval?.token,
           branchId: activeBranch.id,
           customerId,
           loyaltyPointsToUse: usablePoints,
@@ -397,15 +441,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
       toast.error((e as Error).message);
       throw e;
     }
-  }, [cart, orderNote, storageKey, activeBranch, activeShift, user, discountType, discountValue, discountRules, appliedCoupon, clearCart, refreshShift, toast]);
+  }, [cart, orderNote, storageKey, activeBranch, activeShift, user, discountType, discountValue, discountRules, appliedCoupon, skipPromotions, discountApproval, clearCart, refreshShift, toast]);
 
   return (
     <CartContext.Provider value={{
       cart, orderNote, setOrderNote, selectedMember, setSelectedMember, discountType, discountValue, discountRules, pointsToUse, scanFeedback,
-      addItem, updateQty, removeItem, clearCart, setDiscountType, setDiscountValue, addDiscountRule, removeDiscountRule, clearDiscountRules, setPointsToUse, setScanFeedback, checkout,
+      addItem, updateQty, setItemNote, removeItem, clearCart, setDiscountType, setDiscountValue, addDiscountRule, removeDiscountRule, clearDiscountRules, setPointsToUse, setScanFeedback, checkout,
       subtotal, discountAmount, total,
       heldBills: visibleHeldBills, holdCart, restoreHeldBill, removeHeldBill,
-      appliedCoupon, applyCoupon, removeCoupon, autoPromotions
+      appliedCoupon, applyCoupon, removeCoupon, autoPromotions,
+      appliedPromotion, skipPromotions, setSkipPromotions: (skip: boolean) => { checkoutKeyRef.current = null; setSkipPromotions(skip); },
+      couponBelowMinSpend, needsDiscountApproval, discountApproval, approveDiscount, clearDiscountApproval
     }}>
       {children}
     </CartContext.Provider>

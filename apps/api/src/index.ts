@@ -717,7 +717,10 @@ app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (
     if (!order) return res.status(404).json({ error: "ไม่พบออเดอร์" });
     audit("order.status_updated", req, { orderId: id, status: req.body?.status ?? "PAID" });
     return res.json({ order });
-  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+  } catch (e) {
+    const retryable = ["P2028", "P2034"].includes((e as { code?: string })?.code ?? "");
+    return res.status(retryable ? 503 : 400).json({ error: publicError(e), ...(retryable ? { code: "ORDER_RETRY_REQUIRED" } : {}) });
+  }
 });
 app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)), async (req: AuthRequest, res) => {
   const branchId = parseId(req.body?.branchId);

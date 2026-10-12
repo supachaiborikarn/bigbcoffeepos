@@ -40,6 +40,8 @@ const DRINK_CATEGORIES = ["กาแฟ", "ชา", "นม/โกโก้", "�
 const checkoutTransactionRetries = Math.max(0, Math.floor(Number(process.env.CHECKOUT_TX_RETRIES || 5)));
 // Prevent Prisma's 5s default from expiring during real multi-item QR checkouts.
 const ORDER_TRANSACTION_OPTIONS = { timeout: 10_000, maxWait: 2_000 };
+// Reversing a bill touches shift totals, ingredient balances, lots and member points.
+const REVERSAL_TRANSACTION_OPTIONS = { timeout: 12_000, maxWait: 2_000 };
 const MODIFIER_CATALOG = {
   Type: new Map([
     ["Hot", { label: "Hot", price: 0 }],
@@ -593,14 +595,17 @@ export async function updateOrderStatusWithContext(id: number, input: {
           addRequiredStock(stockToRestore, movement.ingredientId, Math.abs(movement.qty));
         }
       } else {
+        // Old bills lack stock movement rows: restore the original recipes in one query.
+        const quantityByMenuId = new Map<number, number>();
         for (const item of current.items) {
-          const recipes = await tx.recipe.findMany({ where: { menuItemId: item.menuItemId } });
-          for (const recipe of recipes) {
-            const restoreQty = recipe.qty * item.qty;
-            addRequiredStock(stockToRestore, recipe.ingredientId, restoreQty);
-          }
-          await addModifierStockRequirements(tx, stockToRestore, parseStoredModifiers(item.modifiers), item.qty, current.branchId);
+          quantityByMenuId.set(item.menuItemId, (quantityByMenuId.get(item.menuItemId) ?? 0) + item.qty);
         }
+        const recipes = await tx.recipe.findMany({ where: { menuItemId: { in: [...quantityByMenuId.keys()] } } });
+        for (const recipe of recipes) {
+          addRequiredStock(stockToRestore, recipe.ingredientId, recipe.qty * (quantityByMenuId.get(recipe.menuItemId) ?? 0));
+        }
+        await addModifierStockRequirementsForItems(tx, stockToRestore,
+          current.items.map(item => ({ menuItemId: item.menuItemId, name: item.name, category: item.menuItem.category, qty: item.qty, basePrice: item.basePrice, modifiers: parseStoredModifiers(item.modifiers), lineTotal: item.lineTotal, note: item.note ?? undefined })), current.branchId);
       }
 
       for (const [ingredientId, restoreQty] of stockToRestore) {
@@ -669,7 +674,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
         }
       });
       return updated;
-    });
+    }, REVERSAL_TRANSACTION_OPTIONS);
     return hydrateOrder(order);
   }
 
@@ -694,7 +699,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
         }
       });
       return order;
-    });
+    }, REVERSAL_TRANSACTION_OPTIONS);
     return hydrateOrder(updated);
   } catch (error: any) {
     if (error?.code === "P2025") return null;

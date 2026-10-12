@@ -158,7 +158,8 @@ export default function OrdersPage() {
   };
 
   const cancelOrder = async (order: Order) => {
-    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้`)) return;
+    const paymentWarning = order.paymentMethod !== "CASH" ? "\nการยกเลิกใน POS ไม่โอนเงินคืนลูกค้าอัตโนมัติ ต้องตรวจและดำเนินการคืนเงินจริงแยกต่างหาก" : "";
+    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้${paymentWarning}`)) return;
     try {
       await updateOrderStatus(order.id, "CANCELLED");
       toast.success(`ยกเลิกบิล #${order.id} แล้ว`);

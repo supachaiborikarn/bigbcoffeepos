@@ -1,24 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { API_URL } from "../api";
+import { getOrders, updateOrderStatus } from "../api";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { useToast } from "../contexts/ToastContext";
 import type { Order } from "../types";
 import { Ban, CheckCircle2 } from "lucide-react";
 import { describeModifiers } from "../utils/modifierLabel";
-
-const fetchJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
-  const token = localStorage.getItem("bb_pos_token");
-  const headers: HeadersInit = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(url, { ...init, headers });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const message = typeof payload?.error === "string" ? payload.error : "Request failed";
-    throw new Error(message);
-  }
-  return payload as T;
-};
 
 function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
@@ -30,6 +17,7 @@ export default function OrderQueuePage() {
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeBranch || !activeShift) {
@@ -38,8 +26,8 @@ export default function OrderQueuePage() {
       return;
     }
     try {
-      const data = await fetchJson<{ items: Order[] }>(`${API_URL}/orders?branchId=${activeBranch.id}`);
-      const pending = (data.items || []).filter(o => o.status === "PAID" && o.shiftId === activeShift.id).reverse();
+      const data = await getOrders(activeBranch.id);
+      const pending = data.filter(o => o.status === "PAID" && o.shiftId === activeShift.id).reverse();
       setOrders(pending);
     } catch {
       // Keep the current queue visible if an auto-refresh request fails.
@@ -57,29 +45,27 @@ export default function OrderQueuePage() {
   }, [refresh]);
 
   const markReady = async (order: Order) => {
+    if (busyId !== null) return;
+    setBusyId(order.id);
     try {
-      await fetchJson(`${API_URL}/orders/${order.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "READY" })
-      });
+      await updateOrderStatus(order.id, "READY");
       toast.success(`บันทึกออเดอร์ #${order.id} เป็นเสร็จสิ้นแล้ว`);
       refresh();
     } catch (error) {
       toast.error((error as Error).message);
+    } finally {
+      setBusyId(null);
     }
   };
 
   // one request per bill at a time: a double click must not cancel twice
-  const [busyId, setBusyId] = useState<number | null>(null);
   const cancelOrder = async (order: Order) => {
     if (busyId !== null) return;
-    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้`)) return;
+    const paymentWarning = order.paymentMethod !== "CASH" ? "\nการยกเลิกใน POS ไม่โอนเงินคืนลูกค้าอัตโนมัติ ต้องตรวจและดำเนินการคืนเงินจริงแยกต่างหาก" : "";
+    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้${paymentWarning}`)) return;
     setBusyId(order.id);
     try {
-      await fetchJson(`${API_URL}/orders/${order.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "CANCELLED" })
-      });
+      await updateOrderStatus(order.id, "CANCELLED");
       toast.success(`ยกเลิกบิล #${order.id} แล้ว`);
       refresh();
       void refreshShift().catch(() => {});
@@ -140,6 +126,7 @@ export default function OrderQueuePage() {
                 className="btn btn--primary btn--full"
                 style={{ padding: "14px", fontSize: "16px" }}
                 onClick={() => markReady(order)}
+                disabled={busyId !== null}
               >
                 <CheckCircle2 size={18} /> เสร็จสิ้น
               </button>

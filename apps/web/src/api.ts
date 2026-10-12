@@ -734,11 +734,27 @@ export async function createOrder(input: OfflineOrderInput) {
 }
 
 export async function updateOrderStatus(id: number, status: OrderStatus, reason?: string) {
-  const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ status, reason })
-  });
-  return payload.order;
+  try {
+    const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`, {
+      method: "PATCH",
+      timeoutMs: 15_000,
+      body: JSON.stringify({ status, reason })
+    });
+    return confirmedOrder(payload, { id, status });
+  } catch (error) {
+    const transientStatusError = error instanceof ApiError &&
+      (error.status === 408 || error.status === 429 || error.status >= 500 || error.code === "ORDER_RETRY_REQUIRED" || error.message.startsWith("ระบบบันทึกใช้เวลานานเกินไป"));
+    if (!(error instanceof RequestTimeoutError) && !(error instanceof OrderConfirmationError) &&
+        !isOfflineCheckoutError(error) && !transientStatusError) throw error;
+    // Read once after a lost/unclear reply; never repeat the financial mutation here.
+    try {
+      const payload = await fetchJsonOnce<{ order: Order }>(`${API_URL}/orders/${id}`, { timeoutMs: 5_000 });
+      return confirmedOrder(payload, { id, status });
+    } catch {
+      const action = status === "CANCELLED" ? "ยกเลิกบิล" : status === "REFUNDED" ? "คืนเงิน" : "เปลี่ยนสถานะบิล";
+      throw new OrderConfirmationError(`ยังยืนยันการ${action} #${id} ไม่ได้ กรุณารีเฟรชรายการเพื่อตรวจสถานะก่อนลองอีกครั้ง`);
+    }
+  }
 }
 
 export async function getSalesSummary(params: { from?: string; to?: string; branchId?: number; source?: ReportSource }) {

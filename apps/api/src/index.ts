@@ -25,7 +25,8 @@ import {
   openShift, closeShift, getCurrentShift, getShifts, getShiftSummary,
   authenticatePin, verifyApproverPin, getUsers, addUser, updateUser, deleteUser,
   getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows, getDailyCloseReport, assertReportRange,
-  createPurchase, getPurchases, voidPurchase,
+  createPurchase, getPurchases, getPurchase, voidPurchase, receivePurchase,
+  getInventoryDocuments, createInventoryDocument, postInventoryDocument, voidInventoryDocument, getStockLedger,
   getIntegrationStatus, getIntegrationOutboxSummary, getIntegrationEvents, retryIntegrationEvent, processOutboxQueue,
   enqueuePosposSync, getLatestPosposSyncJobsByBranch, getPosposSyncJob, runPosposSyncJob,
   importProducts, importCustomers, importHistoricalOrders,
@@ -54,6 +55,8 @@ import type { StoreSettingInput, VatMode } from "./store/index.js";
 const app = express();
 const PORT = Number(process.env.PORT ?? 5175);
 app.use(cors());
+// A bounded 2 MiB bill photo expands to about 2.8 MiB in a JSON data URL.
+app.use("/api/purchases", express.json({ limit: "3mb" }));
 app.use(express.json({ limit: "2mb" }));
 app.use(requestLogger);
 
@@ -478,7 +481,9 @@ app.post("/api/stock-adjustments", requireRole("admin", "manager"), requireBranc
   const ingredientId = parseId(req.body?.ingredientId);
   const qty = Number(req.body?.qty);
   if (branchId === null || ingredientId === null || !Number.isFinite(qty) || qty === 0) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
-  const result = await adjustStock({ branchId, ingredientId, qty, reason: req.body?.reason?.trim() || "ADJUSTMENT" });
+  let result;
+  try { result = await adjustStock({ branchId, ingredientId, qty, reason: req.body?.reason?.trim() || "ADJUSTMENT", actorUserId: (req as AuthRequest).user?.id }); }
+  catch (e) { return res.status(400).json({ error: publicError(e) }); }
   const items = await getInventoryItems(branchId);
   const inventoryItem = items.find((item: any) => item.ingredientId === ingredientId) ?? null;
   audit("stock.adjusted", req, { branchId, ingredientId, qty, reason: req.body?.reason?.trim() || "ADJUSTMENT" });
@@ -489,6 +494,55 @@ app.get("/api/stock-movements", requireBranchAccess((req) => parseId(req.query.b
   const ingredientId = parseId(req.query.ingredientId as string) ?? undefined;
   const limit = parseId(req.query.limit as string);
   res.json({ items: await getStockMovements(branchId, { ingredientId, manualOnly: req.query.manual === "1", take: limit && limit > 0 ? Math.min(Math.floor(limit), 500) : undefined }) });
+});
+
+app.get("/api/stock-ledger", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string);
+  if (!branchId || !Number.isInteger(branchId)) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
+  try {
+    return res.json(await getStockLedger(branchId, {
+      ingredientId: parseId(req.query.ingredientId as string) ?? undefined,
+      kind: isStr(req.query.kind) ? req.query.kind : undefined,
+      from: isStr(req.query.from) ? req.query.from : undefined,
+      to: isStr(req.query.to) ? req.query.to : undefined,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      snapshotId: req.query.snapshotId !== undefined ? Number(req.query.snapshotId) : undefined
+    }));
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
+app.get("/api/inventory-documents", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+  const branchId = parseId(req.query.branchId as string);
+  if (!branchId || !Number.isInteger(branchId)) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
+  try { return res.json({ items: await getInventoryDocuments(branchId) }); }
+  catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
+app.post("/api/inventory-documents", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req: AuthRequest, res) => {
+  if (!Array.isArray(req.body?.items) || req.body.items.some((i: unknown) => !i || typeof i !== "object")) return res.status(400).json({ error: "กรุณาเพิ่มรายการสินค้า" });
+  try {
+    const document = await createInventoryDocument({ ...req.body, branchId: Number(req.body.branchId), requestedByUserId: req.user!.id, items: req.body.items.map((i: any) => ({ ingredientId: Number(i.ingredientId), qty: Number(i.qty) })) });
+    audit("inventory_document.created", req, { documentId: document?.id, branchId: document?.branchId, kind: document?.kind, status: document?.status });
+    return res.status(201).json({ document });
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
+const inventoryDocumentBranch = requireRecordBranch(async req => prisma.inventoryDocument.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } }));
+app.post("/api/inventory-documents/:id/post", requireRole("admin", "manager"), inventoryDocumentBranch, async (req: AuthRequest, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: "เลขใบเบิกไม่ถูกต้อง" });
+  try {
+    const document = await postInventoryDocument(id, req.user!.id);
+    audit("inventory_document.posted", req, { documentId: id, branchId: document?.branchId });
+    return res.json({ document });
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
+app.post("/api/inventory-documents/:id/void", requireRole("admin", "manager"), inventoryDocumentBranch, async (req: AuthRequest, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: "เลขใบเบิกไม่ถูกต้อง" });
+  try {
+    const document = await voidInventoryDocument(id, req.body?.reason, req.user!.id);
+    audit("inventory_document.voided", req, { documentId: id, branchId: document?.branchId });
+    return res.json({ document });
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
 });
 
 /* ─── Central Warehouse & Restock ─── */
@@ -766,7 +820,8 @@ app.post("/api/orders", requireBranchAccess((req) => parseId(req.body?.branchId)
   } catch (e) {
     const message = (e as Error).message;
     if (message.startsWith("DISCOUNT_APPROVAL_REQUIRED: ")) return res.status(403).json({ error: message.slice("DISCOUNT_APPROVAL_REQUIRED: ".length), code: "DISCOUNT_APPROVAL_REQUIRED" });
-    return res.status(400).json({ error: publicError(e) });
+    const retryable = ["P2028", "P2034"].includes((e as { code?: string })?.code ?? "");
+    return res.status(retryable ? 503 : 400).json({ error: publicError(e), ...(retryable ? { code: "ORDER_RETRY_REQUIRED" } : {}) });
   }
 });
 
@@ -998,7 +1053,8 @@ app.post("/api/backups", requireAdmin, async (req, res) => {
 /* ─── Purchases ─── */
 app.get("/api/purchases", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
-  res.json({ items: await getPurchases(branchId) });
+  try { return res.json({ items: await getPurchases(branchId, { query: isStr(req.query.query) ? req.query.query : undefined, status: isStr(req.query.status) ? req.query.status : undefined }) }); }
+  catch (e) { return res.status(400).json({ error: publicError(e) }); }
 });
 
 app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
@@ -1008,13 +1064,15 @@ app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess(
   const items = req.body?.items;
   if (branchId === null) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "กรุณาเพิ่มรายการสินค้า" });
+  if (items.length > 100 || items.some((item: unknown) => !item || typeof item !== "object")) return res.status(400).json({ error: "รายการรับของเข้าไม่ถูกต้อง" });
   const normalizedItems = items.map((item: Record<string, unknown>) => ({
     ingredientId: parseId(item.ingredientId as number | string | undefined),
     qty: Number(item.qty),
     unitCost: parseMoney(item.unitCost),
     description: isStr(item.description) ? item.description.trim() : "",
     lotNo: isStr(item.lotNo) ? item.lotNo.trim() : "",
-    expiryDate: isStr(item.expiryDate) && item.expiryDate ? item.expiryDate : null
+    expiryDate: isStr(item.expiryDate) && item.expiryDate ? item.expiryDate : null,
+    packSize: item.packSize === undefined ? 1 : Number(item.packSize)
   }));
   if (normalizedItems.some((item) => item.ingredientId === null || !Number.isFinite(item.qty) || item.qty <= 0 || item.unitCost === null)) {
     return res.status(400).json({ error: "รายการรับของเข้าไม่ถูกต้อง" });
@@ -1022,7 +1080,12 @@ app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess(
   try {
     // cost is shared master data (see protectSharedConfiguration), so only an admin's receipt moves it
     const updateCost = req.body?.updateCost !== false && (req as AuthRequest).user?.role === "admin";
-    const po = await createPurchase(branchId, supplier || "ไม่ระบุผู้ขาย", note, normalizedItems as { ingredientId: number; qty: number; unitCost: number; description: string; lotNo: string; expiryDate: string | null }[], { updateCost });
+    if (req.body?.mode !== undefined && !["RECEIPT", "ORDER"].includes(req.body.mode)) return res.status(400).json({ error: "รูปแบบการรับของไม่ถูกต้อง" });
+    const po = await createPurchase(branchId, supplier || "ไม่ระบุผู้ขาย", note, normalizedItems as { ingredientId: number; qty: number; unitCost: number; description: string; lotNo: string; expiryDate: string | null; packSize: number }[], {
+      updateCost, mode: req.body?.mode, invoiceNumber: req.body?.invoiceNumber, documentDate: req.body?.documentDate,
+      receivedAt: req.body?.receivedAt, dueDate: req.body?.dueDate, attachmentName: req.body?.attachmentName,
+      attachmentDataUrl: req.body?.attachmentDataUrl, requestKey: req.body?.requestKey, createdByUserId: (req as AuthRequest).user?.id
+    });
     audit("purchase.created", req, { purchaseId: po?.id, branchId, total: po?.totalCost, costChanges: po?.costChanges });
     return res.status(201).json({ purchase: po });
   } catch (e) { return res.status(400).json({ error: publicError(e) }); }
@@ -1032,7 +1095,7 @@ app.post("/api/purchases/:id/void", requireRecordBranch(async (req) => prisma.pu
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
   try {
-    const purchase = await voidPurchase(id, String(req.body?.reason ?? ""));
+    const purchase = await voidPurchase(id, String(req.body?.reason ?? ""), req.user?.id);
     audit("purchase.voided", req, { purchaseId: id, reason: purchase?.voidReason });
     return res.json({ purchase });
   } catch (e) { return res.status(400).json({ error: publicError(e) }); }
@@ -1044,6 +1107,31 @@ app.post("/api/purchases/:id/approve", requireRecordBranch(async (req) => prisma
   try {
     const purchase = await approvePurchase(id, req.user?.id ?? null);
     audit("purchase.approved", req, { purchaseId: id });
+    return res.json({ purchase });
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
+
+app.get("/api/purchases/:id/attachment", requireRole("admin", "manager"), requireRecordBranch(async req => prisma.purchase.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: "เลขใบรับไม่ถูกต้อง" });
+  try {
+    const purchase = await getPurchase(id);
+    if (!purchase) return res.status(404).json({ error: "ไม่พบใบรับสินค้า" });
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ attachmentName: purchase.attachmentName, attachmentDataUrl: purchase.attachmentDataUrl || null });
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
+
+app.post("/api/purchases/:id/receive", requireRole("admin", "manager"), requireRecordBranch(async req => prisma.purchase.findUnique({ where: { id: Number(req.params.id) || 0 }, select: { branchId: true } })), async (req: AuthRequest, res) => {
+  const id = Number(req.params.id);
+  const items = req.body?.items;
+  if (!Number.isSafeInteger(id) || id <= 0 || !isStr(req.body?.requestKey) || !Array.isArray(items) || !items.length || items.length > 100 || items.some((i: unknown) => !i || typeof i !== "object")) return res.status(400).json({ error: "ข้อมูลรับของไม่ครบ" });
+  try {
+    const purchase = await receivePurchase(id, items.map((i: any) => ({ purchaseItemId: Number(i.purchaseItemId), qty: Number(i.qty), lotNo: i.lotNo, expiryDate: i.expiryDate, packSize: i.packSize })), {
+      requestKey: req.body.requestKey, receivedAt: req.body.receivedAt, note: req.body.note, actorUserId: req.user!.id,
+      updateCost: req.body.updateCost !== false && req.user!.role === "admin"
+    });
+    audit("purchase.received", req, { purchaseId: id, branchId: purchase?.branchId, status: purchase?.status });
     return res.json({ purchase });
   } catch (e) { return res.status(400).json({ error: publicError(e) }); }
 });

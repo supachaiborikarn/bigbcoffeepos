@@ -1,5 +1,6 @@
 import prisma from "../prisma.js";
 import { Prisma } from "@prisma/client";
+import { consumeStockLots } from "./stockLots.js";
 
 const SALES_ONLY_ITEM_NAME = "POSPOS sales-only record";
 
@@ -201,37 +202,20 @@ export async function updateInventoryItem(input: {
   return items.find((item) => item.ingredientId === input.ingredientId) ?? null;
 }
 
-export async function adjustStock(input: { branchId: number; ingredientId: number; qty: number; reason: string }) {
-  // Upsert stock record
-  const stock = await prisma.ingredientStock.upsert({
-    where: {
-      branchId_ingredientId: {
-        branchId: input.branchId,
-        ingredientId: input.ingredientId
-      }
-    },
-    update: {
-      stockQty: { increment: input.qty }
-    },
-    create: {
-      branchId: input.branchId,
-      ingredientId: input.ingredientId,
-      stockQty: input.qty,
-      reorderLevel: 0
-    }
+export async function adjustStock(input: { branchId: number; ingredientId: number; qty: number; reason: string; actorUserId?: number }) {
+  if (!Number.isFinite(input.qty) || input.qty === 0) throw new Error("จำนวนปรับสต็อกไม่ถูกต้อง");
+  return prisma.$transaction(async tx => {
+    await tx.ingredientStock.upsert({ where: { branchId_ingredientId: { branchId: input.branchId, ingredientId: input.ingredientId } }, update: {}, create: { branchId: input.branchId, ingredientId: input.ingredientId, stockQty: 0 } });
+    const rows = await tx.$queryRaw<Array<{ stock_qty: number }>>(Prisma.sql`SELECT stock_qty FROM ingredient_stocks WHERE branch_id = ${input.branchId} AND ingredient_id = ${input.ingredientId} FOR UPDATE`);
+    const beforeQty = rows[0].stock_qty;
+    const nextQty = Math.round((beforeQty + input.qty) * 10000) / 10000;
+    if (!Number.isFinite(nextQty)) throw new Error("จำนวนปรับสต็อกมากเกินไป");
+    if (beforeQty + input.qty < -1e-8) throw new Error(`สต็อกไม่พอ: คงเหลือ ${beforeQty}, ต้องตัด ${-input.qty}`);
+    const stock = await tx.ingredientStock.update({ where: { branchId_ingredientId: { branchId: input.branchId, ingredientId: input.ingredientId } }, data: { stockQty: Math.max(0, nextQty) } });
+    if (input.qty < 0) await consumeStockLots(tx, input.branchId, input.ingredientId, -input.qty);
+    const movement = await tx.stockMovement.create({ data: { branchId: input.branchId, ingredientId: input.ingredientId, qty: input.qty, reason: input.reason, beforeQty, afterQty: stock.stockQty, actorUserId: input.actorUserId ?? null } });
+    return { stock, movement };
   });
-
-  // Create movement
-  const movement = await prisma.stockMovement.create({
-    data: {
-      branchId: input.branchId,
-      ingredientId: input.ingredientId,
-      qty: input.qty,
-      reason: input.reason
-    }
-  });
-
-  return { stock, movement };
 }
 
 export async function getStockMovements(branchId?: number, options: { ingredientId?: number; manualOnly?: boolean; take?: number } = {}) {

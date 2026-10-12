@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "regions": ["sin1"],
   "buildCommand": "cd ../.. && npm install && cd apps/api && npx prisma generate && npm run build",
   "installCommand": "npm install",
   "framework": null,

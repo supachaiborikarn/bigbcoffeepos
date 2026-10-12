@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Menu, Moon, Sun, MapPin, Printer, Wallet, Clock, ChevronDown } from "lucide-react";
 import { businessProfile, roleLabels } from "../../utils/business";
 import { getShiftSummary } from "../../api";
@@ -11,6 +11,9 @@ import Numpad from "../ui/Numpad";
 import OfflineStatus from "../OfflineStatus";
 import CashDrawerDialog from "../shift/CashDrawerDialog";
 import TimeClockDialog from "../shift/TimeClockDialog";
+import { submitPrintJob } from "../../utils/printJob";
+import { getPaperWidth, getPrinterMode, setPaperWidth } from "../../utils/printerSettings";
+import { createShiftSummaryJob, type PrintableShiftSummary } from "../../utils/shiftSummaryPrint";
 
 const formatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -28,10 +31,6 @@ const paymentLabels: Record<string, string> = {
 };
 
 type CashCounts = Record<string, string>;
-type PrintableShiftSummary = ShiftSummary & {
-  cashCountLines?: Array<{ denomination: number; count: number; total: number }>;
-  closingNote?: string;
-};
 
 function formatMoney(v: number) {
   return formatter.format(v);
@@ -78,6 +77,12 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
   const [closedSummary, setClosedSummary] = useState<PrintableShiftSummary | null>(null);
   const [showCashDrawer, setShowCashDrawer] = useState(false);
   const [showTimeClock, setShowTimeClock] = useState(false);
+  const [paperWidth, setPaperWidthState] = useState(getPaperWidth);
+  useEffect(() => {
+    const sync = () => setPaperWidthState(getPaperWidth());
+    window.addEventListener("bbpos-printer-settings", sync);
+    return () => window.removeEventListener("bbpos-printer-settings", sync);
+  }, []);
   const reloadCloseSummary = () => { if (showShiftModal === "close" && activeShift) getShiftSummary(activeShift.id).then(setShiftSummary).catch(() => {}); };
 
   const countedCash = useMemo(() => {
@@ -150,7 +155,14 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
   }
 
   function handlePrintSummary() {
-    window.print();
+    if (!closedSummary) return;
+    // Same route as receipts / ใบส่งยอด: follows printer mode and 58/80 mm width.
+    // Browser printing needs the popup opened synchronously inside the click.
+    const popup = getPrinterMode() === "browser" ? window.open("", "bbpos_receipt", "width=420,height=760") : null;
+    if (!submitPrintJob(createShiftSummaryJob(closedSummary, closedSummary.branch.id), popup)) {
+      popup?.close();
+      toast.error("ระบบพิมพ์ยังไม่พร้อม ลองใหม่อีกครั้ง");
+    }
   }
 
   return (
@@ -386,7 +398,10 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
               </section>
             </div>
 
-            <div className="shift-modal-actions">
+            <div className="shift-modal-actions" style={{ flexWrap: "wrap" }}>
+              <div className="seg-paper" role="group" aria-label="ขนาดกระดาษ" style={{ marginRight: "auto" }}>
+                {([58, 80] as const).map((w) => <button key={w} type="button" aria-pressed={paperWidth === w} className={paperWidth === w ? "is-active" : ""} onClick={() => setPaperWidth(w)}>{w} มม.</button>)}
+              </div>
               <button className="btn btn--ghost" onClick={() => setClosedSummary(null)}>ปิด</button>
               <button className="btn btn--primary" onClick={handlePrintSummary}>พิมพ์สรุปกะ</button>
             </div>
@@ -394,65 +409,6 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
         </div>
       )}
 
-      {closedSummary && (
-        <section className="shift-print">
-          <div className="shift-print__header">
-            <h1>Big B Coffee POS</h1>
-            <p>รายงานปิดกะ / Z Report</p>
-            <p>{closedSummary.branch.name}</p>
-          </div>
-          <div className="shift-print__row"><span>กะ</span><strong>#{closedSummary.shift.id}</strong></div>
-          <div className="shift-print__row"><span>ผู้เปิดกะ</span><strong>{closedSummary.user?.name ?? "-"}</strong></div>
-          <div className="shift-print__row"><span>ผู้ปิดกะ</span><strong>{closedSummary.closeDetails?.closedBy?.name ?? "-"}</strong></div>
-          <div className="shift-print__row"><span>เปิด</span><strong>{formatDateTime(closedSummary.openedAt)}</strong></div>
-          <div className="shift-print__row"><span>ปิด</span><strong>{formatDateTime(closedSummary.closedAt)}</strong></div>
-          <div className="shift-print__row"><span>ระยะเวลา</span><strong>{formatDuration(closedSummary.durationMinutes)}</strong></div>
-          <hr />
-          <div className="shift-print__row"><span>ยอดขายรวม</span><strong>{formatMoney(closedSummary.totals.totalSales)}</strong></div>
-          <div className="shift-print__row"><span>จำนวนบิล</span><strong>{closedSummary.totals.totalOrders}</strong></div>
-          <div className="shift-print__row"><span>เฉลี่ย/บิล</span><strong>{formatMoney(closedSummary.totals.averageTicket)}</strong></div>
-          <div className="shift-print__row"><span>ส่วนลด</span><strong>{formatMoney(closedSummary.totals.discountAmount)}</strong></div>
-          <hr />
-          {closedSummary.payments.map((payment) => (
-            <div className="shift-print__row" key={payment.method}>
-              <span>{paymentLabels[payment.method] ?? payment.method}</span>
-              <strong>{formatMoney(payment.total)}</strong>
-            </div>
-          ))}
-          <hr />
-          <div className="shift-print__row"><span>เงินต้นกะ</span><strong>{formatMoney(closedSummary.cash.openingCash)}</strong></div>
-          <div className="shift-print__row"><span>เงินสดรับ</span><strong>{formatMoney(closedSummary.cash.cashSales)}</strong></div>
-          <div className="shift-print__row"><span>จ่ายออกจากลิ้นชัก</span><strong>-{formatMoney(closedSummary.cash.paidOut ?? 0)}</strong></div>
-          {(closedSummary.cash.paidIn ?? 0) > 0 && <div className="shift-print__row"><span>เติมเข้าลิ้นชัก</span><strong>+{formatMoney(closedSummary.cash.paidIn ?? 0)}</strong></div>}
-          {(closedSummary.cash.entries ?? []).map((entry) => <div className="shift-print__row" key={entry.id}><span>· {entry.category}{entry.note ? ` (${entry.note})` : ""}</span><strong>{entry.type === "OUT" ? "-" : "+"}{formatMoney(entry.amount)}</strong></div>)}
-          <div className="shift-print__row"><span>เงินสดที่ควรมี</span><strong>{formatMoney(closedSummary.cash.expectedCash)}</strong></div>
-          <div className="shift-print__row"><span>นับเงินจริง</span><strong>{formatMoney(closedSummary.cash.closingCash ?? 0)}</strong></div>
-          <div className="shift-print__row shift-print__total"><span>ส่วนต่าง</span><strong>{formatMoney(closedSummary.cash.difference ?? 0)}</strong></div>
-          {closedSummary.cashCountLines && closedSummary.cashCountLines.length > 0 && (
-            <>
-              <hr />
-              <p className="shift-print__section">รายละเอียดเงินสด</p>
-              {closedSummary.cashCountLines.map((line) => (
-                <div className="shift-print__row" key={line.denomination}>
-                  <span>{formatMoney(line.denomination)} x {line.count}</span>
-                  <strong>{formatMoney(line.total)}</strong>
-                </div>
-              ))}
-            </>
-          )}
-          {closedSummary.closingNote && (
-            <>
-              <hr />
-              <p className="shift-print__section">หมายเหตุ</p>
-              <p>{closedSummary.closingNote}</p>
-            </>
-          )}
-          <div className="shift-print__footer">
-            <p>ลงชื่อผู้ปิดกะ ____________________</p>
-            <p>พิมพ์เมื่อ {formatDateTime(new Date().toISOString())}</p>
-          </div>
-        </section>
-      )}
       {showTimeClock && activeBranch && <TimeClockDialog branchId={activeBranch.id} onClose={() => setShowTimeClock(false)} />}
       {showCashDrawer && activeShift && <CashDrawerDialog shiftId={activeShift.id} onClose={() => setShowCashDrawer(false)} onChanged={reloadCloseSummary} />}
     </>

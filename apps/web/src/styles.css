@@ -537,20 +537,6 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .numpad-btn.enter { grid-column: span 3; background: var(--brand); color: white; border-color: var(--brand); font-size: 15px; }
 .numpad-btn.enter:active { background: var(--brand-hover); }
 
-/* ═══ PRINT (KEEP FUNCTIONAL) ═══ */
-.shift-print { display: none; }
-@media print {
-  body * { visibility: hidden; }
-  .shift-print, .shift-print * { visibility: visible; }
-  .shift-print { display: block; position: fixed; left: 0; top: 0; width: 80mm; padding: 8px; font-size: 12px; background: white; }
-  .shift-print__header { text-align: center; margin-bottom: 8px; }
-  .shift-print__header h1 { font-size: 16px; }
-  .shift-print__row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
-  .shift-print__total { border-top: 1px dashed #000; font-weight: bold; padding-top: 4px; margin-top: 4px; }
-  .shift-print__section { font-weight: bold; margin: 8px 0 4px; font-size: 11px; }
-  .shift-print__footer { margin-top: 16px; text-align: center; font-size: 10px; }
-}
-
 /* ═══ INVENTORY ROW (LEGACY COMPAT) ═══ */
 .inventory-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-radius: var(--radius); border: 1px solid var(--border-light); background: var(--bg-surface); transition: background var(--duration-fast); }
 .inventory-row:hover { background: var(--bg-subtle); }

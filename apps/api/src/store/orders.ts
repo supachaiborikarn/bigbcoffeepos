@@ -606,12 +606,14 @@ export async function updateOrderStatusWithContext(id: number, input: {
         for (const item of current.items) {
           quantityByMenuId.set(item.menuItemId, (quantityByMenuId.get(item.menuItemId) ?? 0) + item.qty);
         }
-        const recipes = await tx.recipe.findMany({ where: { menuItemId: { in: [...quantityByMenuId.keys()] } } });
-        for (const recipe of recipes) {
-          addRequiredStock(stockToRestore, recipe.ingredientId, recipe.qty * (quantityByMenuId.get(recipe.menuItemId) ?? 0));
+        if (quantityByMenuId.size > 0) {
+          const recipes = await tx.recipe.findMany({ where: { menuItemId: { in: [...quantityByMenuId.keys()] } } });
+          for (const recipe of recipes) {
+            addRequiredStock(stockToRestore, recipe.ingredientId, recipe.qty * (quantityByMenuId.get(recipe.menuItemId) ?? 0));
+          }
+          await addModifierStockRequirementsForItems(tx, stockToRestore,
+            current.items.map(item => ({ menuItemId: item.menuItemId, name: item.name, category: item.menuItem.category, qty: item.qty, basePrice: item.basePrice, modifiers: parseStoredModifiers(item.modifiers), lineTotal: item.lineTotal, note: item.note ?? undefined })), current.branchId);
         }
-        await addModifierStockRequirementsForItems(tx, stockToRestore,
-          current.items.map(item => ({ menuItemId: item.menuItemId, name: item.name, category: item.menuItem.category, qty: item.qty, basePrice: item.basePrice, modifiers: parseStoredModifiers(item.modifiers), lineTotal: item.lineTotal, note: item.note ?? undefined })), current.branchId);
       }
 
       for (const [ingredientId, restoreQty] of stockToRestore) {

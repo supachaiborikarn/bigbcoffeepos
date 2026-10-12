@@ -59,7 +59,7 @@ function fixture(gateReady = false) {
     };
     try { return await callback(tx); } finally { for (const release of releases.reverse()) release(); }
   } };
-  const update = evaluate(section(ordersSource, 'export async function updateOrderStatusWithContext(', 'export async function createOrder('), ['prisma', 'ALLOWED_STATUSES', 'REVERSAL_STATUSES', 'ORDER_ITEMS_INCLUDE', 'hydrateOrder', 'getShiftSalesTotals'], [prisma, new Set(['PAID', 'READY', 'CANCELLED', 'REFUNDED']), new Set(['CANCELLED', 'REFUNDED']), {}, (row) => row, getShiftSalesTotals], 'updateOrderStatusWithContext');
+  const update = evaluate(section(ordersSource, 'export async function updateOrderStatusWithContext(', 'export async function createOrder('), ['prisma', 'ALLOWED_STATUSES', 'REVERSAL_STATUSES', 'ORDER_ITEMS_INCLUDE', 'hydrateOrder', 'getShiftSalesTotals', 'REVERSAL_TRANSACTION_OPTIONS'], [prisma, new Set(['PAID', 'READY', 'CANCELLED', 'REFUNDED']), new Set(['CANCELLED', 'REFUNDED']), {}, (row) => row, getShiftSalesTotals, { timeout: 12000, maxWait: 2000 }], 'updateOrderStatusWithContext');
   return { state, prisma, update, releaseReady, readyEntered };
 }
 async function main() {

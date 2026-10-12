@@ -8,7 +8,8 @@ export { getOrders, getOrder, getOrderByIdempotencyKey, updateOrderStatus, updat
 export { openShift, closeShift, getCurrentShift, getShift, getShifts, getShiftSummary, getShiftCloseDetails } from "./shifts.js";
 export { authenticatePin, verifyApproverPin, getUsers, getUser, addUser, updateUser, deleteUser } from "./users.js";
 export { getSalesSummary, getProfitReport, getStaffPerformance, getOrdersCsvRows, getDailyCloseReport, assertReportRange } from "./reports.js";
-export { createPurchase, getPurchases, getPurchase, voidPurchase } from "./purchases.js";
+export { createPurchase, getPurchases, getPurchase, voidPurchase, approvePurchase, receivePurchase } from "./purchases.js";
+export { getInventoryDocument, getInventoryDocuments, createInventoryDocument, postInventoryDocument, voidInventoryDocument, getStockLedger } from "./stockDocuments.js";
 export {
   getIntegrationStatus,
   getIntegrationOutboxSummary,
@@ -27,7 +28,6 @@ export {
   listTaxInvoices, createTaxInvoice, voidTaxInvoice,
   listStockCounts, createStockCount, postStockCount, cancelStockCount,
   listStockTransfers, createStockTransfer, receiveStockTransfer, cancelStockTransfer,
-  approvePurchase,
   listProductUnits, saveProductUnit,
   listPriceRules, savePriceRule,
   listInventoryLots, saveInventoryLot,

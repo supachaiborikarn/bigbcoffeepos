@@ -255,6 +255,26 @@ export type StockMovement = {
   qty: number;
   reason: string;
   createdAt: string;
+  beforeQty?: number | null;
+  afterQty?: number | null;
+  actorUserId?: number | null;
+  documentId?: number | null;
+};
+
+export type InventoryDocumentKind = "MOVE" | "USE" | "GIFT" | "LOSS";
+export type StockLedgerKind = InventoryDocumentKind | "RECEIVE" | "SALE" | "RETURN" | "COUNT" | "TRANSFER" | "ADJUSTMENT";
+export type InventoryDocument = {
+  id: number; branchId: number; kind: InventoryDocumentKind; status: "PENDING" | "POSTED" | "VOID";
+  requestedByUserId: number; requestedByName: string; approvedByUserId: number | null; approvedByName: string | null;
+  fromLocation: string; toLocation: string; reason: string; note: string; voidReason: string;
+  requestKey?: string | null; createdAt: string; postedAt: string | null; voidedAt: string | null;
+  items: Array<{ id: number; ingredientId: number; ingredientName: string; unit: string; qty: number; unitCost: number }>;
+};
+export type StockLedgerMovement = StockMovement & {
+  ingredientName: string; unit: string; actorName: string | null;
+  beforeQty: number | null; afterQty: number | null;
+  reference: string; kind: StockLedgerKind;
+  document?: { id: number; kind: InventoryDocumentKind; fromLocation: string; toLocation: string; note: string } | null;
 };
 
 export type OrderItem = {
@@ -306,6 +326,9 @@ export type PurchaseOrderItem = {
   description?: string;
   lotNo?: string;
   expiryDate?: string | null;
+  packSize?: number;
+  receivedQty?: number;
+  remainingQty?: number;
 };
 
 export type PurchaseOrder = {
@@ -315,15 +338,27 @@ export type PurchaseOrder = {
   supplier: string;
   note: string;
   totalCost: number;
-  status: "RECEIVED" | "APPROVED" | "VOID";
+  status: "PENDING" | "APPROVED" | "PARTIAL" | "RECEIVED" | "VOID";
+  mode?: "RECEIPT" | "ORDER";
+  kind?: "RECEIPT" | "ORDER";
+  invoiceNumber?: string;
+  documentDate?: string | null;
+  dueDate?: string | null;
+  attachmentName?: string;
+  attachmentDataUrl?: string | null;
+  hasAttachment?: boolean;
+  approvedAt?: string | null;
+  createdByName?: string | null;
+  approvedByName?: string | null;
   voidReason?: string;
   voidedAt?: string | null;
-  receivedAt: string;
+  receivedAt: string | null;
   createdAt: string;
   itemCount?: number;
   items?: PurchaseOrderItem[];
   /** Only on create: stock items whose cost moved to this receipt's price. */
   costChanges?: { ingredientId: number; from: number; to: number }[];
+  receipts?: Array<{ id: number; receivedAt: string; createdAt: string; note?: string; items: Array<{ id?: number; purchaseItemId: number; qty: number; lotNo?: string; expiryDate?: string | null }> }>;
 };
 
 export type TaxInvoice = {

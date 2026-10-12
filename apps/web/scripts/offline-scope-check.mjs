@@ -15,7 +15,8 @@ const write = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 function login(userId, branchId) { write('bb_pos_user', { id: userId, branchId }); localStorage.setItem(`bb_pos_branch_id:${userId}`, String(branchId)); }
 const bill = (userId, branchId, note) => ({ userId, branchId, shiftId: branchId, items: [{ menuItemId: 1, name: note, basePrice: 50, qty: 1, modifiers: [] }], paymentMethod: 'CASH', paymentDetails: { cashReceived: 50 }, discountType: null, discountValue: 0, customerId: null, loyaltyPointsToUse: 0 });
 const sent = [];
-let onSend = () => new Response(JSON.stringify({ order: { id: sent.length } }), { status: 200 });
+const saved = id => new Response(JSON.stringify({ order: { id, branchId: 1, status: 'PAID', total: 50, items: [{ id: 1 }] } }));
+let onSend = () => saved(sent.length);
 globalThis.fetch = async (_url, init) => { const body = JSON.parse(init.body); sent.push(body); return onSend(body); };
 login(6, 1);
 // Legacy bills lacking an idempotency key must never erase bills of other users or branches.
@@ -28,12 +29,12 @@ assert.ok(sent[0].idempotencyKey);
 assert.deepEqual(read(pendingKey).map(order => order.items[0].name), ['other user', 'other branch']);
 // Bills added while a request is in flight must remain queued.
 write(pendingKey, [bill(6, 1, 'in flight')]);
-onSend = () => { write(pendingKey, [...read(pendingKey), bill(6, 1, 'new arrival')]); return new Response('{"order":{"id":2}}'); };
+onSend = () => { write(pendingKey, [...read(pendingKey), bill(6, 1, 'new arrival')]); return saved(2); };
 await api.flushOfflineOrders();
 assert.deepEqual(read(pendingKey).map(order => order.items[0].name), ['new arrival']);
 // Switching workspaces during a flush stops subsequent requests.
 write(pendingKey, [bill(6, 1, 'first'), bill(6, 1, 'second')]);
-onSend = () => { login(6, 2); return new Response('{"order":{"id":3}}'); };
+onSend = () => { login(6, 2); return saved(3); };
 const switched = await api.flushOfflineOrders();
 assert.equal(switched.sent, 1);
 assert.equal(read(pendingKey)[0].items[0].name, 'second');
@@ -54,7 +55,7 @@ onSend = () => { throw new TypeError('Failed to fetch'); };
 await api.flushOfflineOrders();
 const retryKey = read(pendingKey)[0].idempotencyKey;
 assert.ok(retryKey);
-onSend = () => new Response('{"order":{"id":4}}');
+onSend = () => saved(4);
 await api.flushOfflineOrders();
 assert.equal(sent.at(-1).idempotencyKey, retryKey);
 assert.equal(api.getOfflinePendingCount(), 0);

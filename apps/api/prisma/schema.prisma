@@ -21,6 +21,7 @@ model Branch {
   cupStockSettings CupStockSetting[]
   stockMovements  StockMovement[]
   purchases       Purchase[]
+  inventoryDocuments InventoryDocument[]
   users           User[]
   storeSetting    StoreSetting?
   taxInvoices     TaxInvoice[]
@@ -192,6 +193,10 @@ model StockMovement {
   ingredientId Int      @map("ingredient_id")
   qty          Float
   reason       String   @default("ADJUSTMENT")
+  beforeQty    Float?   @map("before_qty")
+  afterQty     Float?   @map("after_qty")
+  actorUserId  Int?     @map("actor_user_id")
+  documentId   Int?     @map("document_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
   branch     Branch     @relation(fields: [branchId], references: [id])
@@ -339,6 +344,18 @@ model Purchase {
   id        Int      @id @default(autoincrement())
   branchId  Int      @map("branch_id")
   supplier  String   @default("")
+  supplierKey String @default("") @map("supplier_key")
+  invoiceNumber String @default("") @map("invoice_number")
+  invoiceKey String @default("") @map("invoice_key")
+  kind      String   @default("RECEIPT")
+  documentDate DateTime? @map("document_date")
+  receivedAt DateTime? @map("received_at")
+  dueDate DateTime? @map("due_date")
+  attachmentName String @default("") @map("attachment_name")
+  attachmentDataUrl String @default("") @map("attachment_data_url")
+  requestKey String? @unique @map("request_key")
+  requestHash String @default("") @map("request_hash")
+  createdByUserId Int? @map("created_by_user_id")
   note      String   @default("")
   total     Float    @default(0)
   status    String   @default("RECEIVED")
@@ -351,6 +368,9 @@ model Purchase {
   branch Branch         @relation(fields: [branchId], references: [id])
   approvedBy User?      @relation("PurchaseApprovedBy", fields: [approvedByUserId], references: [id])
   items  PurchaseItem[]
+  receipts PurchaseReceipt[]
+
+  @@index([branchId, createdAt])
 
   @@map("purchases")
 }
@@ -359,14 +379,94 @@ model PurchaseItem {
   id           Int    @id @default(autoincrement())
   purchaseId   Int    @map("purchase_id")
   ingredientId Int?   @map("ingredient_id")
+  ingredientName String @default("") @map("ingredient_name")
+  unit         String @default("")
   description  String @default("")
   qty          Float  @default(0)
+  receivedQty  Float  @default(0) @map("received_qty")
+  lotNo        String @default("") @map("lot_no")
+  expiryDate   DateTime? @map("expiry_date")
+  packSize     Float  @default(1) @map("pack_size")
   unitCost     Float  @default(0) @map("unit_cost")
   lineTotal    Float  @default(0) @map("line_total")
 
   purchase Purchase @relation(fields: [purchaseId], references: [id])
 
   @@map("purchase_items")
+}
+
+model PurchaseReceipt {
+  id Int @id @default(autoincrement())
+  purchaseId Int @map("purchase_id")
+  requestKey String? @unique @map("request_key")
+  requestHash String @default("") @map("request_hash")
+  actorUserId Int? @map("actor_user_id")
+  receivedAt DateTime @default(now()) @map("received_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  note String @default("")
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  items PurchaseReceiptItem[]
+
+  @@index([purchaseId])
+  @@map("purchase_receipts")
+}
+
+model PurchaseReceiptItem {
+  id Int @id @default(autoincrement())
+  receiptId Int @map("receipt_id")
+  purchaseItemId Int @map("purchase_item_id")
+  ingredientId Int @map("ingredient_id")
+  ingredientName String @default("") @map("ingredient_name")
+  unit String @default("")
+  qty Float
+  unitCost Float @default(0) @map("unit_cost")
+  lotNo String @default("") @map("lot_no")
+  expiryDate DateTime? @map("expiry_date")
+  packSize Float @default(1) @map("pack_size")
+
+  receipt PurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+
+  @@index([receiptId])
+  @@map("purchase_receipt_items")
+}
+
+model InventoryDocument {
+  id Int @id @default(autoincrement())
+  branchId Int @map("branch_id")
+  kind String
+  status String @default("PENDING")
+  requestKey String? @unique @map("request_key")
+  requestedByUserId Int @map("requested_by_user_id")
+  approvedByUserId Int? @map("approved_by_user_id")
+  fromLocation String @default("") @map("from_location")
+  toLocation String @default("") @map("to_location")
+  reason String
+  note String @default("")
+  voidReason String @default("") @map("void_reason")
+  createdAt DateTime @default(now()) @map("created_at")
+  postedAt DateTime? @map("posted_at")
+  voidedAt DateTime? @map("voided_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  items InventoryDocumentItem[]
+
+  @@index([branchId, createdAt])
+  @@map("inventory_documents")
+}
+
+model InventoryDocumentItem {
+  id Int @id @default(autoincrement())
+  documentId Int @map("document_id")
+  ingredientId Int @map("ingredient_id")
+  qty Float
+  unitCost Float @default(0) @map("unit_cost")
+  lotAllocations String @default("[]") @map("lot_allocations")
+
+  document InventoryDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("inventory_document_items")
 }
 
 model StoreSetting {

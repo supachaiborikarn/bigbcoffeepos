@@ -41,6 +41,10 @@ import type {
   ShiftCloseResult,
   ShiftSummary,
   StockMovement,
+  InventoryDocument,
+  InventoryDocumentKind,
+  StockLedgerMovement,
+  StockLedgerKind,
   StockCount,
   StockTransfer,
   StoreSetting,
@@ -74,7 +78,7 @@ type CreateOrderInput = {
   userId?: number;
   shiftId?: number;
 };
-type OfflineOrderInput = CreateOrderInput & { offlineQueueId?: string };
+type OfflineOrderInput = CreateOrderInput & { offlineQueueId?: string; queuedAt?: string; lastSyncError?: string };
 
 function makeOfflineId() { return globalThis.crypto.randomUUID(); }
 
@@ -90,7 +94,11 @@ function belongsToScope(input: OfflineOrderInput, scope = currentOfflineScope())
 
 
 export function getOfflinePendingCount(): number {
-  return getOfflineQueue().filter((item) => belongsToScope(item)).length;
+  return getOfflinePendingDetails().length;
+}
+
+export function getOfflinePendingDetails(): OfflineOrderInput[] {
+  return getOfflineQueue().filter((item) => belongsToScope(item));
 }
 
 function getOfflineFailed(): FailedOfflineOrder[] {
@@ -143,15 +151,22 @@ function setOfflineQueue(items: OfflineOrderInput[]) {
 }
 
 function isOfflineCheckoutError(error: unknown) {
+  if (error instanceof ApiError || error instanceof RequestTimeoutError || error instanceof OrderConfirmationError ||
+      (error instanceof Error && error.name === "AbortError")) return false;
   const message = error instanceof Error ? error.message : String(error);
-  return navigator.onLine === false || /Failed to fetch|NetworkError|Load failed|internet|อินเทอร์เน็ต/i.test(message);
+  return /^(Failed to fetch|fetch failed|NetworkError|Network request failed|Load failed)\b/i.test(message);
+}
+
+function canRetryOfflineSync(error: unknown) {
+  return isOfflineCheckoutError(error) || error instanceof RequestTimeoutError || error instanceof OrderConfirmationError ||
+    (error instanceof ApiError && (error.status === 408 || error.status === 429 || error.status >= 500));
 }
 
 function queueOfflineOrder(input: OfflineOrderInput): Order {
   const queue = getOfflineQueue();
-  queue.push({ ...input, offlineQueueId: makeOfflineId() });
-  setOfflineQueue(queue);
   const now = new Date().toISOString();
+  queue.push({ ...input, offlineQueueId: makeOfflineId(), queuedAt: now });
+  setOfflineQueue(queue);
   return {
     id: -Date.now(),
     branchId: input.branchId,
@@ -206,9 +221,9 @@ async function flushScopedOfflineOrders() {
       await createOrderOnline(item);
       sent += 1;
     } catch (error) {
-      if (isOfflineCheckoutError(error)) {
-        // Network problem — keep in the queue and retry later.
-        remaining.push(item);
+      if (canRetryOfflineSync(error)) {
+        // An unconfirmed write may already exist on the server; retain its identity.
+        remaining.push({ ...item, lastSyncError: error instanceof Error ? error.message : String(error) });
       } else {
         // Server rejected (e.g. stock/shift) — move aside for manual attention, don't retry blindly.
         newlyFailed.push({ input: item, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
@@ -227,6 +242,32 @@ type FetchJsonInit = RequestInit & { timeoutMs?: number };
 /** An error the server answered with (has an HTTP status), as opposed to a network failure. */
 export class ApiError extends Error {
   constructor(message: string, public status: number, public code?: string) { super(message); this.name = "ApiError"; }
+}
+
+/** A write deadline does not prove whether the server committed the request. */
+export class RequestTimeoutError extends Error {
+  readonly code = "REQUEST_TIMEOUT";
+  constructor(message: string) { super(message); this.name = "RequestTimeoutError"; }
+}
+
+class OrderConfirmationError extends Error {
+  readonly code = "ORDER_NOT_CONFIRMED";
+  constructor(message = "ยังยืนยันการบันทึกบิลไม่ได้ ข้อมูลบิลยังเก็บไว้ กรุณาลองตรวจสอบอีกครั้ง") { super(message); this.name = "OrderConfirmationError"; }
+}
+
+function confirmedOrder(payload: unknown, expected: { id?: number; branchId?: number; status?: OrderStatus } = {}): Order {
+  const order = (payload as { order?: Order } | null)?.order;
+  if (!order || !Number.isSafeInteger(order.id) || order.id <= 0 ||
+      !Number.isSafeInteger(order.branchId) || order.branchId <= 0 ||
+      (expected.id !== undefined && order.id !== expected.id) ||
+      (expected.branchId !== undefined && order.branchId !== expected.branchId) ||
+      (expected.status !== undefined && order.status !== expected.status) ||
+      !["PAID", "READY", "CANCELLED", "REFUNDED"].includes(order.status) ||
+      !Array.isArray(order.items) || order.items.length === 0 ||
+      !Number.isFinite(order.total) || order.total < 0) {
+    throw new OrderConfirmationError();
+  }
+  return order;
 }
 
 function authHeaders(): Record<string, string> {
@@ -326,7 +367,7 @@ async function fetchJsonOnce<T>(input: RequestInfo, init?: FetchJsonInit): Promi
       throw new ApiError("โหลดข้อมูลนานเกินไป กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่", 408, "REQUEST_TIMEOUT");
     }
     if (timedOut) {
-      throw new Error("บันทึกออเดอร์นานเกินไป กรุณาตรวจสอบอินเทอร์เน็ตแล้วกดรับเงินอีกครั้ง ระบบจะกันออเดอร์ซ้ำให้");
+      throw new RequestTimeoutError("บันทึกออเดอร์นานเกินไป กรุณาตรวจสอบรายการออเดอร์ก่อนกดซ้ำ ระบบจะตรวจหาบิลเดิมให้");
     }
     throw error;
   } finally {
@@ -577,6 +618,31 @@ export async function getStockMovements(branchId: number, options: { ingredientI
   return payload.items;
 }
 
+export async function getStockLedger(branchId: number, options: { ingredientId?: number; kind?: StockLedgerKind | string; from?: string; to?: string; page?: number; limit?: number; snapshotId?: number } = {}) {
+  const query = new URLSearchParams({ branchId: String(branchId) });
+  for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== "") query.set(key, String(value));
+  return fetchJson<{ items: StockLedgerMovement[]; total: number; page: number; limit: number; snapshotId: number }>(`${API_URL}/stock-ledger?${query}`);
+}
+
+export async function getInventoryDocuments(branchId: number) {
+  return (await fetchJson<{ items: InventoryDocument[] }>(`${API_URL}/inventory-documents?branchId=${branchId}`)).items;
+}
+
+export async function createInventoryDocument(input: {
+  branchId: number; kind: InventoryDocumentKind; fromLocation?: string; toLocation?: string; reason: string; note?: string;
+  items: Array<{ ingredientId: number; qty: number }>; requestKey: string; postImmediately?: boolean;
+}) {
+  return (await fetchJson<{ document: InventoryDocument }>(`${API_URL}/inventory-documents`, { method: "POST", body: JSON.stringify(input) })).document;
+}
+
+export async function postInventoryDocument(id: number) {
+  return (await fetchJson<{ document: InventoryDocument }>(`${API_URL}/inventory-documents/${id}/post`, { method: "POST", body: "{}" })).document;
+}
+
+export async function voidInventoryDocument(id: number, input: { reason: string }) {
+  return (await fetchJson<{ document: InventoryDocument }>(`${API_URL}/inventory-documents/${id}/void`, { method: "POST", body: JSON.stringify(input) })).document;
+}
+
 export async function getRecipes() {
   const payload = await fetchJson<{ items: Recipe[] }>(`${API_URL}/recipes`);
   return payload.items;
@@ -638,7 +704,7 @@ export async function getOrders(branchId: number, limit?: number) {
 
 export async function getOrder(id: number) {
   const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`);
-  return payload.order;
+  return confirmedOrder(payload, { id });
 }
 
 export async function getOrderByIdempotencyKey(idempotencyKey: string) {
@@ -646,7 +712,7 @@ export async function getOrderByIdempotencyKey(idempotencyKey: string) {
     `${API_URL}/orders/idempotency/${encodeURIComponent(idempotencyKey)}`,
     { timeoutMs: 5_000 }
   );
-  return payload.order;
+  return confirmedOrder(payload);
 }
 
 async function createOrderOnline(input: CreateOrderInput) {
@@ -677,7 +743,7 @@ async function createOrderOnline(input: CreateOrderInput) {
       shiftId: input.shiftId
     })
   });
-  return payload.order;
+  return confirmedOrder(payload, { branchId: input.branchId });
 }
 
 /** Manager/admin PIN -> approval token for a large manual discount on this branch's next bill. */
@@ -696,11 +762,24 @@ export async function createOrder(input: OfflineOrderInput) {
 }
 
 export async function updateOrderStatus(id: number, status: OrderStatus, reason?: string) {
-  const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ status, reason })
-  });
-  return payload.order;
+  try {
+    const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`, {
+      method: "PATCH",
+      timeoutMs: 15_000,
+      body: JSON.stringify({ status, reason })
+    });
+    return confirmedOrder(payload, { id, status });
+  } catch (error) {
+    if (!(error instanceof RequestTimeoutError) && !(error instanceof OrderConfirmationError) && !isOfflineCheckoutError(error)) throw error;
+    // Read once after a lost/unclear reply; never repeat the financial mutation here.
+    try {
+      const payload = await fetchJsonOnce<{ order: Order }>(`${API_URL}/orders/${id}`, { timeoutMs: 5_000 });
+      return confirmedOrder(payload, { id, status });
+    } catch {
+      const action = status === "CANCELLED" ? "ยกเลิกบิล" : status === "REFUNDED" ? "คืนเงิน" : "เปลี่ยนสถานะบิล";
+      throw new OrderConfirmationError(`ยังยืนยันการ${action} #${id} ไม่ได้ กรุณารีเฟรชรายการเพื่อตรวจสถานะก่อนลองอีกครั้ง`);
+    }
+  }
 }
 
 export async function getSalesSummary(params: { from?: string; to?: string; branchId?: number; source?: ReportSource }) {
@@ -881,9 +960,11 @@ export async function getPosposMigrationJob(id: number) {
 }
 
 /* ─── Purchases ─── */
-export async function getPurchases(branchId?: number) {
+export async function getPurchases(branchId?: number, options: { query?: string; status?: string } = {}) {
   const query = new URLSearchParams();
   if (branchId) query.set("branchId", String(branchId));
+  if (options.query) query.set("query", options.query);
+  if (options.status) query.set("status", options.status);
   const payload = await fetchJson<{ items: PurchaseOrder[] }>(`${API_URL}/purchases?${query.toString()}`);
   return payload.items;
 }
@@ -895,6 +976,14 @@ export async function createPurchase(input: {
   items: PurchaseOrderItem[];
   /** Admin only (server enforces): set each item's cost to this receipt's price. */
   updateCost?: boolean;
+  mode?: "RECEIPT" | "ORDER";
+  invoiceNumber?: string;
+  documentDate?: string;
+  receivedAt?: string;
+  dueDate?: string;
+  attachmentName?: string;
+  attachmentDataUrl?: string | null;
+  requestKey?: string;
 }) {
   const payload = await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases`, {
     method: "POST",
@@ -913,6 +1002,17 @@ export async function approvePurchase(id: number) {
     body: JSON.stringify({})
   });
   return payload.purchase;
+}
+
+export async function receivePurchase(id: number, input: {
+  requestKey: string; items: Array<{ purchaseItemId: number; qty: number; lotNo?: string; expiryDate?: string | null }>;
+  receivedAt?: string; note?: string; updateCost?: boolean;
+}) {
+  return (await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases/${id}/receive`, { method: "POST", body: JSON.stringify(input) })).purchase;
+}
+
+export async function getPurchaseAttachment(id: number) {
+  return fetchJson<{ attachmentName: string; attachmentDataUrl: string | null }>(`${API_URL}/purchases/${id}/attachment`);
 }
 
 export async function getTaxInvoices(branchId?: number) {

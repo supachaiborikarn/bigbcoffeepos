@@ -38,6 +38,8 @@ const REVERSAL_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
 const ORDER_ITEMS_INCLUDE = { include: { menuItem: { select: { category: true, basePrice: true } } } } as const;
 const DRINK_CATEGORIES = ["กาแฟ", "ชา", "นม/โกโก้", "เครื่องดื่ม", "เครื่องดื่มชง", "COLD", "FRAPPE", "Hot"];
 const checkoutTransactionRetries = Math.max(0, Math.floor(Number(process.env.CHECKOUT_TX_RETRIES || 5)));
+// Leave time for preflight and the response within the checkout client's 15-second deadline.
+const ORDER_TRANSACTION_OPTIONS = { timeout: 10_000, maxWait: 2_000 };
 const MODIFIER_CATALOG = {
   Type: new Map([
     ["Hot", { label: "Hot", price: 0 }],
@@ -297,9 +299,11 @@ function normalizePaymentDetails(paymentMethod: PaymentMethod, total: number, de
 }
 
 function isRetryableCheckoutError(error: any) {
+  // An expired transaction repeats the same work and used to stall checkout for ~30 seconds.
+  if (error?.code === "P2028") return false;
   const message = String(error?.message ?? "");
   return error?.code === "P2034"
-    || /write conflict|deadlock|could not serialize|transaction.*(conflict|closed|timeout)/i.test(message)
+    || /write conflict|deadlock|could not serialize|transaction.*conflict/i.test(message)
     || message.includes("สต็อกมีการเปลี่ยนแปลง");
 }
 
@@ -418,15 +422,12 @@ async function applyFlexibleStockDecrements(tx: any, branchId: number, stock: Ma
   }
 }
 
-async function createSaleStockMovements(tx: any, branchId: number, orderId: number, ...stocks: Map<number, number>[]) {
-  const rows = stocks.flatMap((stock) => Array.from(stock.entries()))
-    .filter(([, qty]) => qty > 0)
-    .map(([ingredientId, qty]) => ({
-      branchId,
-      ingredientId,
-      qty: -qty,
-      reason: `SALE-${orderId}`
-    }));
+async function createSaleStockMovements(tx: any, branchId: number, orderId: number, actorUserId: number | null, ...stocks: Map<number, number>[]) {
+  const total = new Map<number, number>();
+  for (const stock of stocks) for (const [ingredientId, qty] of stock) if (qty > 0) total.set(ingredientId, (total.get(ingredientId) ?? 0) + qty);
+  const balances = total.size ? await tx.ingredientStock.findMany({ where: { branchId, ingredientId: { in: [...total.keys()] } }, select: { ingredientId: true, stockQty: true } }) : [];
+  const after = new Map<number, number>(balances.map((s: any) => [s.ingredientId, s.stockQty]));
+  const rows = [...total].map(([ingredientId, qty]) => ({ branchId, ingredientId, qty: -qty, reason: `SALE-${orderId}`, actorUserId, afterQty: after.get(ingredientId)!, beforeQty: after.get(ingredientId)! + qty }));
   if (rows.length > 0) await tx.stockMovement.createMany({ data: rows });
 }
 
@@ -445,9 +446,18 @@ async function applyLotFefoDeductions(tx: any, branchId: number, ...stocks: Map<
   }
   if (consumed.size === 0) return;
 
+  const availableLots = await tx.inventoryLot.findMany({
+    where: { branchId, ingredientId: { in: [...consumed.keys()] }, qty: { gt: 0 } }
+  });
+  const lotsByIngredient = new Map<number, any[]>();
+  for (const lot of availableLots) {
+    const group = lotsByIngredient.get(lot.ingredientId) ?? [];
+    group.push(lot);
+    lotsByIngredient.set(lot.ingredientId, group);
+  }
   for (const [ingredientId, needTotal] of consumed) {
     let need = needTotal;
-    const lots = await tx.inventoryLot.findMany({ where: { branchId, ingredientId, qty: { gt: 0 } } });
+    const lots = lotsByIngredient.get(ingredientId) ?? [];
     lots.sort((a: any, b: any) => {
       const ax = a.expiryDate ? new Date(a.expiryDate).getTime() : Infinity;
       const bx = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
@@ -601,7 +611,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
 
       for (const [ingredientId, restoreQty] of stockToRestore) {
         reversalPayload.stockRestored.push({ ingredientId, qty: restoreQty });
-        await tx.ingredientStock.upsert({
+        const restoredStock = await tx.ingredientStock.upsert({
           where: {
             branchId_ingredientId: {
               branchId: current.branchId,
@@ -621,7 +631,10 @@ export async function updateOrderStatusWithContext(id: number, input: {
             branchId: current.branchId,
             ingredientId,
             qty: restoreQty,
-            reason: `${status}-${current.id}`
+            reason: `${status}-${current.id}`,
+            beforeQty: restoredStock.stockQty - restoreQty,
+            afterQty: restoredStock.stockQty,
+            actorUserId: input.actorId ?? null
           }
         });
         await restoreLotFefo(tx, current.branchId, ingredientId, restoreQty);
@@ -665,7 +678,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
         }
       });
       return updated;
-    });
+    }, ORDER_TRANSACTION_OPTIONS);
     return hydrateOrder(order);
   }
 
@@ -690,7 +703,7 @@ export async function updateOrderStatusWithContext(id: number, input: {
         }
       });
       return order;
-    });
+    }, ORDER_TRANSACTION_OPTIONS);
     return hydrateOrder(updated);
   } catch (error: any) {
     if (error?.code === "P2025") return null;
@@ -737,6 +750,14 @@ export async function createOrder(input: {
   const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()
     ? input.idempotencyKey.trim().slice(0, 120)
     : null;
+  // A queued checkout may already be saved even if its response was lost and the shift closed later.
+  if (idempotencyKey) {
+    const existingOrder = await getOrderByIdempotencyKey(idempotencyKey);
+    if (existingOrder) {
+      if (existingOrder.branchId !== input.branchId) throw new Error("บิลนี้เป็นของสาขาอื่น");
+      return existingOrder;
+    }
+  }
   for (const item of input.items) {
     if (!Number.isFinite(item.menuItemId) || !Number.isFinite(item.qty) || item.qty <= 0 || item.qty > 999) {
       throw new Error("รายการสินค้าไม่ถูกต้อง");
@@ -1041,7 +1062,7 @@ export async function createOrder(input: {
 
     await measureCheckoutStep("strictStock", () => applyStrictStockDecrements(tx, input.branchId, requiredStock, newOrder.id, allowNegativeStock));
     await measureCheckoutStep("flexibleStock", () => applyFlexibleStockDecrements(tx, input.branchId, flexibleStock));
-    await measureCheckoutStep("stockMovements", () => createSaleStockMovements(tx, input.branchId, newOrder.id, requiredStock, flexibleStock));
+    await measureCheckoutStep("stockMovements", () => createSaleStockMovements(tx, input.branchId, newOrder.id, input.userId ?? null, requiredStock, flexibleStock));
     await measureCheckoutStep("lotFefo", () => applyLotFefoDeductions(tx, input.branchId, requiredStock, flexibleStock));
 
     if (input.shiftId) {
@@ -1055,7 +1076,7 @@ export async function createOrder(input: {
     }
 
       return { ...newOrder, cashReceived: paymentDetails.cashReceived, changeAmount: paymentDetails.changeAmount };
-      });
+      }, ORDER_TRANSACTION_OPTIONS);
       transactionMs += Date.now() - transactionStartedAt;
       break;
     } catch (error: any) {
@@ -1065,7 +1086,10 @@ export async function createOrder(input: {
           where: { idempotencyKey },
           include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } }
         });
-        if (existingOrder) return hydrateOrder(existingOrder);
+        if (existingOrder) {
+          if (existingOrder.branchId !== input.branchId) throw new Error("บิลนี้เป็นของสาขาอื่น");
+          return hydrateOrder(existingOrder);
+        }
       }
       if (!isRetryableCheckoutError(error) || attempt >= checkoutTransactionRetries) throw error;
       await waitForCheckoutRetry(attempt);

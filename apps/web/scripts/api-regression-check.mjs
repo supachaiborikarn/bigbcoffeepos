@@ -31,7 +31,7 @@ caller.abort();
 await assert.rejects(pending, error => error.name === 'AbortError', 'caller cancellation must survive the added deadline');
 
 let sent;
-globalThis.fetch = async (_url, init) => { sent = JSON.parse(init.body); return new Response('{"order":{"id":1}}'); };
+globalThis.fetch = async (_url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ order: { id: 1, branchId: 2, status: 'PAID', total: 100, items: [{ id: 1 }] } })); };
 await api.createOrder({ branchId: 2, shiftId: 3, userId: 1, customerId: null, items: [{ menuItemId: 1, qty: 1, modifiers: [], note: 'fixture' }], paymentMethod: 'CASH', paymentDetails: { cashReceived: 100 }, discountType: null, discountValue: 0, loyaltyPointsToUse: 0, skipPromotions: true, discountApprovalToken: 'approved-fixture', idempotencyKey: 'fixture-checkout-key' });
 assert.equal(sent.skipPromotions, true);
 assert.equal(sent.discountApprovalToken, 'approved-fixture');

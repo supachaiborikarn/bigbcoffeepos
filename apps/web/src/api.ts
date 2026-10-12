@@ -74,7 +74,7 @@ type CreateOrderInput = {
   userId?: number;
   shiftId?: number;
 };
-type OfflineOrderInput = CreateOrderInput & { offlineQueueId?: string };
+type OfflineOrderInput = CreateOrderInput & { offlineQueueId?: string; queuedAt?: string; lastSyncError?: string };
 
 function makeOfflineId() { return globalThis.crypto.randomUUID(); }
 
@@ -90,7 +90,11 @@ function belongsToScope(input: OfflineOrderInput, scope = currentOfflineScope())
 
 
 export function getOfflinePendingCount(): number {
-  return getOfflineQueue().filter((item) => belongsToScope(item)).length;
+  return getOfflinePendingDetails().length;
+}
+
+export function getOfflinePendingDetails(): OfflineOrderInput[] {
+  return getOfflineQueue().filter((item) => belongsToScope(item));
 }
 
 function getOfflineFailed(): FailedOfflineOrder[] {
@@ -143,15 +147,23 @@ function setOfflineQueue(items: OfflineOrderInput[]) {
 }
 
 function isOfflineCheckoutError(error: unknown) {
+  if (error instanceof ApiError || error instanceof RequestTimeoutError || error instanceof OrderConfirmationError ||
+      (error instanceof Error && error.name === "AbortError")) return false;
   const message = error instanceof Error ? error.message : String(error);
-  return navigator.onLine === false || /Failed to fetch|NetworkError|Load failed|internet|อินเทอร์เน็ต/i.test(message);
+  return /^(Failed to fetch|fetch failed|NetworkError|Network request failed|Load failed)\b/i.test(message);
+}
+
+function canRetryOfflineSync(error: unknown) {
+  return isOfflineCheckoutError(error) || error instanceof RequestTimeoutError || error instanceof OrderConfirmationError ||
+    (error instanceof ApiError && (error.status === 408 || error.status === 429 || error.status >= 500 ||
+      error.code === "ORDER_RETRY_REQUIRED" || error.message.startsWith("ระบบบันทึกใช้เวลานานเกินไป")));
 }
 
 function queueOfflineOrder(input: OfflineOrderInput): Order {
   const queue = getOfflineQueue();
-  queue.push({ ...input, offlineQueueId: makeOfflineId() });
-  setOfflineQueue(queue);
   const now = new Date().toISOString();
+  queue.push({ ...input, offlineQueueId: makeOfflineId(), queuedAt: now });
+  setOfflineQueue(queue);
   return {
     id: -Date.now(),
     branchId: input.branchId,
@@ -206,9 +218,9 @@ async function flushScopedOfflineOrders() {
       await createOrderOnline(item);
       sent += 1;
     } catch (error) {
-      if (isOfflineCheckoutError(error)) {
-        // Network problem — keep in the queue and retry later.
-        remaining.push(item);
+      if (canRetryOfflineSync(error)) {
+        // An unconfirmed write may already exist on the server; retain its identity.
+        remaining.push({ ...item, lastSyncError: error instanceof Error ? error.message : String(error) });
       } else {
         // Server rejected (e.g. stock/shift) — move aside for manual attention, don't retry blindly.
         newlyFailed.push({ input: item, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
@@ -227,6 +239,32 @@ type FetchJsonInit = RequestInit & { timeoutMs?: number };
 /** An error the server answered with (has an HTTP status), as opposed to a network failure. */
 export class ApiError extends Error {
   constructor(message: string, public status: number, public code?: string) { super(message); this.name = "ApiError"; }
+}
+
+/** A write deadline does not prove whether the server committed the request. */
+export class RequestTimeoutError extends Error {
+  readonly code = "REQUEST_TIMEOUT";
+  constructor(message: string) { super(message); this.name = "RequestTimeoutError"; }
+}
+
+class OrderConfirmationError extends Error {
+  readonly code = "ORDER_NOT_CONFIRMED";
+  constructor(message = "ยังยืนยันการบันทึกบิลไม่ได้ ข้อมูลบิลยังเก็บไว้ กรุณาลองตรวจสอบอีกครั้ง") { super(message); this.name = "OrderConfirmationError"; }
+}
+
+function confirmedOrder(payload: unknown, expected: { id?: number; branchId?: number; status?: OrderStatus } = {}): Order {
+  const order = (payload as { order?: Order } | null)?.order;
+  if (!order || !Number.isSafeInteger(order.id) || order.id <= 0 ||
+      !Number.isSafeInteger(order.branchId) || order.branchId <= 0 ||
+      (expected.id !== undefined && order.id !== expected.id) ||
+      (expected.branchId !== undefined && order.branchId !== expected.branchId) ||
+      (expected.status !== undefined && order.status !== expected.status) ||
+      !["PAID", "READY", "CANCELLED", "REFUNDED"].includes(order.status) ||
+      !Array.isArray(order.items) || order.items.length === 0 ||
+      !Number.isFinite(order.total) || order.total < 0) {
+    throw new OrderConfirmationError();
+  }
+  return order;
 }
 
 function authHeaders(): Record<string, string> {
@@ -326,7 +364,7 @@ async function fetchJsonOnce<T>(input: RequestInfo, init?: FetchJsonInit): Promi
       throw new ApiError("โหลดข้อมูลนานเกินไป กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่", 408, "REQUEST_TIMEOUT");
     }
     if (timedOut) {
-      throw new Error("บันทึกออเดอร์นานเกินไป กรุณาตรวจสอบอินเทอร์เน็ตแล้วกดรับเงินอีกครั้ง ระบบจะกันออเดอร์ซ้ำให้");
+      throw new RequestTimeoutError("บันทึกออเดอร์นานเกินไป กรุณาตรวจสอบรายการออเดอร์ก่อนกดซ้ำ ระบบจะตรวจหาบิลเดิมให้");
     }
     throw error;
   } finally {
@@ -646,7 +684,7 @@ export async function getOrderByIdempotencyKey(idempotencyKey: string) {
     `${API_URL}/orders/idempotency/${encodeURIComponent(idempotencyKey)}`,
     { timeoutMs: 5_000 }
   );
-  return payload.order;
+  return confirmedOrder(payload);
 }
 
 async function createOrderOnline(input: CreateOrderInput) {
@@ -677,7 +715,7 @@ async function createOrderOnline(input: CreateOrderInput) {
       shiftId: input.shiftId
     })
   });
-  return payload.order;
+  return confirmedOrder(payload, { branchId: input.branchId });
 }
 
 /** Manager/admin PIN -> approval token for a large manual discount on this branch's next bill. */

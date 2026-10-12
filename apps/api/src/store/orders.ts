@@ -38,6 +38,8 @@ const REVERSAL_STATUSES = new Set(["CANCELLED", "REFUNDED"]);
 const ORDER_ITEMS_INCLUDE = { include: { menuItem: { select: { category: true, basePrice: true } } } } as const;
 const DRINK_CATEGORIES = ["กาแฟ", "ชา", "นม/โกโก้", "เครื่องดื่ม", "เครื่องดื่มชง", "COLD", "FRAPPE", "Hot"];
 const checkoutTransactionRetries = Math.max(0, Math.floor(Number(process.env.CHECKOUT_TX_RETRIES || 5)));
+// Prevent Prisma's 5s default from expiring during real multi-item QR checkouts.
+const ORDER_TRANSACTION_OPTIONS = { timeout: 10_000, maxWait: 2_000 };
 const MODIFIER_CATALOG = {
   Type: new Map([
     ["Hot", { label: "Hot", price: 0 }],
@@ -297,9 +299,11 @@ function normalizePaymentDetails(paymentMethod: PaymentMethod, total: number, de
 }
 
 function isRetryableCheckoutError(error: any) {
+  // An expired interactive transaction is not fixed by replaying five more times.
+  if (error?.code === "P2028") return false;
   const message = String(error?.message ?? "");
   return error?.code === "P2034"
-    || /write conflict|deadlock|could not serialize|transaction.*(conflict|closed|timeout)/i.test(message)
+    || /write conflict|deadlock|could not serialize|transaction.*conflict/i.test(message)
     || message.includes("สต็อกมีการเปลี่ยนแปลง");
 }
 
@@ -1055,7 +1059,7 @@ export async function createOrder(input: {
     }
 
       return { ...newOrder, cashReceived: paymentDetails.cashReceived, changeAmount: paymentDetails.changeAmount };
-      });
+      }, ORDER_TRANSACTION_OPTIONS);
       transactionMs += Date.now() - transactionStartedAt;
       break;
     } catch (error: any) {

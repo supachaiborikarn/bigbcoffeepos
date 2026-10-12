@@ -9,6 +9,8 @@ import StockCountSheet from "./StockCountSheet";
 import { useCupStock } from "../pos/CupStockStrip";
 import { isCupVariantMenuItem, shouldUseModifierModal } from "../../utils/menuRules";
 import StockTransfers from "./StockTransfers";
+import StockDocuments from "./StockDocuments";
+import StockLedger from "./StockLedger";
 
 // Branch stock screen shared by admins (InventoryPage) and branch managers
 // (BranchInventoryPage). Every number carries a label, and stock changes go
@@ -35,7 +37,7 @@ const STATUS_LABEL: Record<Status, string> = { ok: "ปกติ", low: "ใก�
 
 const MODES: Record<Mode, { tab: string; help: string; field: string; reasons: string[]; verb: string }> = {
   in: { tab: "รับเข้า", help: "ของเข้าร้านเพิ่ม เช่น ซื้อมา หรือรับจากคลัง", field: "จำนวนที่รับเข้า", reasons: ["ซื้อเข้า", "รับจากคลัง", "อื่นๆ"], verb: "บันทึกรับเข้า" },
-  out: { tab: "ตัดออก", help: "ของออกที่ไม่ได้ขายผ่าน POS เช่น เสีย หมดอายุ ใช้ในร้าน", field: "จำนวนที่ตัดออก", reasons: ["ของเสีย/หมดอายุ", "ใช้ในร้าน", "แจก/ชิม", "อื่นๆ"], verb: "บันทึกตัดออก" },
+  out: { tab: "ตัดออก", help: "ตัดของที่ใช้หมดจริงนอกการขาย เช่น ของเสีย หรือชงให้พนักงาน; ของที่ย้ายมาเคาน์เตอร์ให้ทำใบย้ายที่เก็บ", field: "จำนวนที่ตัดออก", reasons: ["ของเสีย/หมดอายุ", "ใช้ในร้าน", "แจก/ชิม", "อื่นๆ"], verb: "บันทึกตัดออก" },
   count: { tab: "นับสต็อกจริง", help: "นับของจริงแล้วกรอกจำนวนที่นับได้ ระบบคำนวณส่วนต่างให้เอง", field: "จำนวนที่นับได้", reasons: [], verb: "บันทึกยอดนับ" }
 };
 const MODE_CODE: Record<Mode, string> = { in: "RECEIVE", out: "OUT", count: "COUNT" };
@@ -71,18 +73,16 @@ const loadedAtKey = (items: InventoryItem[]) => items.length + ":" + items.reduc
 
 export default function StockManager({ canEditDetails, onChanged }: { canEditDetails: boolean; onChanged?: () => void }) {
   const { activeBranch } = useBranch();
-  const toast = useToast();
   const branchId = activeBranch?.id;
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
-  const [view, setView] = useState<"stock" | "count" | "transfer" | "history">("stock");
+  const [view, setView] = useState<"stock" | "count" | "transfer" | "documents" | "history">("stock");
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
-  const [history, setHistory] = useState<StockMovement[] | null>(null);
   // Prepared drinks (ลาเต้เย็น, คาปูเย็น …) are limited by cups, not by their own
   // stock. Their old per-menu stock rows (999.x imported from POSPOS) are hidden.
   const [drinkNames, setDrinkNames] = useState<Set<string>>(new Set());
@@ -111,16 +111,6 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
   const stockItems = useMemo(() => showDrinks ? items : items.filter((item) => !isDrink(item)), [items, isDrink, showDrinks]);
   const hiddenDrinks = useMemo(() => items.filter(isDrink).length, [items, isDrink]);
 
-  useEffect(() => {
-    if (view !== "history" || !branchId) return;
-    let cancelled = false;
-    setHistory(null);
-    getStockMovements(branchId, { manualOnly: true, limit: 60 })
-      .then((rows) => { if (!cancelled) setHistory(rows); })
-      .catch((err) => { if (!cancelled) { setHistory([]); toast.error((err as Error).message); } });
-    return () => { cancelled = true; };
-  }, [view, branchId, toast]);
-
   const counts = useMemo(() => {
     let low = 0, out = 0, value = 0;
     stockItems.forEach((item) => {
@@ -145,8 +135,6 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
 
   const applyUpdate = (updated: InventoryItem | null) => {
     if (updated) setItems((list) => list.map((item) => item.ingredientId === updated.ingredientId ? updated : item));
-    setHistory(null);
-    if (view === "history") setView("stock");
     onChanged?.();
   };
 
@@ -161,7 +149,8 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
           <button role="tab" aria-selected={view === "stock"} className={view === "stock" ? "is-active" : ""} onClick={() => setView("stock")}><Package size={15} /> รายการสต็อก</button>
           <button role="tab" aria-selected={view === "count"} className={view === "count" ? "is-active" : ""} onClick={() => setView("count")}><ClipboardList size={15} /> นับสต็อก</button>
           <button role="tab" aria-selected={view === "transfer"} className={view === "transfer" ? "is-active" : ""} onClick={() => setView("transfer")}><ArrowLeftRight size={15} /> โอนสต็อก</button>
-          <button role="tab" aria-selected={view === "history"} className={view === "history" ? "is-active" : ""} onClick={() => setView("history")}><History size={15} /> ประวัติการปรับ</button>
+          <button role="tab" aria-selected={view === "documents"} className={view === "documents" ? "is-active" : ""} onClick={() => setView("documents")}><ClipboardCheck size={15} /> เบิก / ย้ายที่เก็บ</button>
+          <button role="tab" aria-selected={view === "history"} className={view === "history" ? "is-active" : ""} onClick={() => setView("history")}><History size={15} /> ประวัติสต็อก</button>
         </div>
         {canEditDetails && <button className="btn btn--primary" onClick={() => setCreating(true)}><Plus size={16} /> เพิ่มรายการใหม่</button>}
       </div>
@@ -207,14 +196,10 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
       </div>}
     </> : view === "count" && branchId ? <StockCountSheet branchId={branchId} items={items.filter((item) => !isDrink(item))} onPosted={() => { void load(); onChanged?.(); }} />
     : view === "transfer" && branchId ? <StockTransfers branchId={branchId} items={items.filter((item) => !isDrink(item))} onChanged={() => { void load(); onChanged?.(); }} />
-    : <div className="stk-history">
-      <p className="stk-hint">การรับเข้า ตัดออก นับสต็อก โอน และรับจากใบสั่งซื้อ ล่าสุด 60 รายการ (ไม่รวมการตัดสต็อกจากการขาย)</p>
-      {history === null ? <div className="empty">กำลังโหลดประวัติ...</div> : history.length ? <ul className="stk-log">
-        {history.map((m) => <MovementRow key={m.id} movement={m} unit={nameById.get(m.ingredientId)?.unit} name={nameById.get(m.ingredientId)?.name ?? `สินค้า #${m.ingredientId}`} />)}
-      </ul> : <div className="empty">ยังไม่มีประวัติการปรับสต็อก</div>}
-    </div>}
+    : view === "documents" && branchId ? <StockDocuments key={branchId} branchId={branchId} items={items.filter((item) => !isDrink(item))} onChanged={() => { void load(); onChanged?.(); }} />
+    : branchId ? <StockLedger key={branchId} branchId={branchId} items={items} /> : <div className="empty">เลือกสาขาก่อนดูสต็อก</div>}
 
-    {selected && branchId && <AdjustDrawer key={selected.ingredientId} item={selected} branchId={branchId} canEditDetails={canEditDetails} onClose={() => setSelectedId(null)} onSaved={applyUpdate} />}
+    {selected && branchId && <AdjustDrawer key={`${branchId}:${selected.ingredientId}`} item={selected} branchId={branchId} canEditDetails={canEditDetails} onClose={() => setSelectedId(null)} onSaved={applyUpdate} onDocuments={() => { setSelectedId(null); setView("documents"); }} />}
     {creating && branchId && <CreateDialog branchId={branchId} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); void load(); onChanged?.(); }} />}
   </section>;
 }
@@ -228,7 +213,7 @@ function MovementRow({ movement, name, unit }: { movement: StockMovement; name?:
   </li>;
 }
 
-function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { item: InventoryItem; branchId: number; canEditDetails: boolean; onClose: () => void; onSaved: (item: InventoryItem | null) => void }) {
+function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved, onDocuments }: { item: InventoryItem; branchId: number; canEditDetails: boolean; onClose: () => void; onSaved: (item: InventoryItem | null) => void; onDocuments: () => void }) {
   const toast = useToast();
   const ref = useDialogFocus(onClose);
   const [mode, setMode] = useState<Mode>("in");
@@ -314,6 +299,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved }: { it
           </button>)}
         </div>
         <p className="stk-hint">{cfg.help}</p>
+        {mode === "out" && <div className="stock-docs__guide"><span>การขายตัดวัตถุดิบตามสูตรแล้ว · “ใช้ในร้าน” สำหรับของที่ใช้หมดนอกการขาย</span><button type="button" className="btn btn--ghost" onClick={onDocuments} disabled={saving}>เปิดใบเบิก / ย้ายที่เก็บ</button></div>}
 
         <label className="stk-field"><span>{cfg.field} ({item.unit})</span>
           <input className="input stk-amount" type="number" inputMode="decimal" min="0" step="any" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />

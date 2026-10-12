@@ -41,6 +41,10 @@ import type {
   ShiftCloseResult,
   ShiftSummary,
   StockMovement,
+  InventoryDocument,
+  InventoryDocumentKind,
+  StockLedgerMovement,
+  StockLedgerKind,
   StockCount,
   StockTransfer,
   StoreSetting,
@@ -615,6 +619,31 @@ export async function getStockMovements(branchId: number, options: { ingredientI
   return payload.items;
 }
 
+export async function getStockLedger(branchId: number, options: { ingredientId?: number; kind?: StockLedgerKind | string; from?: string; to?: string; page?: number; limit?: number; snapshotId?: number } = {}) {
+  const query = new URLSearchParams({ branchId: String(branchId) });
+  for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== "") query.set(key, String(value));
+  return fetchJson<{ items: StockLedgerMovement[]; total: number; page: number; limit: number; snapshotId: number }>(`${API_URL}/stock-ledger?${query}`);
+}
+
+export async function getInventoryDocuments(branchId: number) {
+  return (await fetchJson<{ items: InventoryDocument[] }>(`${API_URL}/inventory-documents?branchId=${branchId}`)).items;
+}
+
+export async function createInventoryDocument(input: {
+  branchId: number; kind: InventoryDocumentKind; fromLocation?: string; toLocation?: string; reason: string; note?: string;
+  items: Array<{ ingredientId: number; qty: number }>; requestKey: string; postImmediately?: boolean;
+}) {
+  return (await fetchJson<{ document: InventoryDocument }>(`${API_URL}/inventory-documents`, { method: "POST", body: JSON.stringify(input) })).document;
+}
+
+export async function postInventoryDocument(id: number) {
+  return (await fetchJson<{ document: InventoryDocument }>(`${API_URL}/inventory-documents/${id}/post`, { method: "POST", body: "{}" })).document;
+}
+
+export async function voidInventoryDocument(id: number, input: { reason: string }) {
+  return (await fetchJson<{ document: InventoryDocument }>(`${API_URL}/inventory-documents/${id}/void`, { method: "POST", body: JSON.stringify(input) })).document;
+}
+
 export async function getRecipes() {
   const payload = await fetchJson<{ items: Recipe[] }>(`${API_URL}/recipes`);
   return payload.items;
@@ -676,7 +705,7 @@ export async function getOrders(branchId: number, limit?: number) {
 
 export async function getOrder(id: number) {
   const payload = await fetchJson<{ order: Order }>(`${API_URL}/orders/${id}`);
-  return payload.order;
+  return confirmedOrder(payload, { id });
 }
 
 export async function getOrderByIdempotencyKey(idempotencyKey: string) {
@@ -935,9 +964,11 @@ export async function getPosposMigrationJob(id: number) {
 }
 
 /* ─── Purchases ─── */
-export async function getPurchases(branchId?: number) {
+export async function getPurchases(branchId?: number, options: { query?: string; status?: string } = {}) {
   const query = new URLSearchParams();
   if (branchId) query.set("branchId", String(branchId));
+  if (options.query) query.set("query", options.query);
+  if (options.status) query.set("status", options.status);
   const payload = await fetchJson<{ items: PurchaseOrder[] }>(`${API_URL}/purchases?${query.toString()}`);
   return payload.items;
 }
@@ -949,6 +980,14 @@ export async function createPurchase(input: {
   items: PurchaseOrderItem[];
   /** Admin only (server enforces): set each item's cost to this receipt's price. */
   updateCost?: boolean;
+  mode?: "RECEIPT" | "ORDER";
+  invoiceNumber?: string;
+  documentDate?: string;
+  receivedAt?: string;
+  dueDate?: string;
+  attachmentName?: string;
+  attachmentDataUrl?: string | null;
+  requestKey?: string;
 }) {
   const payload = await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases`, {
     method: "POST",
@@ -967,6 +1006,17 @@ export async function approvePurchase(id: number) {
     body: JSON.stringify({})
   });
   return payload.purchase;
+}
+
+export async function receivePurchase(id: number, input: {
+  requestKey: string; items: Array<{ purchaseItemId: number; qty: number; lotNo?: string; expiryDate?: string | null }>;
+  receivedAt?: string; note?: string; updateCost?: boolean;
+}) {
+  return (await fetchJson<{ purchase: PurchaseOrder }>(`${API_URL}/purchases/${id}/receive`, { method: "POST", body: JSON.stringify(input) })).purchase;
+}
+
+export async function getPurchaseAttachment(id: number) {
+  return fetchJson<{ attachmentName: string; attachmentDataUrl: string | null }>(`${API_URL}/purchases/${id}/attachment`);
 }
 
 export async function getTaxInvoices(branchId?: number) {

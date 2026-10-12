@@ -38,6 +38,36 @@ npm run dev --workspace apps/web
 - API: http://localhost:5175/api
 
 ## Build And Checks
+
+งานรับสินค้าและสต็อกอยู่ที่หน้า **สินค้า → รับเข้า / สต็อก**:
+
+- รับจากบิลส่งของ: แยกผู้ขาย เลขบิล วันที่ และภาพบิล JPEG/PNG/WebP ไม่เกิน 2 MB พร้อมตรวจบิลซ้ำภายในสาขา
+- สั่งซื้อก่อนรับ: สร้างรออนุมัติ อนุมัติแล้วรับเฉพาะจำนวนที่ส่งมา และดูจำนวนค้างรับกับประวัติรับแต่ละครั้ง
+- ใบเบิก: แยกย้ายที่เก็บ ใช้จริง แจก และของเสีย โดยรายการรออนุมัติยังไม่เปลี่ยนยอดสต็อก
+- ย้ายที่เก็บภายในสาขา: บันทึกต้นทาง/ปลายทางและจำนวนที่ย้าย โดยยอดรวมสาขาเท่าเดิม; ยังไม่มีบัญชียอดคงเหลือแยกแต่ละจุดเก็บ
+- ประวัติสต็อก: รวมรับเข้า เบิก ขาย คืน โอน และนับ พร้อมตัวกรองช่วงวันตามเวลาประเทศไทย แบ่งหน้า และส่งออก CSV ตามตัวกรอง
+
+การเบิก “ใช้จริง” คือของที่ใช้หมดนอกการขาย เช่น ทดลองสูตรหรือเครื่องดื่มพนักงาน; การขายตัดวัตถุดิบตามสูตรเอง จึงให้บันทึกการนำของมาวางหน้าเคาน์เตอร์เป็น “ย้ายที่เก็บ” เพื่อเก็บยอดรวมสาขาเดิม.
+
+ภาพบิลเก็บในฐานข้อมูลเดิมและโหลดเฉพาะเมื่อเปิดดู; การอ่านตัวหนังสือจากรูปบิลอัตโนมัติยังไม่มีในรอบนี้.
+
+การเพิ่มโครงสร้างข้อมูลใช้ migration `202610120001_inventory_workflows` และ `202610120002_inventory_document_lots` ซึ่งเพิ่มข้อมูลโดยเก็บใบรับและสต็อกเดิมไว้; ต้องรัน migration ก่อนเผยแพร่แอปเวอร์ชันนี้ และไม่ควรย้อนแอปเป็นเวอร์ชันเก่าหลังเริ่มรับของบางส่วนหรือใช้ใบเบิกใหม่ เพราะเวอร์ชันเก่าไม่รู้จักสถานะเหล่านี้.
+
+ชุดตรวจหน้าจอรับสินค้าและใบเบิกใช้ API จำลองทั้งหมด:
+
+```bash
+npm run qa:receiving:check --workspace apps/web
+npm run qa:stock-documents:check --workspace apps/web
+```
+
+ชุดตรวจฐานข้อมูลและ API ใช้เฉพาะ PostgreSQL ทดสอบบน localhost พร้อม `QA_DISPOSABLE_DB=true`; ชุด HTTP กำหนดพอร์ตทดสอบเป็น 55432 และไม่อ่านค่า connection ของร้านโดยอัตโนมัติ:
+
+```bash
+DATABASE_URL='postgresql://benzpos_qa@127.0.0.1:55432/benzpos_qa?schema=public' QA_DISPOSABLE_DB=true npm run qa:purchasing-workflows:check --workspace apps/api
+DATABASE_URL='postgresql://benzpos_qa@127.0.0.1:55432/benzpos_qa?schema=public' QA_DISPOSABLE_DB=true npm run qa:stock-documents:check --workspace apps/api
+DATABASE_URL='postgresql://benzpos_qa@127.0.0.1:55432/benzpos_qa?schema=public' QA_DISPOSABLE_DB=true npm run qa:inventory-http:check --workspace apps/api
+```
+
 ```bash
 npm run build
 ```

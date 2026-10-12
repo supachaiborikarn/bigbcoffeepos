@@ -12,18 +12,18 @@ import {
   getPurchases,
   getRecipe,
   getRecipeCoverage,
-  getStockMovements,
   restoreMenuItem,
   setMenuGroupActive,
   updateCupStockSettings,
   updateMenuItem,
   updateRecipe
 } from "../api";
-import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrder, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient, StockMovement } from "../types";
+import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrder, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
 import { printBarcodeLabels } from "../utils/barcode";
-import StockManager, { describeMovement } from "../components/inventory/StockManager";
+import StockManager from "../components/inventory/StockManager";
+import StockLedger from "../components/inventory/StockLedger";
 import PurchaseReceiving from "../components/inventory/PurchaseReceiving";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
@@ -251,7 +251,6 @@ export default function InventoryPage() {
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [movements, setMovements] = useState<StockMovement[]>([]);
   const [purchases, setPurchases] = useState<PurchaseOrder[]>([]);
   const [recipeCoverage, setRecipeCoverage] = useState<RecipeCoverageReport | null>(null);
 
@@ -343,12 +342,6 @@ export default function InventoryPage() {
     return menuCardGroups.filter((group) => group.branchType === productEditForm.branchType && group.key !== currentKey);
   }, [menuCardGroups, productEditForm, selectedProduct]);
 
-  const ingredientNameById = useMemo(() => {
-    const map = new Map<number, string>();
-    ingredients.forEach((item) => map.set(item.id, item.name));
-    return map;
-  }, [ingredients]);
-
   const activeProductCount = useMemo(() => branchProducts.filter((item) => item.active).length, [branchProducts]);
   const activeMenuCardCount = useMemo(() => menuCardGroups.filter((group) => group.activeCount > 0).length, [menuCardGroups]);
 
@@ -407,26 +400,6 @@ export default function InventoryPage() {
       .filter((item): item is InventoryItem & { qty: number; notStockedHere: boolean } => Boolean(item));
   }, [inventory, ingredients, recipeLines]);
 
-  /** Stock movement report: the latest 500 movements of this branch as CSV (opens in Excel). */
-  const exportMovements = async () => {
-    if (!activeBranch) return;
-    try {
-      const rows = await getStockMovements(activeBranch.id, { limit: 500 });
-      const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-      const unitOf = new Map(inventory.map((i) => [i.ingredientId, i.unit]));
-      const lines = rows.map((m) => {
-        const info = describeMovement(m.reason);
-        return [new Date(m.createdAt).toLocaleString("sv-SE", { timeZone: "Asia/Bangkok" }).slice(0, 16), ingredientNameById.get(m.ingredientId) ?? `#${m.ingredientId}`, m.qty, unitOf.get(m.ingredientId) ?? "", info.label, info.note ?? ""].map(esc).join(",");
-      });
-      const csv = "\uFEFF" + ["วันที่เวลา", "สินค้า", "จำนวน (+เข้า/−ออก)", "หน่วย", "ประเภท", "หมายเหตุ"].map(esc).join(",") + "\n" + lines.join("\n");
-      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-      const a = document.createElement("a");
-      a.href = url; a.download = `stock-movements_${activeBranch.id}_${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" })}.csv`;
-      document.body.appendChild(a); a.click(); a.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (err) { toast.error(`Export ไม่สำเร็จ: ${(err as Error).message}`); }
-  };
-
   const refreshVersion = useRef(0);
   const refreshInventory = async () => {
     const version = ++refreshVersion.current;
@@ -445,14 +418,12 @@ export default function InventoryPage() {
     ];
     if (!activeBranch) {
       setInventory([]);
-      setMovements([]);
       setPurchases([]);
       setRecipeCoverage(null);
       setCupStockDrafts([]);
     } else {
       requests.push(
         run(getInventory(activeBranch.id), setInventory),
-        run(getStockMovements(activeBranch.id, { limit: 20 }), (rows) => setMovements(rows.slice(0, 20))),
         run(getPurchases(activeBranch.id), setPurchases),
         run(getRecipeCoverage({ branchId: activeBranch.id }), setRecipeCoverage),
         run(getCupStockSettings(activeBranch.id), setCupStockDrafts)
@@ -1589,7 +1560,7 @@ export default function InventoryPage() {
 
       {/* MOVEMENTS TAB */}
       {activeTab === "movements" && (
-        <section className="inventory-layout" style={{ animation: "slideUp 0.2s ease-out" }}>
+        <section className="inventory-layout inventory-layout--documents" style={{ animation: "slideUp 0.2s ease-out" }}>
           <section className="panel panel--receive">
             <div className="panel__header">
               <div>
@@ -1617,26 +1588,10 @@ export default function InventoryPage() {
                 <h2>ประวัติเข้า/ออกสต็อก</h2>
                 <p className="muted">ขาย รับเข้า ตัดออก นับสต็อก และโอน ของสาขานี้</p>
               </div>
-              <button type="button" className="btn btn--ghost" onClick={exportMovements}>Export CSV</button>
             </div>
             <div className="panel__body">
               <p className="stk-hint">ปรับสต็อกรายสินค้า (รับเข้า / ตัดออก / นับสต็อกจริง) ได้ที่แท็บ <button type="button" className="btn btn--ghost" style={{ minHeight: 0, padding: "2px 8px" }} onClick={() => setActiveTab("ingredients")}>สต็อกวัตถุดิบ</button></p>
-              <div className="movement-list">
-                <strong>ความเคลื่อนไหวล่าสุด</strong>
-                {movements.slice(0, 15).map((movement) => {
-                  const info = describeMovement(movement.reason);
-                  const unit = inventory.find((item) => item.ingredientId === movement.ingredientId)?.unit ?? "";
-                  return (
-                    <div key={movement.id} className="movement-row">
-                      <span>
-                        {ingredientNameById.get(movement.ingredientId) ?? `สินค้า #${movement.ingredientId}`}
-                        <small>{new Date(movement.createdAt).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · {info.label}{info.note ? ` · ${info.note}` : ""}</small>
-                      </span>
-                      <strong className={movement.qty >= 0 ? "positive" : "negative"}>{movement.qty >= 0 ? "+" : ""}{movement.qty.toLocaleString("th-TH", { maximumFractionDigits: 3 })} {unit}</strong>
-                    </div>
-                  );
-                })}
-              </div>
+              {activeBranch ? <StockLedger key={activeBranch.id} branchId={activeBranch.id} items={inventory} /> : <p className="stk-hint">เลือกสาขาก่อนดูประวัติ</p>}
             </div>
           </section>
         </section>

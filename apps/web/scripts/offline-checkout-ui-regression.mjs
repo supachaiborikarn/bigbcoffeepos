@@ -166,6 +166,50 @@ try {
   await page.waitForFunction(() => document.getElementById('cart-state').dataset.count === '0');
   console.log('PASS unresolved checkout preserves its cart and identity through reload and retry');
 
+  // cancelling asks for a reason in a dialog before anything is sent
+  const confirmCancel = async () => {
+    await page.getByRole('alertdialog').getByRole('textbox').fill('ทดสอบยกเลิก');
+    await page.getByRole('button', { name: 'ยืนยันยกเลิกบิล' }).click();
+  };
+  await page.goto(`${webUrl}/orders`);
+  await page.getByTestId('order-card-13').waitFor();
+  mode = 'cancel-unresolved';
+  await page.getByTestId('cancel-order-13').click();
+  await confirmCancel();
+  await page.getByText(/ยังยืนยันการยกเลิกบิล #13 ไม่ได้/).waitFor();
+  assert.equal(await page.getByTestId('cancel-order-13').isEnabled(), true);
+  assert.match(await page.getByTestId('order-card-13').innerText(), /รอจัดเตรียม/);
+  assert.equal(cancelWrites, 1);
+  mode = 'cancel-confirmed';
+  await page.getByTestId('cancel-order-13').click();
+  await confirmCancel();
+  await page.getByTestId('order-card-13').getByText('ยกเลิกแล้ว', { exact: true }).waitFor();
+  assert.equal(cancelWrites, 2);
+  console.log('PASS actual OrdersPage releases a stalled cancellation and only reports cancellation after confirmed server status');
+
+  pepsi.status = 'PAID';
+  await page.goto(`${webUrl}/queue`);
+  await page.getByRole('button', { name: /^ยกเลิกบิล…/ }).waitFor();
+  mode = 'cancel-unresolved';
+  await page.getByRole('button', { name: /^ยกเลิกบิล…/ }).click();
+  await confirmCancel();
+  await page.getByText(/ยังยืนยันการยกเลิกบิล #13 ไม่ได้/).waitFor();
+  // the dialog stays open with the reason so staff can retry once the status is known
+  assert.equal(await page.getByRole('button', { name: 'ยืนยันยกเลิกบิล' }).isEnabled(), true);
+  mode = 'cancel-confirmed';
+  await page.getByRole('button', { name: 'ยืนยันยกเลิกบิล' }).click();
+  await page.getByText('ไม่มีออเดอร์ค้าง', { exact: true }).waitFor();
+  pepsi.status = 'PAID';
+  await page.reload();
+  mode = 'ready-unresolved';
+  await page.getByRole('button', { name: 'เสร็จสิ้น', exact: true }).click();
+  await page.getByText(/ยังยืนยันการเปลี่ยนสถานะบิล #13 ไม่ได้/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'เสร็จสิ้น', exact: true }).isEnabled(), true);
+  mode = 'ready-confirmed';
+  await page.getByRole('button', { name: 'เสร็จสิ้น', exact: true }).click();
+  await page.getByText('ไม่มีออเดอร์ค้าง', { exact: true }).waitFor();
+  assert.deepEqual(pageErrors, []);
+  console.log('PASS actual OrderQueuePage shares cancellation/ready deadlines, releases pending buttons and requires confirmed status');
   assert.deepEqual(pageErrors, []);
   console.log('PASS QR ฿188 browser recovery flows without touching actual orders');
 } finally {

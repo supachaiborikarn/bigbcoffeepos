@@ -166,7 +166,9 @@
 .studio-sale-success { display:flex; align-items:center; gap:8px; background:var(--brand-subtle); color:var(--brand); border-radius:10px; padding:10px 13px; font-size:12px; margin-bottom:12px; }
 .studio-sale-success button { margin-left:auto; background:none; border:0; color:inherit; }
 .studio-recipe-note { font-size:12px; color:var(--text-muted); padding:8px 0; }
-.studio-app .pos-cart-fab { position:sticky; bottom:max(14px,env(safe-area-inset-bottom)); right:auto; z-index:6; flex-shrink:0; margin:0 0 max(14px,env(safe-area-inset-bottom)); width:100%; background:var(--brand); color:var(--studio-cta-text); border-radius:14px; box-shadow:0 8px 22px #0002; padding:16px 18px; min-height:58px; }
+/* sticks to the bottom of the menu column and is always shown on compact screens (even with an empty cart), so cart + pay are always findable */
+.studio-app .pos-cart-fab { position:sticky; bottom:max(14px,env(safe-area-inset-bottom)); right:auto; z-index:6; flex-shrink:0; margin:auto 0 max(14px,env(safe-area-inset-bottom)); width:100%; max-width:none; justify-content:space-between; background:var(--brand); color:var(--studio-cta-text); border-radius:14px; box-shadow:0 8px 22px #0002; padding:16px 18px; min-height:58px; }
+.studio-app .pos-cart-fab.is-empty { background:var(--bg-surface); color:var(--text-muted); border:1px solid var(--border); box-shadow:0 6px 18px #0001; }
 .studio-app .pos-cart-sheet { background:var(--bg-surface); color:var(--text-primary); padding-bottom:env(safe-area-inset-bottom); }
 .studio-app .pos-cart-sheet__head { background:var(--bg-surface); }
 .studio-app .modal-backdrop { padding:20px; overflow-y:auto; }
@@ -532,6 +534,29 @@
 .xfer-lines { display:flex; flex-direction:column; gap:8px; }
 .xfer-line { display:grid; grid-template-columns:minmax(0,1fr) 120px auto; gap:10px; align-items:center; }
 .xfer-line small { display:block; font-size:11px; color:var(--text-muted); }
+/* central warehouse: request cards, per-line quantities, warehouse stock table */
+.rst-ship,.rst-request { display:flex; flex-direction:column; gap:10px; padding:12px 0; border-top:1px solid var(--border-light); }
+.rst-ship>small,.rst-request__head small { color:var(--text-muted); font-size:12px; }
+.rst-ship>.btn { align-self:flex-end; }
+.rst-request__head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.rst-request__head small { display:block; margin-top:2px; }
+.rst-lines { border:1px solid var(--border-light); border-radius:12px; overflow:hidden; }
+.rst-line,.rst-stock { display:grid; grid-template-columns:minmax(0,2fr) repeat(4,minmax(0,.7fr)) 110px; gap:10px; align-items:center; padding:9px 12px; border-bottom:1px solid var(--border-light); font-size:13px; }
+.rst-stock { grid-template-columns:minmax(0,2fr) repeat(4,minmax(0,.8fr)) 120px; padding:12px 18px; font-size:14px; }
+.rst-line:last-child,.rst-stock:last-child { border-bottom:0; }
+.rst-line--head,.rst-stock--head { font-size:12px; font-weight:600; color:var(--text-muted); background:var(--bg-subtle); }
+.rst-line small,.rst-stock small { display:block; font-size:11px; color:var(--text-muted); }
+.rst-line small.negative { color:var(--danger); }
+.rst-line .input { padding:6px 8px; }
+.rst-stock.is-low>span:first-child small { color:var(--warning); font-weight:600; }
+.rst-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+@media(max-width:768px) {
+  .rst-line,.rst-stock { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .rst-line>span:first-child,.rst-stock>span:first-child { grid-column:1 / -1; }
+  .rst-line>.input,.rst-stock>.btn { grid-column:1 / -1; }
+  .rst-line--head,.rst-stock--head { display:none; }
+  .rst-line>span[data-label]::before,.rst-stock>span[data-label]::before { content:attr(data-label); display:block; font-size:10px; color:var(--text-muted); }
+}
 @media(max-width:768px) {
   .count-row { grid-template-columns:minmax(0,1fr) 110px; grid-template-areas:"name input" "sys diff"; padding:12px 14px; }
   .count-row--head { display:none; }

@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { flushOfflineOrders } from "./api";
+import { preloadRoutes, reloadForNewBuild } from "./utils/lazyRoute";
 import "./styles.css";
 import "./studio.css";
 
@@ -16,6 +17,12 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   });
 }
+
+// A stale tab after a deploy: Vite fires this when a preloaded chunk 404s.
+window.addEventListener("vite:preloadError", (event) => {
+  if (reloadForNewBuild()) event.preventDefault();
+});
+window.addEventListener("load", preloadRoutes);
 
 // Offline order sync: flush on load, when the network returns, and periodically.
 window.addEventListener("load", () => {

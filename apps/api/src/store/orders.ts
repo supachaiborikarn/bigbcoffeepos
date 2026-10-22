@@ -4,6 +4,7 @@ import { getCupStockRequirements, getCupStockRequirementsByOption } from "./cupS
 import { getStoreSetting } from "./settings.js";
 import { log } from "../logger.js";
 import { getShiftSalesTotals } from "./shiftTotals.js";
+import { isIntegrationConfigured } from "./integrations.js";
 
 type Modifier = { name: string; value: string; price: number };
 type PaymentDetails = { cashReceived?: number; changeAmount?: number; paymentConfirmed?: boolean; referenceNo?: string };
@@ -495,13 +496,16 @@ async function restoreLotFefo(tx: any, branchId: number, ingredientId: number, q
 }
 
 async function writeIntegrationOutbox(outboxPayload: Record<string, unknown>) {
-  await prisma.integrationOutbox.createMany({
-    data: [
-      { provider: "rd_tax", eventType: "ORDER_TAX_RECEIPT_READY", entityType: "order", entityId: Number(outboxPayload.orderId), payload: JSON.stringify(outboxPayload) },
-      { provider: "line_oa", eventType: "ORDER_RECEIPT_MESSAGE_READY", entityType: "order", entityId: Number(outboxPayload.orderId), payload: JSON.stringify(outboxPayload) },
-      { provider: "lineman", eventType: "ORDER_SYNC_READY", entityType: "order", entityId: Number(outboxPayload.orderId), payload: JSON.stringify(outboxPayload) }
-    ]
-  });
+  // only queue for providers that can actually send; unconfigured ones piled up as never-sent work
+  const data = ([
+    { provider: "rd_tax", eventType: "ORDER_TAX_RECEIPT_READY" },
+    { provider: "line_oa", eventType: "ORDER_RECEIPT_MESSAGE_READY" },
+    { provider: "lineman", eventType: "ORDER_SYNC_READY" }
+  ] as const)
+    .filter((event) => isIntegrationConfigured(event.provider))
+    .map((event) => ({ ...event, entityType: "order", entityId: Number(outboxPayload.orderId), payload: JSON.stringify(outboxPayload) }));
+  if (data.length === 0) return;
+  await prisma.integrationOutbox.createMany({ data });
 }
 
 function scheduleIntegrationOutbox(outboxPayload: Record<string, unknown>) {
@@ -515,9 +519,13 @@ function scheduleIntegrationOutbox(outboxPayload: Record<string, unknown>) {
   }, 0);
 }
 
-export async function getOrders(branchId?: number, limit?: number) {
+export async function getOrders(branchId?: number, limit?: number, filter: { status?: string; shiftId?: number } = {}) {
   const orders = await prisma.order.findMany({
-    where: branchId ? { branchId } : undefined,
+    where: {
+      ...(branchId ? { branchId } : {}),
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.shiftId ? { shiftId: filter.shiftId } : {})
+    },
     include: { items: ORDER_ITEMS_INCLUDE, payments: { select: { amountReceived: true, changeAmount: true, method: true }, orderBy: { id: "asc" as const } } },
     orderBy: { id: "desc" },
     ...(limit ? { take: limit } : {})

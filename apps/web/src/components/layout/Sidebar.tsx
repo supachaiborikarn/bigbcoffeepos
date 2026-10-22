@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useBranch } from "../../contexts/BranchContext";
 import { businessProfile, roleLabels } from "../../utils/business";
-import { LayoutDashboard, Package, Users, BarChart3, Settings, LogOut, UserCircle, ShoppingBag, ClipboardList, Database, PanelsTopLeft, PanelLeftClose, PanelLeftOpen, X, ShieldCheck, History } from "lucide-react";
+import { LayoutDashboard, Package, Users, BarChart3, Settings, LogOut, UserCircle, ShoppingBag, ClipboardList, Database, PanelsTopLeft, PanelLeftClose, PanelLeftOpen, X, ShieldCheck, History, Warehouse } from "lucide-react";
 
 interface SidebarProps { collapsed?: boolean; onToggle?: () => void; mobileOpen?: boolean; onClose?: () => void }
 
@@ -18,6 +18,8 @@ export default function Sidebar({ collapsed = false, onToggle, mobileOpen, onClo
     ...(profile.queue ? [{ to: "/queue", label: "คิวเครื่องดื่ม", icon: ClipboardList, min: 1, group: "หน้าร้าน" }] : []),
     { to: "/dashboard", label: "ภาพรวมสาขา", icon: LayoutDashboard, min: 2, group: "จัดการร้าน" },
     { to: "/inventory", label: profile.catalogTitle, icon: Package, min: 2, group: "จัดการร้าน" },
+    // central warehouse serves the oil-change business only
+    ...(level >= 3 || activeBranch?.branchType === "oil_service" ? [{ to: "/warehouse", label: "คลังกลาง", icon: Warehouse, min: 2, group: "จัดการร้าน" }] : []),
     { to: "/customers", label: "ลูกค้าและสมาชิก", icon: UserCircle, min: 2, group: "จัดการร้าน" },
     { to: "/reports", label: "รายงานยอดขาย", icon: BarChart3, min: 2, group: "จัดการร้าน" },
     { to: "/admin", label: "ภาพรวมทุกสาขา", icon: PanelsTopLeft, min: 3, group: "ระบบ" },

@@ -10,7 +10,8 @@
     "qa:ui:check": "node scripts/qa-ui-regression.mjs",
     "qa:receiving:check": "node scripts/purchase-receiving-regression.mjs",
     "qa:stock-documents:check": "node scripts/qa-stock-document-ui-check.mjs",
-    "qa:shift:check": "node scripts/shift-context-regression.mjs"
+    "qa:shift:check": "node scripts/shift-context-regression.mjs",
+    "qa:shift-print:check": "node scripts/shift-print-regression.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.38.0",

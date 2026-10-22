@@ -49,6 +49,31 @@ function missingEnv(requiredEnv: string[]) {
   return requiredEnv.filter((key) => !process.env[key]);
 }
 
+/** False when the provider's credentials are not set: callers must not queue work it can never send. */
+export function isIntegrationConfigured(provider: IntegrationProvider) {
+  const def = DEFINITIONS.find((d) => d.provider === provider);
+  return Boolean(def) && missingEnv(def!.requiredEnv).length === 0;
+}
+
+function integrationLabel(provider: IntegrationProvider) {
+  return DEFINITIONS.find((d) => d.provider === provider)?.label ?? provider;
+}
+
+/** Retire everything still PENDING for providers that are not configured, in one write per provider. */
+export async function skipUnconfiguredOutbox() {
+  let skipped = 0;
+  for (const def of DEFINITIONS) {
+    const missing = missingEnv(def.requiredEnv);
+    if (missing.length === 0) continue;
+    const result = await prisma.integrationOutbox.updateMany({
+      where: { provider: def.provider, status: "PENDING" },
+      data: { status: "SKIPPED", lastError: `Missing ENV: ${missing.join(", ")}`, updatedAt: new Date() }
+    });
+    skipped += result.count;
+  }
+  return skipped;
+}
+
 function parsePayload(value: unknown) {
   try {
     return JSON.parse(String(value || "{}"));
@@ -212,6 +237,9 @@ export async function enqueueIntegrationEvent(input: {
   entityId?: number;
   payload: unknown;
 }) {
+  if (!isIntegrationConfigured(input.provider)) {
+    throw new Error(`ยังไม่ได้ตั้งค่าการเชื่อมต่อ ${integrationLabel(input.provider)}`);
+  }
   const result = await prisma.integrationOutbox.create({
     data: {
       provider: input.provider,
@@ -413,6 +441,7 @@ export async function runPosposSyncJob(id: number) {
 }
 
 export async function processOutboxQueue() {
+  let skipped = await skipUnconfiguredOutbox();
   const pending = await prisma.integrationOutbox.findMany({
     where: { status: "PENDING", attempts: { lt: MAX_OUTBOX_ATTEMPTS } },
     orderBy: { id: "asc" },
@@ -421,7 +450,6 @@ export async function processOutboxQueue() {
 
   let sent = 0;
   let retried = 0;
-  let skipped = 0;
   let failed = 0;
   for (const event of pending) {
     const payload = parsePayload(event.payload);

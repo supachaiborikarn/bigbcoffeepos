@@ -18,7 +18,7 @@ import {
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, normalizeBarcode, assertBarcodeFree,
   getCentralWarehouses, ensureCentralWarehouse, getWarehouseInventory, adjustWarehouseStock,
-  listRestockRequests, createRestockRequest, submitRestockRequest, startRestockPicking, dispatchRestockShipment, receiveRestockShipment,
+  listRestockRequests, createRestockRequest, submitRestockRequest, reserveRestockRequest, cancelRestockRequest, startRestockPicking, dispatchRestockShipment, receiveRestockShipment,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
   getCupStockSettings, setCupStockSettings,
   getOrders, getOrder, getOrderByIdempotencyKey, createOrder, updateOrderStatusWithContext,
@@ -562,9 +562,13 @@ app.post("/api/warehouses/setup", requireAdmin, async (req, res) => {
 app.get("/api/warehouses/:id/inventory", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const warehouseId = parseId(req.params.id);
   if (warehouseId === null) return res.status(400).json({ error: "Invalid warehouse" });
-  const warehouse = await prisma.centralWarehouse.findUnique({ where: { id: warehouseId } });
+  const warehouse = await prisma.centralWarehouse.findUnique({ where: { id: warehouseId }, include: { managerBranch: { select: { branchType: true } } } });
   if (!warehouse) return res.status(404).json({ error: "ไม่พบสต็อกกลาง" });
-  if (req.user?.role !== "admin" && warehouse.managerBranchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ดูสต็อกกลาง" });
+  if (req.user?.role !== "admin" && warehouse.managerBranchId !== req.user?.branchId) {
+    // branches of the same business may look (read-only) so they can see what is available before asking
+    const own = req.user?.branchId ? await prisma.branch.findUnique({ where: { id: req.user.branchId }, select: { branchType: true } }) : null;
+    if (!own || !warehouse.managerBranch || own.branchType !== warehouse.managerBranch.branchType) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ดูสต็อกกลาง" });
+  }
   return res.json({ items: await getWarehouseInventory(warehouseId) });
 });
 
@@ -626,6 +630,35 @@ async function requireWarehouseOperator(req: AuthRequest, requestId: number) {
   if (req.user?.role !== "admin" && row.warehouse.managerBranchId !== req.user?.branchId) throw new Error("FORBIDDEN");
   return row;
 }
+
+app.post("/api/restock-requests/:id/reserve", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    await requireWarehouseOperator(req, id);
+    const request = await reserveRestockRequest(id);
+    audit("restock_request.reserved", req, { requestId: id });
+    return res.json({ request });
+  } catch (e) {
+    if ((e as Error).message === "NOT_FOUND") return res.status(404).json({ error: "ไม่พบใบเบิก" });
+    if ((e as Error).message === "FORBIDDEN") return res.status(403).json({ error: "คุณไม่มีสิทธิ์จองของในคลังกลาง" });
+    return res.status(400).json({ error: publicError(e) });
+  }
+});
+
+app.post("/api/restock-requests/:id/cancel", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const row = await prisma.restockRequest.findUnique({ where: { id }, include: { warehouse: true } });
+  if (!row) return res.status(404).json({ error: "ไม่พบใบเบิก" });
+  // the requesting branch or the warehouse may call it off
+  if (req.user?.role !== "admin" && row.branchId !== req.user?.branchId && row.warehouse.managerBranchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ยกเลิกใบเบิกนี้" });
+  try {
+    const request = await cancelRestockRequest(id);
+    audit("restock_request.cancelled", req, { requestId: id, branchId: row.branchId });
+    return res.json({ request });
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
 
 app.post("/api/restock-requests/:id/picking", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
@@ -727,7 +760,9 @@ app.put("/api/recipes/:menuItemId", requireRole("admin", "manager"), async (req,
 app.get("/api/orders", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   const limit = parseId(req.query.limit as string);
-  res.json({ items: await getOrders(branchId, limit ? Math.min(limit, 1000) : undefined) });
+  const status = typeof req.query.status === "string" && req.query.status ? req.query.status : undefined;
+  const shiftId = parseId(req.query.shiftId as string) ?? undefined;
+  res.json({ items: await getOrders(branchId, limit ? Math.min(limit, 1000) : undefined, { status, shiftId }) });
 });
 app.get("/api/orders/idempotency/:key", requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
   const key = String(req.params.key ?? "").trim();
@@ -762,6 +797,9 @@ app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (
     if (req.body?.status === "REFUNDED") {
       if (req.user?.role !== "admin" && req.user?.role !== "manager") return res.status(403).json({ error: "คืนเงินได้เฉพาะผู้จัดการหรือผู้ดูแลระบบ" });
       if (!isStr(req.body?.reason) || !req.body.reason.trim()) return res.status(400).json({ error: "กรุณาระบุเหตุผลที่คืนเงิน" });
+    }
+    if (req.body?.status === "CANCELLED" && (!isStr(req.body?.reason) || !req.body.reason.trim())) {
+      return res.status(400).json({ error: "กรุณาระบุเหตุผลที่ยกเลิกบิล" });
     }
     const order = await updateOrderStatusWithContext(id, {
       status: req.body?.status ?? "PAID",
@@ -956,9 +994,10 @@ app.use(["/api/reports/summary", "/api/reports/profit", "/api/reports/staff", "/
 app.get("/api/reports/summary", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
+  const untilTime = isStr(req.query.untilTime) ? String(req.query.untilTime) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   const source = parseReportSource(req.query.source);
-  return res.json({ summary: await getSalesSummary({ from, to, branchId, source }) });
+  return res.json({ summary: await getSalesSummary({ from, to, untilTime, branchId, source }) });
 });
 
 app.get("/api/reports/profit", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {

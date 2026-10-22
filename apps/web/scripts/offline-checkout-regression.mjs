@@ -91,4 +91,34 @@ for (const error of [new TypeError('Cannot read properties of undefined'), new D
 }
 console.log('PASS HTTP rejections remain errors even when their text mentions the network or navigator says offline');
 
+// A lost cancellation reply can only be called successful after a matching read-back.
+for (const confirmed of [true, false]) {
+  let writes = 0;
+  let reads = 0;
+  globalThis.fetch = async (_url, init) => {
+    if (init?.method === 'PATCH') { writes++; return hang(init); }
+    reads++;
+    return response({ order: order(13, confirmed ? 'CANCELLED' : 'PAID') });
+  };
+  if (confirmed) assert.equal((await api.updateOrderStatus(13, 'CANCELLED')).status, 'CANCELLED');
+  else await assert.rejects(api.updateOrderStatus(13, 'CANCELLED'), error => error.code === 'ORDER_NOT_CONFIRMED' && error.message.includes('รีเฟรช'));
+  assert.equal(writes, 1, 'the cancellation must never be sent again automatically');
+  assert.equal(reads, 1);
+}
+assert.ok(deadlines.includes(5_000));
+for (const invalid of [null, { order: order(99, 'CANCELLED') }, { order: order(13, 'PAID') }]) {
+  globalThis.fetch = async (_url, init) => init?.method === 'PATCH' ? response({}) : response(invalid);
+  await assert.rejects(api.updateOrderStatus(13, 'CANCELLED'), error => error.code === 'ORDER_NOT_CONFIRMED');
+}
+globalThis.fetch = (_url, init) => hang(init);
+await assert.rejects(api.updateOrderStatus(13, 'CANCELLED'), error => error.code === 'ORDER_NOT_CONFIRMED');
+let reads = 0;
+globalThis.fetch = async (_url, init) => {
+  if (init?.method === 'PATCH') return new Response('{"error":"NetworkError forbidden"}', { status: 403 });
+  reads++;
+  return response({ order: order(13, 'CANCELLED') });
+};
+await assert.rejects(api.updateOrderStatus(13, 'CANCELLED'), error => error.status === 403);
+assert.equal(reads, 0);
+console.log('PASS cancellation deadlines release pending requests, verify actual status and never blindly repeat or report success');
 console.log('PASS QR 188 offline queue and recovery regression');

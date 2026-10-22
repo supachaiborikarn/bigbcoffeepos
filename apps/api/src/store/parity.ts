@@ -1,6 +1,7 @@
 import prisma from "../prisma.js";
 import { getStoreSetting } from "./settings.js";
 import { isValidThaiTaxId, normalizeThaiTaxId } from "../lib/taxId.js";
+import { isIntegrationConfigured } from "./integrations.js";
 
 const db = prisma as any;
 
@@ -138,7 +139,7 @@ export async function createTaxInvoice(input: {
       include: { order: { include: { items: true } }, customer: true, branch: true }
     });
 
-  await tx.integrationOutbox.create({
+  if (isIntegrationConfigured("rd_tax")) await tx.integrationOutbox.create({
     data: {
       provider: "rd_tax",
       eventType: "TAX_INVOICE_ISSUED",
@@ -178,7 +179,7 @@ export async function voidTaxInvoice(id: number, reason: string) {
     data: { status: "VOID", voidedAt: new Date(), voidReason: why.slice(0, 300) },
     include: { order: { include: { items: true } }, customer: true, branch: true }
   });
-  await db.integrationOutbox.create({
+  if (isIntegrationConfigured("rd_tax")) await db.integrationOutbox.create({
     data: { provider: "rd_tax", eventType: "TAX_INVOICE_VOIDED", entityType: "tax_invoice", entityId: id, payload: JSON.stringify({ invoiceNo: invoice.invoiceNo, reason: why }) }
   });
   return hydrateInvoice(updated);
@@ -759,6 +760,7 @@ export async function saveDailyEmailSetting(input: { branchId?: number | null; r
 export async function enqueueDailySummaryEmail(input: { date: string; branchId?: number }) {
   const setting = await getDailyEmailSetting(input.branchId);
   if (!setting?.enabled || !setting.recipients.trim()) throw new Error("ยังไม่ได้เปิดอีเมลสรุปรายวัน");
+  if (!isIntegrationConfigured("email")) throw new Error("ยังไม่ได้ตั้งค่าการเชื่อมต่ออีเมล (EMAIL_WEBHOOK_URL)");
   return db.integrationOutbox.create({
     data: {
       provider: "email",
@@ -802,6 +804,7 @@ export async function saveMarketplaceConnection(input: { branchId: number; provi
 export async function enqueueMarketplaceSync(id: number) {
   const connection = await db.marketplaceConnection.findUnique({ where: { id } });
   if (!connection) throw new Error("ไม่พบ marketplace connection");
+  if (!isIntegrationConfigured("lineman")) throw new Error("ยังไม่ได้ตั้งค่าการเชื่อมต่อ Lineman (LINEMAN_API_ENDPOINT, LINEMAN_API_KEY)");
   return db.integrationOutbox.create({
     data: {
       provider: "lineman",

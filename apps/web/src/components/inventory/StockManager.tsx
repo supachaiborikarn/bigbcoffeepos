@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, ArrowLeftRight, ClipboardCheck, ClipboardList, History, Minus, Package, Plus, Search, Settings2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, ClipboardCheck, ClipboardList, History, Minus, Package, Plus, Search, Settings2, Warehouse, X } from "lucide-react";
 import { createIngredient, createStockAdjustment, getInventory, getMenu, getRecipes, getStockMovements, updateInventoryItem } from "../../api";
 import type { InventoryItem, StockMovement } from "../../types";
 import { useBranch } from "../../contexts/BranchContext";
@@ -11,6 +11,8 @@ import { isCupVariantMenuItem, shouldUseModifierModal } from "../../utils/menuRu
 import StockTransfers from "./StockTransfers";
 import StockDocuments from "./StockDocuments";
 import StockLedger from "./StockLedger";
+import RestockRequests from "./RestockRequests";
+import { needsRestock } from "../../utils/stockAlert";
 
 // Branch stock screen shared by admins (InventoryPage) and branch managers
 // (BranchInventoryPage). Every number carries a label, and stock changes go
@@ -30,7 +32,7 @@ const fmtWhen = (iso: string) => new Date(iso).toLocaleString("th-TH", { day: "n
 
 function stockStatus(item: InventoryItem): Status {
   if (item.stockQty <= 0) return "out";
-  if (item.reorderLevel > 0 && item.stockQty <= item.reorderLevel) return "low";
+  if (needsRestock(item)) return "low";
   return "ok";
 }
 const STATUS_LABEL: Record<Status, string> = { ok: "ปกติ", low: "ใกล้หมด", out: "หมดแล้ว" };
@@ -78,7 +80,10 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
-  const [view, setView] = useState<"stock" | "count" | "transfer" | "documents" | "history">("stock");
+  const [view, setView] = useState<"stock" | "count" | "transfer" | "restock" | "documents" | "history">("stock");
+  // only the oil-change business has a central warehouse
+  const usesWarehouse = activeBranch?.branchType === "oil_service";
+  useEffect(() => { if (!usesWarehouse && view === "restock") setView("stock"); }, [usesWarehouse, view]);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -149,6 +154,7 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
           <button role="tab" aria-selected={view === "stock"} className={view === "stock" ? "is-active" : ""} onClick={() => setView("stock")}><Package size={15} /> รายการสต็อก</button>
           <button role="tab" aria-selected={view === "count"} className={view === "count" ? "is-active" : ""} onClick={() => setView("count")}><ClipboardList size={15} /> นับสต็อก</button>
           <button role="tab" aria-selected={view === "transfer"} className={view === "transfer" ? "is-active" : ""} onClick={() => setView("transfer")}><ArrowLeftRight size={15} /> โอนสต็อก</button>
+          {usesWarehouse && <button role="tab" aria-selected={view === "restock"} className={view === "restock" ? "is-active" : ""} onClick={() => setView("restock")}><Warehouse size={15} /> เบิกจากคลังกลาง</button>}
           <button role="tab" aria-selected={view === "documents"} className={view === "documents" ? "is-active" : ""} onClick={() => setView("documents")}><ClipboardCheck size={15} /> เบิก / ย้ายที่เก็บ</button>
           <button role="tab" aria-selected={view === "history"} className={view === "history" ? "is-active" : ""} onClick={() => setView("history")}><History size={15} /> ประวัติสต็อก</button>
         </div>
@@ -196,6 +202,7 @@ export default function StockManager({ canEditDetails, onChanged }: { canEditDet
       </div>}
     </> : view === "count" && branchId ? <StockCountSheet branchId={branchId} items={items.filter((item) => !isDrink(item))} onPosted={() => { void load(); onChanged?.(); }} />
     : view === "transfer" && branchId ? <StockTransfers branchId={branchId} items={items.filter((item) => !isDrink(item))} onChanged={() => { void load(); onChanged?.(); }} />
+    : view === "restock" && branchId && usesWarehouse ? <RestockRequests key={branchId} branchId={branchId} items={items} onChanged={() => { void load(); onChanged?.(); }} />
     : view === "documents" && branchId ? <StockDocuments key={branchId} branchId={branchId} items={items.filter((item) => !isDrink(item))} onChanged={() => { void load(); onChanged?.(); }} />
     : branchId ? <StockLedger key={branchId} branchId={branchId} items={items} /> : <div className="empty">เลือกสาขาก่อนดูสต็อก</div>}
 

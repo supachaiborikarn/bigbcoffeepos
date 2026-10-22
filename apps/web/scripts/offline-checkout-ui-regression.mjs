@@ -11,9 +11,9 @@ const artifacts = path.resolve(webDir, '../../output/playwright/offline-checkout
 const user = { id: 6, name: 'ผู้ตรวจทดสอบ', role: 'admin', active: true, branchId: 1 };
 const branch = { id: 1, name: 'วัชรเกียรติ ทดสอบ', active: true, branchType: 'coffee' };
 const shift = { id: 7, branchId: 1, userId: 6, openingCash: 0, totalSales: 13, totalOrders: 1, cashSales: 13, qrSales: 0, cardSales: 0, status: 'OPEN', openedAt: new Date().toISOString(), closedAt: null };
-const items = [50, 55, 70, 13].map((basePrice, index) => ({ id: String(index), menuItemId: index + 1, name: index === 3 ? 'เปปซี่' : `สินค้า ${index + 1}`, category: 'เครื่องดื่ม', basePrice, qty: 1, modifiers: [] }));
-const bill = { branchId: 1, userId: 6, shiftId: 7, customerId: null, items, paymentMethod: 'CASH', paymentDetails: { cashReceived: 200 }, discountType: null, discountValue: 0, loyaltyPointsToUse: 0, offlineQueueId: 'fixture-queued-188', idempotencyKey: 'fixture-pending-188' };
-const makeOrder = (id, orderItems = items, status = 'PAID') => ({ id, branchId: 1, shiftId: 7, userId: 6, customerId: null, createdAt: new Date().toISOString(), status, subtotal: orderItems.reduce((sum, item) => sum + item.basePrice * item.qty, 0), total: orderItems.reduce((sum, item) => sum + item.basePrice * item.qty, 0), tax: 0, discountType: null, discountValue: 0, discountAmount: 0, loyaltyPointsUsed: 0, loyaltyPointsEarned: 0, paymentMethod: 'CASH', items: orderItems.map((item, index) => ({ ...item, id: index + 1, lineTotal: item.basePrice * item.qty })) });
+const items = [35, 70, 70, 13].map((basePrice, index) => ({ id: String(index), menuItemId: index + 1, name: ['ขนม', 'ลาเต้เย็น', 'ชาเขียวเย็น', 'เปปซี่'][index], category: 'เครื่องดื่ม', basePrice, qty: 1, modifiers: [] }));
+const bill = { branchId: 1, userId: 6, shiftId: 7, customerId: null, items, paymentMethod: 'QR', paymentDetails: { paymentConfirmed: true }, discountType: null, discountValue: 0, loyaltyPointsToUse: 0, offlineQueueId: 'fixture-queued-188', idempotencyKey: 'fixture-pending-188' };
+const makeOrder = (id, orderItems = items, status = 'PAID') => ({ id, branchId: 1, shiftId: 7, userId: 6, customerId: null, createdAt: new Date().toISOString(), status, subtotal: orderItems.reduce((sum, item) => sum + item.basePrice * item.qty, 0), total: orderItems.reduce((sum, item) => sum + item.basePrice * item.qty, 0), tax: 0, discountType: null, discountValue: 0, discountAmount: 0, loyaltyPointsUsed: 0, loyaltyPointsEarned: 0, paymentMethod: 'QR', items: orderItems.map((item, index) => ({ ...item, id: index + 1, lineTotal: item.basePrice * item.qty })) });
 const pepsi = makeOrder(13, [items[3]]);
 const entry = `
   import React from 'react';
@@ -31,7 +31,7 @@ const entry = `
   import OrderQueuePage from '/src/pages/OrderQueuePage.tsx';
   function Probe() {
     const cart = useCart();
-    window.__cart = { checkout: () => cart.checkout('CASH', null, 0, { cashReceived: 200 }), addItem: cart.addItem };
+    window.__cart = { checkout: () => cart.checkout('QR', null, 0, { paymentConfirmed: true }), addItem: cart.addItem };
     return React.createElement('output', { id: 'cart-state', hidden: true, 'data-count': cart.cart.length }, JSON.stringify(cart.cart));
   }
   function Harness() {
@@ -166,30 +166,38 @@ try {
   await page.waitForFunction(() => document.getElementById('cart-state').dataset.count === '0');
   console.log('PASS unresolved checkout preserves its cart and identity through reload and retry');
 
+  // cancelling asks for a reason in a dialog before anything is sent
+  const confirmCancel = async () => {
+    await page.getByRole('alertdialog').getByRole('textbox').fill('ทดสอบยกเลิก');
+    await page.getByRole('button', { name: 'ยืนยันยกเลิกบิล' }).click();
+  };
   await page.goto(`${webUrl}/orders`);
   await page.getByTestId('order-card-13').waitFor();
-  page.on('dialog', dialog => dialog.accept());
   mode = 'cancel-unresolved';
   await page.getByTestId('cancel-order-13').click();
+  await confirmCancel();
   await page.getByText(/ยังยืนยันการยกเลิกบิล #13 ไม่ได้/).waitFor();
   assert.equal(await page.getByTestId('cancel-order-13').isEnabled(), true);
   assert.match(await page.getByTestId('order-card-13').innerText(), /รอจัดเตรียม/);
   assert.equal(cancelWrites, 1);
   mode = 'cancel-confirmed';
   await page.getByTestId('cancel-order-13').click();
+  await confirmCancel();
   await page.getByTestId('order-card-13').getByText('ยกเลิกแล้ว', { exact: true }).waitFor();
   assert.equal(cancelWrites, 2);
   console.log('PASS actual OrdersPage releases a stalled cancellation and only reports cancellation after confirmed server status');
 
   pepsi.status = 'PAID';
   await page.goto(`${webUrl}/queue`);
-  await page.getByRole('button', { name: 'ยกเลิกบิล', exact: true }).waitFor();
+  await page.getByRole('button', { name: /^ยกเลิกบิล…/ }).waitFor();
   mode = 'cancel-unresolved';
-  await page.getByRole('button', { name: 'ยกเลิกบิล', exact: true }).click();
+  await page.getByRole('button', { name: /^ยกเลิกบิล…/ }).click();
+  await confirmCancel();
   await page.getByText(/ยังยืนยันการยกเลิกบิล #13 ไม่ได้/).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'ยกเลิกบิล', exact: true }).isEnabled(), true);
+  // the dialog stays open with the reason so staff can retry once the status is known
+  assert.equal(await page.getByRole('button', { name: 'ยืนยันยกเลิกบิล' }).isEnabled(), true);
   mode = 'cancel-confirmed';
-  await page.getByRole('button', { name: 'ยกเลิกบิล', exact: true }).click();
+  await page.getByRole('button', { name: 'ยืนยันยกเลิกบิล' }).click();
   await page.getByText('ไม่มีออเดอร์ค้าง', { exact: true }).waitFor();
   pepsi.status = 'PAID';
   await page.reload();
@@ -202,6 +210,8 @@ try {
   await page.getByText('ไม่มีออเดอร์ค้าง', { exact: true }).waitFor();
   assert.deepEqual(pageErrors, []);
   console.log('PASS actual OrderQueuePage shares cancellation/ready deadlines, releases pending buttons and requires confirmed status');
+  assert.deepEqual(pageErrors, []);
+  console.log('PASS QR ฿188 browser recovery flows without touching actual orders');
 } finally {
   await context?.close(); await browser?.close(); await server?.close();
 }

@@ -43,7 +43,8 @@ export default function OrderQueuePage() {
     try {
       // filtered on the server: pulling every bill of the branch made the first load take ~12 s
       const data = await getOrders(activeBranch.id, undefined, { status: "PAID", shiftId: activeShift.id });
-      setOrders(data.reverse());
+      // filter again: an API that predates these params (web deployed first) returns every bill
+      setOrders(data.filter((o) => o.status === "PAID" && o.shiftId === activeShift.id).reverse());
       setNow(Date.now());
     } catch {
       // Keep the current queue visible if an auto-refresh request fails.
@@ -171,7 +172,7 @@ export default function OrderQueuePage() {
       {cancelling && (
         <ConfirmReasonDialog
           title={`ยกเลิกบิล #${cancelling.id}`}
-          detail={`${cancelling.items.map((item) => `${item.qty}x ${item.name}`).join(", ")}\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้ · ยกเลิกแล้วย้อนกลับไม่ได้`}
+          detail={`${cancelling.items.map((item) => `${item.qty}x ${item.name}`).join(", ")}\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้ · ยกเลิกแล้วย้อนกลับไม่ได้${cancelling.paymentMethod !== "CASH" ? "\nการยกเลิกใน POS ไม่โอนเงินคืนลูกค้าอัตโนมัติ ต้องตรวจและดำเนินการคืนเงินจริงแยกต่างหาก" : ""}`}
           confirmLabel="ยืนยันยกเลิกบิล"
           busy={busyId === cancelling.id}
           onConfirm={(reason) => cancelOrder(cancelling, reason)}

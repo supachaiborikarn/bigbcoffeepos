@@ -18,8 +18,8 @@ const failedKey = 'bb_pos_offline_failed';
 const read = key => JSON.parse(localStorage.getItem(key) || '[]');
 const bill = {
   userId: 6, branchId: 1, shiftId: 7, customerId: null,
-  items: [50, 55, 70, 13].map((price, index) => ({ id: String(index), menuItemId: index + 1, name: index === 3 ? 'เปปซี่' : `สินค้า ${index + 1}`, basePrice: price, qty: 1, modifiers: [] })),
-  paymentMethod: 'CASH', paymentDetails: { cashReceived: 200 },
+  items: [35, 70, 70, 13].map((price, index) => ({ id: String(index), menuItemId: index + 1, name: ['ขนม', 'ลาเต้เย็น', 'ชาเขียวเย็น', 'เปปซี่'][index], basePrice: price, qty: 1, modifiers: [] })),
+  paymentMethod: 'QR', paymentDetails: { paymentConfirmed: true },
   discountType: null, discountValue: 0, loyaltyPointsToUse: 0,
   idempotencyKey: 'watcharakiat-188-fixture'
 };
@@ -67,6 +67,9 @@ for (const status of [429, 500, 503]) {
   globalThis.fetch = async () => new Response('{"error":"service busy"}', { status });
   assert.deepEqual(await api.flushOfflineOrders(), { sent: 0, remaining: 1, failed: 0 });
 }
+globalThis.fetch = async () => new Response('{"error":"ระบบบันทึกใช้เวลานานเกินไป กรุณาลองส่งบิลเดิมใหม่"}', { status: 400 });
+assert.deepEqual(await api.flushOfflineOrders(), { sent: 0, remaining: 1, failed: 0 });
+assert.equal(api.getOfflinePendingDetails()[0].idempotencyKey, original.idempotencyKey);
 assert.deepEqual(read(failedKey), []);
 let retried;
 globalThis.fetch = async (_url, init) => { retried = JSON.parse(init.body); return response({ order: order() }); };
@@ -118,3 +121,4 @@ globalThis.fetch = async (_url, init) => {
 await assert.rejects(api.updateOrderStatus(13, 'CANCELLED'), error => error.status === 403);
 assert.equal(reads, 0);
 console.log('PASS cancellation deadlines release pending requests, verify actual status and never blindly repeat or report success');
+console.log('PASS QR 188 offline queue and recovery regression');

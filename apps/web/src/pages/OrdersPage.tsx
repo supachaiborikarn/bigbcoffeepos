@@ -333,7 +333,7 @@ export default function OrdersPage() {
         <ConfirmReasonDialog
           title={pending.kind === "cancel" ? `ยกเลิกบิล #${pending.order.id}` : `คืนเงินบิล #${pending.order.id}`}
           detail={pending.kind === "cancel"
-            ? `ยอด ${formatMoney(pending.order.total)}\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้ · ยกเลิกแล้วย้อนกลับไม่ได้`
+            ? `ยอด ${formatMoney(pending.order.total)}\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้ · ยกเลิกแล้วย้อนกลับไม่ได้${pending.order.paymentMethod !== "CASH" ? "\nการยกเลิกใน POS ไม่โอนเงินคืนลูกค้าอัตโนมัติ ต้องตรวจและดำเนินการคืนเงินจริงแยกต่างหาก" : ""}`
             : `ยอด ${formatMoney(pending.order.total)} (${PAYMENT_LABELS[pending.order.paymentMethod]})\nระบบจะคืนสต็อก หักยอดขายของกะ และย้ายบิลไปแท็บ "คืนเงินแล้ว"${pending.kind === "refund-reopen" ? "\nจากนั้นเปิดรายการเดิมเป็นบิลใหม่ให้แก้" : ""}`}
           confirmLabel={pending.kind === "cancel" ? "ยืนยันยกเลิกบิล" : `ยืนยันคืนเงิน ${formatMoney(pending.order.total)}`}
           busy={busyId === pending.order.id}

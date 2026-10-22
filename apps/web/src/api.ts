@@ -163,7 +163,8 @@ function isOfflineCheckoutError(error: unknown) {
 
 function canRetryOfflineSync(error: unknown) {
   return isOfflineCheckoutError(error) || error instanceof RequestTimeoutError || error instanceof OrderConfirmationError ||
-    (error instanceof ApiError && (error.status === 408 || error.status === 429 || error.status >= 500));
+    (error instanceof ApiError && (error.status === 408 || error.status === 429 || error.status >= 500 ||
+      error.code === "ORDER_RETRY_REQUIRED" || error.message.startsWith("ระบบบันทึกใช้เวลานานเกินไป")));
 }
 
 function queueOfflineOrder(input: OfflineOrderInput): Order {
@@ -778,7 +779,10 @@ export async function updateOrderStatus(id: number, status: OrderStatus, reason?
     });
     return confirmedOrder(payload, { id, status });
   } catch (error) {
-    if (!(error instanceof RequestTimeoutError) && !(error instanceof OrderConfirmationError) && !isOfflineCheckoutError(error)) throw error;
+    const transientStatusError = error instanceof ApiError &&
+      (error.status === 408 || error.status === 429 || error.status >= 500 || error.code === "ORDER_RETRY_REQUIRED" || error.message.startsWith("ระบบบันทึกใช้เวลานานเกินไป"));
+    if (!(error instanceof RequestTimeoutError) && !(error instanceof OrderConfirmationError) &&
+        !isOfflineCheckoutError(error) && !transientStatusError) throw error;
     // Read once after a lost/unclear reply; never repeat the financial mutation here.
     try {
       const payload = await fetchJsonOnce<{ order: Order }>(`${API_URL}/orders/${id}`, { timeoutMs: 5_000 });

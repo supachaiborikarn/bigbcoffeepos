@@ -169,7 +169,7 @@ export default function OfflineStatus() {
                 {item.lastSyncError && <div style={{ color: "#b91c1c", marginTop: 4 }}>{item.lastSyncError}</div>}
               </div>
             ))}
-            <button className="btn btn--primary" style={{ width: "100%", fontSize: 12, marginTop: 8, marginBottom: 12 }} onClick={handleSync} disabled={syncing || !online}>
+            <button className="btn btn--primary" style={{ width: "100%", fontSize: 12, marginTop: 8, marginBottom: 12 }} onClick={handleSync} disabled={syncing}>
               <RefreshCw size={14} className={syncing ? "spin" : undefined} /> {syncing ? "กำลังส่งบิล..." : "ส่งบิลที่ค้าง"}
             </button>
           </>}

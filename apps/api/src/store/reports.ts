@@ -9,7 +9,8 @@ export type ReportSource = "system" | "pospos" | "all";
 
 const SALES_ONLY_ITEM_NAME = "POSPOS sales-only record";
 
-type ReportInput = { from?: string; to?: string; branchId?: number; source?: ReportSource };
+// untilTime ("HH:MM", Thai time) cuts the last day off early: "yesterday up to now" for a fair today-vs-yesterday
+type ReportInput = { from?: string; to?: string; untilTime?: string; branchId?: number; source?: ReportSource };
 type SourceBreakdown = {
   system: { orders: number; revenue: number };
   pospos: { orders: number; revenue: number };
@@ -52,6 +53,9 @@ export function assertReportRange(input: { from?: string; to?: string }) {
   for (const day of [input.from, input.to]) if (day && Number.isNaN(dayStart(day).getTime())) throw new Error("รูปแบบวันที่ไม่ถูกต้อง");
   if (input.from && input.to && input.from.slice(0, 10) > input.to.slice(0, 10)) throw new Error("วันเริ่มต้องไม่หลังวันสิ้นสุด");
 }
+const rangeEnd = (input: { to?: string; untilTime?: string }) => input.to
+  ? (/^([01]\d|2[0-3]):[0-5]\d$/.test(input.untilTime ?? "") ? new Date(`${input.to.slice(0, 10)}T${input.untilTime}:59.999+07:00`) : dayEnd(input.to))
+  : null;
 const bangkokTime = (date: Date) => date.toLocaleString("sv-SE", { timeZone: "Asia/Bangkok" }).slice(0, 16);
 
 function buildOrderWhere(input: ReportInput) {
@@ -61,7 +65,7 @@ function buildOrderWhere(input: ReportInput) {
     ...sourceWhere(source)
   };
   if (input.from) where.createdAt = { gte: dayStart(input.from) };
-  if (input.to) where.createdAt = { ...(where.createdAt as object), lte: dayEnd(input.to) };
+  if (input.to) where.createdAt = { ...(where.createdAt as object), lte: rangeEnd(input)! };
   if (input.branchId) where.branchId = input.branchId;
   return where;
 }
@@ -134,7 +138,7 @@ export async function getSalesSummary(input: ReportInput) {
     WHERE status NOT IN ('CANCELLED', 'REFUNDED')
       AND (${input.branchId ?? null}::int IS NULL OR branch_id = ${input.branchId ?? null}::int)
       AND (${input.from ?? null}::text IS NULL OR created_at >= ${input.from ? dayStart(input.from) : null})
-      AND (${input.to ?? null}::text IS NULL OR created_at <= ${input.to ? dayEnd(input.to) : null})
+      AND (${input.to ?? null}::text IS NULL OR created_at <= ${rangeEnd(input)})
       ${sourceSql(source, "orders")}
     GROUP BY 1
     ORDER BY date ASC

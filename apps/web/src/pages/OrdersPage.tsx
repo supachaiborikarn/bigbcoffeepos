@@ -11,6 +11,7 @@ import { useToast } from "../contexts/ToastContext";
 import { useCart } from "../contexts/CartContext";
 import type { Order, OrderStatus, PaymentMethod, StoreSetting } from "../types";
 import { Ban, CheckCircle2, Clock, Printer, RefreshCw, RotateCcw, Search, ShoppingBag } from "lucide-react";
+import ConfirmReasonDialog from "../components/ui/ConfirmReasonDialog";
 
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   CASH: "เงินสด",
@@ -51,6 +52,8 @@ export default function OrdersPage() {
     setBusyId(order.id);
     try { await fn(order); } finally { setBusyId(null); }
   };
+  // cancel/refund wait here for a written reason before anything is sent
+  const [pending, setPending] = useState<{ kind: "cancel" | "refund" | "refund-reopen"; order: Order } | null>(null);
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [activeTab, setActiveTab] = useState<"ALL" | OrderStatus>("ALL");
@@ -157,10 +160,9 @@ export default function OrdersPage() {
     }
   };
 
-  const cancelOrder = async (order: Order) => {
-    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้`)) return;
+  const cancelOrder = async (order: Order, reason: string) => {
     try {
-      await updateOrderStatus(order.id, "CANCELLED");
+      await updateOrderStatus(order.id, "CANCELLED", reason);
       toast.success(`ยกเลิกบิล #${order.id} แล้ว`);
       await refresh();
       void refreshShift().catch(() => {});
@@ -175,13 +177,15 @@ export default function OrdersPage() {
     }
   };
 
-  const refundOrder = async (order: Order, reopen = false) => {
+  const askRefund = (order: Order, reopen: boolean) => {
     if (reopen && cart.length > 0) {
       toast.error("มีสินค้าในบิลปัจจุบัน กรุณาพักบิลหรือล้างตะกร้าก่อนเปิดบิลคืนเงินมาแก้");
       return;
     }
-    const reason = window.prompt(`คืนเงินบิล #${order.id} ยอด ${formatMoney(order.total)} (${PAYMENT_LABELS[order.paymentMethod]})\nระบบจะคืนสต็อก หักยอดขายของกะ และย้ายบิลไปแท็บ "คืนเงินแล้ว"\nระบุเหตุผล:`);
-    if (!reason?.trim()) return;
+    setPending({ kind: reopen ? "refund-reopen" : "refund", order });
+  };
+
+  const refundOrder = async (order: Order, reason: string, reopen = false) => {
     try {
       const refunded = await updateOrderStatus(order.id, "REFUNDED", reason.trim());
       toast.success(`คืนเงินบิล #${order.id} แล้ว · อย่าลืมจ่ายเงินคืนลูกค้า ${formatMoney(order.total)}`);
@@ -286,10 +290,10 @@ export default function OrdersPage() {
                     )}
                     {canRefund && (order.status === "PAID" || order.status === "READY") && (
                       <>
-                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded(refundOrder)(order)} disabled={busyId !== null}>
+                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => askRefund(order, false)} disabled={busyId !== null}>
                         <RotateCcw size={16} /> คืนเงิน
                       </button>
-                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded((item) => refundOrder(item, true))(order)} disabled={busyId !== null}>
+                      <button className="btn btn--ghost" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => askRefund(order, true)} disabled={busyId !== null}>
                         <RotateCcw size={16} /> คืนเงินและแก้บิล
                       </button>
                       </>
@@ -300,7 +304,7 @@ export default function OrdersPage() {
                       </button>
                     )}
                     {order.status !== "CANCELLED" && order.status !== "REFUNDED" && (
-                      <button className="btn btn--danger" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => guarded(cancelOrder)(order)} disabled={busyId !== null} data-testid={`cancel-order-${order.id}`}>
+                      <button className="btn btn--danger" style={{ padding: "8px 14px", borderRadius: 8 }} onClick={() => setPending({ kind: "cancel", order })} disabled={busyId !== null} data-testid={`cancel-order-${order.id}`}>
                         <Ban size={16} /> ยกเลิกบิล
                       </button>
                     )}
@@ -324,6 +328,26 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+
+      {pending && (
+        <ConfirmReasonDialog
+          title={pending.kind === "cancel" ? `ยกเลิกบิล #${pending.order.id}` : `คืนเงินบิล #${pending.order.id}`}
+          detail={pending.kind === "cancel"
+            ? `ยอด ${formatMoney(pending.order.total)}\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้ · ยกเลิกแล้วย้อนกลับไม่ได้`
+            : `ยอด ${formatMoney(pending.order.total)} (${PAYMENT_LABELS[pending.order.paymentMethod]})\nระบบจะคืนสต็อก หักยอดขายของกะ และย้ายบิลไปแท็บ "คืนเงินแล้ว"${pending.kind === "refund-reopen" ? "\nจากนั้นเปิดรายการเดิมเป็นบิลใหม่ให้แก้" : ""}`}
+          confirmLabel={pending.kind === "cancel" ? "ยืนยันยกเลิกบิล" : `ยืนยันคืนเงิน ${formatMoney(pending.order.total)}`}
+          busy={busyId === pending.order.id}
+          onConfirm={(reason) => {
+            const { kind, order } = pending;
+            void guarded(async (item) => {
+              if (kind === "cancel") await cancelOrder(item, reason);
+              else await refundOrder(item, reason, kind === "refund-reopen");
+              setPending(null);
+            })(order);
+          }}
+          onClose={() => setPending(null)}
+        />
+      )}
     </main>
   );
 }

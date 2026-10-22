@@ -11,6 +11,7 @@ import { isCupVariantMenuItem, shouldUseModifierModal } from "../../utils/menuRu
 import StockTransfers from "./StockTransfers";
 import StockDocuments from "./StockDocuments";
 import StockLedger from "./StockLedger";
+import { needsRestock } from "../../utils/stockAlert";
 
 // Branch stock screen shared by admins (InventoryPage) and branch managers
 // (BranchInventoryPage). Every number carries a label, and stock changes go
@@ -30,7 +31,7 @@ const fmtWhen = (iso: string) => new Date(iso).toLocaleString("th-TH", { day: "n
 
 function stockStatus(item: InventoryItem): Status {
   if (item.stockQty <= 0) return "out";
-  if (item.reorderLevel > 0 && item.stockQty <= item.reorderLevel) return "low";
+  if (needsRestock(item)) return "low";
   return "ok";
 }
 const STATUS_LABEL: Record<Status, string> = { ok: "ปกติ", low: "ใกล้หมด", out: "หมดแล้ว" };

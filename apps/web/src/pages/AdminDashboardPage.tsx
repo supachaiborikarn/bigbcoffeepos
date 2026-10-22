@@ -29,6 +29,8 @@ import type {
   SalesSummary,
   User,
 } from "../types";
+import { needsRestock } from "../utils/stockAlert";
+import { bangkokClock, bangkokDay, percentChange } from "../utils/bangkokDate";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -60,6 +62,8 @@ type BranchStat = {
   cups: number;
   lowStock: number;
   shiftOpen: boolean;
+  /** an open shift that started on an earlier Thai day: someone forgot to close it */
+  shiftStale: { id: number; openedAt: string } | null;
 };
 
 const ROLE_LABEL: Record<User["role"], string> = {
@@ -78,9 +82,7 @@ function formatMoney(v: number) {
 }
 
 /** Thai calendar date N days back (UTC would roll "today" over at 07:00). */
-function isoDaysAgo(daysBack: number) {
-  return new Date(Date.now() - daysBack * 86_400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
-}
+const isoDaysAgo = bangkokDay;
 
 /** Run async work for each item, at most `limit` at a time (avoids ~20 parallel requests at once). */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -104,6 +106,7 @@ export default function AdminDashboardPage() {
   const [loadError, setLoadError] = useState(false);
   const [todaySummary, setTodaySummary] = useState<SalesSummary | null>(null);
   const [weekSummary, setWeekSummary] = useState<SalesSummary | null>(null);
+  const [yesterdaySoFar, setYesterdaySoFar] = useState<SalesSummary | null>(null);
   const [branchStats, setBranchStats] = useState<BranchStat[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [pendingPOs, setPendingPOs] = useState<PurchaseOrder[]>([]);
@@ -112,6 +115,8 @@ export default function AdminDashboardPage() {
   const [failedEvents, setFailedEvents] = useState<IntegrationEvent[]>([]);
   const [offline, setOffline] = useState({ pending: 0, failed: 0 });
   const [busy, setBusy] = useState<string | null>(null);
+  // approving is two taps: the first shows what is being signed off, the second commits
+  const [confirmingPO, setConfirmingPO] = useState<number | null>(null);
 
   const loadPurchases = useCallback(async () => {
     const items = await getPurchases().catch(() => [] as PurchaseOrder[]);
@@ -135,9 +140,11 @@ export default function AdminDashboardPage() {
     setLoading(true);
     const today = isoDaysAgo(0);
     const weekAgo = isoDaysAgo(6);
-    const [todayS, weekS, usersList] = await Promise.all([
+    const [todayS, weekS, yesterdayS, usersList] = await Promise.all([
       getSalesSummary({ from: today, to: today }).catch(() => null),
       getSalesSummary({ from: weekAgo, to: today }).catch(() => null),
+      // yesterday up to this time of day: comparing with yesterday's full day read -68% every morning
+      getSalesSummary({ from: isoDaysAgo(1), to: isoDaysAgo(1), untilTime: bangkokClock() }).catch(() => null),
       getUsers().catch(() => [] as User[])
     ]);
     const [perBranch] = await Promise.all([
@@ -148,7 +155,7 @@ export default function AdminDashboardPage() {
             getInventory(b.id).catch(() => [] as InventoryItem[]),
           ]);
           const cups = sum?.topItems.reduce((a, i) => a + i.qty, 0) ?? 0;
-          const lowStock = inv.filter((i) => i.reorderLevel > 0 && i.stockQty <= i.reorderLevel).length;
+          const lowStock = inv.filter(needsRestock).length;
           return {
             branch: b,
             revenue: sum?.totalRevenue ?? 0,
@@ -156,12 +163,16 @@ export default function AdminDashboardPage() {
             cups,
             lowStock,
             shiftOpen: shift?.status === "OPEN",
+            shiftStale: shift?.status === "OPEN" && new Date(shift.openedAt).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" }) < today
+              ? { id: shift.id, openedAt: shift.openedAt }
+              : null,
           };
         })
     ]);
     await Promise.all([loadPurchases(), loadSystem()]);
     setTodaySummary(todayS);
     setWeekSummary(weekS);
+    setYesterdaySoFar(yesterdayS);
     setUsers(usersList);
     setBranchStats(perBranch);
     setLoadError(!todayS || !weekS);
@@ -190,10 +201,7 @@ export default function AdminDashboardPage() {
   );
 
   const todayRevenue = todaySummary?.totalRevenue ?? 0;
-  const yesterdayRevenue =
-    weekSummary?.daily.find((d) => d.date === isoDaysAgo(1))?.revenue ?? 0;
-  const revChange =
-    yesterdayRevenue > 0 ? Math.round(((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100) : 0;
+  const revChange = yesterdaySoFar ? percentChange(todayRevenue, yesterdaySoFar.totalRevenue) ?? 0 : 0;
 
   const outboxCount = useCallback(
     (status: IntegrationEvent["status"]) =>
@@ -213,6 +221,7 @@ export default function AdminDashboardPage() {
     try {
       await approvePurchase(po.id);
       setPendingPOs((prev) => prev.filter((p) => p.id !== po.id));
+      setConfirmingPO(null);
       toast.success(`อนุมัติใบสั่งซื้อ #${po.id} แล้ว`);
     } catch (e) {
       toast.error((e as Error).message || "อนุมัติไม่สำเร็จ");
@@ -372,7 +381,7 @@ export default function AdminDashboardPage() {
                   >
                     {kpi.change > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                     {kpi.change > 0 ? "+" : ""}
-                    {kpi.change}% vs เมื่อวาน
+                    {kpi.change}% vs เมื่อวานเวลาเดียวกัน
                   </span>
                 )}
                 {kpi.sub && (
@@ -461,8 +470,11 @@ export default function AdminDashboardPage() {
                 <strong style={{ fontSize: 13 }}>{s.branch.name}</strong>
                 <span className="muted" style={{ display: "block", fontSize: 11 }}>{s.branch.location}</span>
               </div>
-              <span className={`badge ${s.shiftOpen ? "badge--active" : "badge--warning"}`}>
-                {s.shiftOpen ? "เปิด" : "ปิด"}
+              <span
+                className={`badge ${s.shiftOpen && !s.shiftStale ? "badge--active" : "badge--warning"}`}
+                title={s.shiftStale ? `กะ #${s.shiftStale.id} เปิดตั้งแต่ ${new Date(s.shiftStale.openedAt).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} — ลืมปิดกะ?` : undefined}
+              >
+                {s.shiftStale ? `ค้าง #${s.shiftStale.id}` : s.shiftOpen ? "เปิด" : "ปิด"}
               </span>
               <strong style={{ textAlign: "right" }}>{formatMoney(s.revenue)}</strong>
               <span style={{ textAlign: "right" }}>{s.orders}</span>
@@ -561,12 +573,15 @@ export default function AdminDashboardPage() {
                 <ClipboardList size={16} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} />
                 รออนุมัติ — ใบสั่งซื้อ
               </h2>
-              <p className="muted">อนุมัติได้ในคลิกเดียว</p>
+              <p className="muted">ตรวจผู้ขายและยอดก่อนกดยืนยัน</p>
             </div>
             {pendingPOs.length > 0 && <span className="badge badge--warning">{pendingPOs.length} ใบ</span>}
           </div>
           <div style={{ padding: "0 24px 20px", display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
-            {pendingPOs.slice(0, 8).map((po) => (
+            {pendingPOs.slice(0, 8).map((po) => {
+              const noSupplier = !po.supplier.trim() || po.supplier.trim() === "ไม่ระบุผู้ขาย";
+              const confirming = confirmingPO === po.id;
+              return (
               <div
                 key={po.id}
                 style={{
@@ -577,27 +592,44 @@ export default function AdminDashboardPage() {
                   border: "1px solid var(--border-light)",
                   borderRadius: "var(--radius-sm)",
                   background: "var(--bg-subtle)",
+                  flexWrap: "wrap",
+                  ...(noSupplier ? { borderColor: "var(--warning)" } : {}),
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <strong style={{ fontSize: 13, display: "block" }}>{po.supplier}</strong>
+                  <strong style={{ fontSize: 13, display: "block", color: noSupplier ? "var(--warning)" : undefined }}>
+                    #{po.id} · {noSupplier ? "⚠ ไม่ระบุผู้ขาย — ตรวจเอกสารก่อน" : po.supplier}
+                  </strong>
                   <span className="muted" style={{ fontSize: 11 }}>
                     {po.branchName ?? `สาขา #${po.branchId}`}
                     {po.itemCount ? ` · ${po.itemCount} รายการ` : ""}
                   </span>
                 </div>
                 <strong style={{ fontSize: 14, whiteSpace: "nowrap" }}>{formatMoney(po.totalCost)}</strong>
-                <button
-                  className="btn btn--primary"
-                  onClick={() => handleApprove(po)}
-                  disabled={busy === `po-${po.id}`}
-                  style={{ padding: "8px 14px" }}
-                >
-                  <Check size={14} />
-                  อนุมัติ
-                </button>
+                {confirming ? (
+                  <span style={{ display: "flex", gap: 6 }}>
+                    <button className="btn btn--ghost" onClick={() => setConfirmingPO(null)} disabled={busy === `po-${po.id}`} style={{ padding: "8px 12px" }}>
+                      ไม่ใช่
+                    </button>
+                    <button className="btn btn--primary" onClick={() => handleApprove(po)} disabled={busy === `po-${po.id}`} style={{ padding: "8px 14px" }}>
+                      <Check size={14} />
+                      ยืนยันอนุมัติ {formatMoney(po.totalCost)}
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="btn btn--ghost"
+                    onClick={() => setConfirmingPO(po.id)}
+                    disabled={busy !== null}
+                    style={{ padding: "8px 14px" }}
+                  >
+                    <Check size={14} />
+                    อนุมัติ…
+                  </button>
+                )}
               </div>
-            ))}
+              );
+            })}
             {!loading && pendingPOs.length === 0 && (
               <p className="muted" style={{ padding: 12 }}>ไม่มีใบสั่งซื้อรออนุมัติ ✓</p>
             )}

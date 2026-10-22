@@ -303,8 +303,9 @@ async function main() {
       response.url().includes(`/api/orders/${cashOrder.id}`)
       && response.request().method() === "PATCH"
     );
-    page.once("dialog", (dialog) => dialog.accept());
     await page.getByTestId(`cancel-order-${cashOrder.id}`).click();
+    await page.getByRole("alertdialog").getByRole("textbox").fill("e2e cancel check");
+    await page.getByRole("button", { name: "ยืนยันยกเลิกบิล" }).click();
     const cancelResponse = await cancelResponsePromise;
     assert(cancelResponse.ok(), `Cancel response failed with ${cancelResponse.status()}`);
     await cashOrderCard.getByText("ยกเลิกแล้ว").waitFor({ timeout: 10_000 });

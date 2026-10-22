@@ -4,6 +4,8 @@ import { useAuth } from "../contexts/AuthContext";
 import { useBranch } from "../contexts/BranchContext";
 import { useShift } from "../contexts/ShiftContext";
 import { Coffee, TrendingUp, ShoppingCart, Receipt, AlertTriangle, Users, Sparkles, ArrowUpRight, ArrowDownRight, Package } from "lucide-react";
+import { needsRestock } from "../utils/stockAlert";
+import { bangkokClock, bangkokDay, percentChange } from "../utils/bangkokDate";
 
 type DashboardData = {
   totalOrders: number;
@@ -21,14 +23,11 @@ function formatMoney(v: number) {
 }
 
 function getWeekRange() {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 6);
-  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+  return { from: bangkokDay(6), to: bangkokDay(0) };
 }
 
 function getTodayRange() {
-  const d = new Date().toISOString().slice(0, 10);
+  const d = bangkokDay(0);
   return { from: d, to: d };
 }
 
@@ -38,6 +37,8 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
   const { activeShift } = useShift();
   const [summary, setSummary] = useState<DashboardData | null>(null);
   const [todaySummary, setTodaySummary] = useState<DashboardData | null>(null);
+  const [yesterdaySoFar, setYesterdaySoFar] = useState<number | null>(null);
+  const [inventoryLoaded, setInventoryLoaded] = useState(false);
   const [inventory, setInventory] = useState<LowStockItem[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [staffCount, setStaffCount] = useState(0);
@@ -50,11 +51,15 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
       .then(setSummary).catch(() => setSummary(null));
     getSalesSummary({ from: todayRange.from, to: todayRange.to, branchId: resolvedBranchId ?? undefined })
       .then(setTodaySummary).catch(() => setTodaySummary(null));
+    // compare with yesterday up to this time of day, not yesterday's full day
+    getSalesSummary({ from: bangkokDay(1), to: bangkokDay(1), untilTime: bangkokClock(), branchId: resolvedBranchId ?? undefined })
+      .then((s) => setYesterdaySoFar(s.totalRevenue)).catch(() => setYesterdaySoFar(null));
     if (user?.role === "admin") getUsers().then((users) => setStaffCount(users.filter((u) => u.active !== false && u.branchId === resolvedBranchId).length)).catch(() => {});
     if (resolvedBranchId) {
       getInventory(resolvedBranchId)
-        .then((items) => setInventory(items.filter((i) => i.reorderLevel > 0 && i.stockQty <= i.reorderLevel)))
-        .catch(() => setInventory([]));
+        .then((items) => setInventory(items.filter(needsRestock)))
+        .catch(() => setInventory([]))
+        .finally(() => setInventoryLoaded(true));
       getShifts(resolvedBranchId)
         .then((items) => setShifts(items.slice(0, 5)))
         .catch(() => setShifts([]));
@@ -62,16 +67,10 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
   }, [resolvedBranchId, range, todayRange]);
 
   const maxRevenue = useMemo(() => Math.max(1, ...(summary?.daily.map((d) => d.revenue) ?? [1])), [summary]);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = bangkokDay(0);
 
-  // Calculate yesterday comparison
-  const yesterdayData = summary?.daily.find((d) => {
-    const yd = new Date(); yd.setDate(yd.getDate() - 1);
-    return d.date === yd.toISOString().slice(0, 10);
-  });
   const todayRevenue = todaySummary?.totalRevenue ?? 0;
-  const yesterdayRevenue = yesterdayData?.revenue ?? 0;
-  const revChange = yesterdayRevenue > 0 ? Math.round(((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100) : 0;
+  const revChange = todaySummary && yesterdaySoFar !== null ? percentChange(todayRevenue, yesterdaySoFar) ?? 0 : 0;
 
   const todayDrinks = todaySummary?.topItems.reduce((acc, item) => acc + item.qty, 0) ?? 0;
 
@@ -79,13 +78,13 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
     { label: "ยอดขายวันนี้", value: formatMoney(todayRevenue), icon: TrendingUp, change: revChange, color: "#10B981" },
     { label: "ออเดอร์วันนี้", value: String(todaySummary?.totalOrders ?? 0), icon: ShoppingCart, color: "#3B82F6" },
     { label: activeBranch?.branchType === "oil_service" ? "สินค้าที่ขายได้" : "รายการที่ขายได้", value: String(todayDrinks), icon: Coffee, color: "#8B5CF6" },
-    { label: "สต็อกต่ำ", value: String(inventory.length), icon: AlertTriangle, color: inventory.length > 0 ? "#F59E0B" : "#10B981" },
+    { label: "สต็อกต่ำ", value: inventoryLoaded ? String(inventory.length) : "—", icon: AlertTriangle, color: inventory.length > 0 ? "#F59E0B" : "#10B981" },
     ...(user?.role === "admin" ? [{ label: "พนักงานประจำสาขา", value: String(staffCount), icon: Users, color: "#6366F1" }] : []),
   ];
 
   // AI Insight cards
   const insights = [
-    revChange > 0 && { icon: "📈", text: `รายได้ +${revChange}% เทียบกับเมื่อวาน`, type: "success" as const },
+    revChange > 0 && { icon: "📈", text: `รายได้ +${revChange}% เทียบกับเมื่อวานเวลาเดียวกัน`, type: "success" as const },
     inventory.length > 0 && { icon: "⚠️", text: `สต็อก ${inventory.length} รายการใกล้หมด`, type: "warning" as const },
     todaySummary && todaySummary.topItems.length > 0 && { icon: "☕", text: `${todaySummary.topItems[0]?.name} ยอดฮิตวันนี้`, type: "info" as const },
     activeShift && { icon: "🟢", text: `กะเปิดอยู่ · ยอดขาย ${formatMoney(activeShift.totalSales)}`, type: "success" as const },
@@ -110,11 +109,11 @@ export default function DashboardPage({ branchId }: { branchId: number | null })
               </span>
               <div>
                 <p className="dash-kpi__label">{kpi.label}</p>
-                <p className="dash-kpi__value">{summary || todaySummary ? kpi.value : "—"}</p>
+                <p className="dash-kpi__value">{todaySummary ? kpi.value : "—"}</p>
                 {kpi.change !== undefined && kpi.change !== 0 && (
                   <span style={{ fontSize: 11, fontWeight: 600, color: kpi.change > 0 ? "#10B981" : "#EF4444", display: "flex", alignItems: "center", gap: 2, marginTop: 2 }}>
                     {kpi.change > 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                    {kpi.change > 0 ? "+" : ""}{kpi.change}% vs เมื่อวาน
+                    {kpi.change > 0 ? "+" : ""}{kpi.change}% vs เมื่อวานเวลาเดียวกัน
                   </span>
                 )}
               </div>

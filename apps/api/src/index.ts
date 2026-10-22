@@ -727,7 +727,9 @@ app.put("/api/recipes/:menuItemId", requireRole("admin", "manager"), async (req,
 app.get("/api/orders", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   const limit = parseId(req.query.limit as string);
-  res.json({ items: await getOrders(branchId, limit ? Math.min(limit, 1000) : undefined) });
+  const status = typeof req.query.status === "string" && req.query.status ? req.query.status : undefined;
+  const shiftId = parseId(req.query.shiftId as string) ?? undefined;
+  res.json({ items: await getOrders(branchId, limit ? Math.min(limit, 1000) : undefined, { status, shiftId }) });
 });
 app.get("/api/orders/idempotency/:key", requireRole("admin", "manager", "cashier"), async (req: AuthRequest, res) => {
   const key = String(req.params.key ?? "").trim();
@@ -762,6 +764,9 @@ app.patch("/api/orders/:id", requireRole("admin", "manager", "cashier"), async (
     if (req.body?.status === "REFUNDED") {
       if (req.user?.role !== "admin" && req.user?.role !== "manager") return res.status(403).json({ error: "คืนเงินได้เฉพาะผู้จัดการหรือผู้ดูแลระบบ" });
       if (!isStr(req.body?.reason) || !req.body.reason.trim()) return res.status(400).json({ error: "กรุณาระบุเหตุผลที่คืนเงิน" });
+    }
+    if (req.body?.status === "CANCELLED" && (!isStr(req.body?.reason) || !req.body.reason.trim())) {
+      return res.status(400).json({ error: "กรุณาระบุเหตุผลที่ยกเลิกบิล" });
     }
     const order = await updateOrderStatusWithContext(id, {
       status: req.body?.status ?? "PAID",
@@ -956,9 +961,10 @@ app.use(["/api/reports/summary", "/api/reports/profit", "/api/reports/staff", "/
 app.get("/api/reports/summary", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const from = isStr(req.query.from) ? String(req.query.from) : undefined;
   const to = isStr(req.query.to) ? String(req.query.to) : undefined;
+  const untilTime = isStr(req.query.untilTime) ? String(req.query.untilTime) : undefined;
   const branchId = parseId(req.query.branchId as string) ?? undefined;
   const source = parseReportSource(req.query.source);
-  return res.json({ summary: await getSalesSummary({ from, to, branchId, source }) });
+  return res.json({ summary: await getSalesSummary({ from, to, untilTime, branchId, source }) });
 });
 
 app.get("/api/reports/profit", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {

@@ -166,7 +166,9 @@
 .studio-sale-success { display:flex; align-items:center; gap:8px; background:var(--brand-subtle); color:var(--brand); border-radius:10px; padding:10px 13px; font-size:12px; margin-bottom:12px; }
 .studio-sale-success button { margin-left:auto; background:none; border:0; color:inherit; }
 .studio-recipe-note { font-size:12px; color:var(--text-muted); padding:8px 0; }
-.studio-app .pos-cart-fab { position:sticky; bottom:max(14px,env(safe-area-inset-bottom)); right:auto; z-index:6; flex-shrink:0; margin:0 0 max(14px,env(safe-area-inset-bottom)); width:100%; background:var(--brand); color:var(--studio-cta-text); border-radius:14px; box-shadow:0 8px 22px #0002; padding:16px 18px; min-height:58px; }
+/* sticks to the bottom of the menu column and is always shown on compact screens (even with an empty cart), so cart + pay are always findable */
+.studio-app .pos-cart-fab { position:sticky; bottom:max(14px,env(safe-area-inset-bottom)); right:auto; z-index:6; flex-shrink:0; margin:auto 0 max(14px,env(safe-area-inset-bottom)); width:100%; max-width:none; justify-content:space-between; background:var(--brand); color:var(--studio-cta-text); border-radius:14px; box-shadow:0 8px 22px #0002; padding:16px 18px; min-height:58px; }
+.studio-app .pos-cart-fab.is-empty { background:var(--bg-surface); color:var(--text-muted); border:1px solid var(--border); box-shadow:0 6px 18px #0001; }
 .studio-app .pos-cart-sheet { background:var(--bg-surface); color:var(--text-primary); padding-bottom:env(safe-area-inset-bottom); }
 .studio-app .pos-cart-sheet__head { background:var(--bg-surface); }
 .studio-app .modal-backdrop { padding:20px; overflow-y:auto; }

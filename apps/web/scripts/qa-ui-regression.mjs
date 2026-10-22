@@ -272,8 +272,9 @@ try {
     const f = await fixture();
     try {
       await f.goto('/orders');
-      f.page.once('dialog', (dialog) => dialog.accept('แก้รายการสินค้า'));
       await f.page.getByRole('button', { name: 'คืนเงินและแก้บิล', exact: true }).click();
+      await f.page.getByRole('alertdialog').getByRole('textbox').fill('แก้รายการสินค้า');
+      await f.page.getByRole('button', { name: /^ยืนยันคืนเงิน/ }).click();
       await f.page.waitForURL('**/pos');
       await f.page.getByRole('button', { name: /^ชำระเงิน ฿75/ }).waitFor();
       const draft = await f.page.evaluate(({ user, branch }) => JSON.parse(sessionStorage.getItem(`bbpos.cart:${user.id}:${branch.id}`)), { user, branch });

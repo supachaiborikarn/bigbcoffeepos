@@ -697,8 +697,12 @@ export async function updateCupStockSettings(branchId: number, settings: Pick<Cu
   return payload.settings;
 }
 
-export async function getOrders(branchId: number, limit?: number) {
-  const payload = await fetchJson<{ items: Order[] }>(`${API_URL}/orders?branchId=${branchId}${limit ? `&limit=${limit}` : ""}`);
+export async function getOrders(branchId: number, limit?: number, filter: { status?: OrderStatus; shiftId?: number } = {}) {
+  const params = new URLSearchParams({ branchId: String(branchId) });
+  if (limit) params.set("limit", String(limit));
+  if (filter.status) params.set("status", filter.status);
+  if (filter.shiftId) params.set("shiftId", String(filter.shiftId));
+  const payload = await fetchJson<{ items: Order[] }>(`${API_URL}/orders?${params}`);
   return payload.items;
 }
 
@@ -782,10 +786,11 @@ export async function updateOrderStatus(id: number, status: OrderStatus, reason?
   }
 }
 
-export async function getSalesSummary(params: { from?: string; to?: string; branchId?: number; source?: ReportSource }) {
+export async function getSalesSummary(params: { from?: string; to?: string; untilTime?: string; branchId?: number; source?: ReportSource }) {
   const query = new URLSearchParams();
   if (params.from) query.set("from", params.from);
   if (params.to) query.set("to", params.to);
+  if (params.untilTime) query.set("untilTime", params.untilTime);
   if (params.branchId) query.set("branchId", String(params.branchId));
   if (params.source) query.set("source", params.source);
   const payload = await fetchJson<{ summary: SalesSummary }>(`${API_URL}/reports/summary?${query.toString()}`);

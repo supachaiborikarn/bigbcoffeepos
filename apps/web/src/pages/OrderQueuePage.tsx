@@ -6,9 +6,22 @@ import { useToast } from "../contexts/ToastContext";
 import type { Order } from "../types";
 import { Ban, CheckCircle2 } from "lucide-react";
 import { describeModifiers } from "../utils/modifierLabel";
+import ConfirmReasonDialog from "../components/ui/ConfirmReasonDialog";
+
+const LATE_AFTER_MINUTES = 15;
 
 function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+}
+
+function waitedMinutes(dateStr: string, now: number) {
+  return Math.max(0, Math.floor((now - new Date(dateStr).getTime()) / 60_000));
+}
+
+function formatWait(minutes: number) {
+  if (minutes < 1) return "เพิ่งเข้า";
+  if (minutes < 60) return `รอ ${minutes} นาที`;
+  return `รอ ${Math.floor(minutes / 60)} ชม. ${minutes % 60} นาที`;
 }
 
 export default function OrderQueuePage() {
@@ -18,6 +31,8 @@ export default function OrderQueuePage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [cancelling, setCancelling] = useState<Order | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const refresh = useCallback(async () => {
     if (!activeBranch || !activeShift) {
@@ -26,9 +41,10 @@ export default function OrderQueuePage() {
       return;
     }
     try {
-      const data = await getOrders(activeBranch.id);
-      const pending = data.filter(o => o.status === "PAID" && o.shiftId === activeShift.id).reverse();
-      setOrders(pending);
+      // filtered on the server: pulling every bill of the branch made the first load take ~12 s
+      const data = await getOrders(activeBranch.id, undefined, { status: "PAID", shiftId: activeShift.id });
+      setOrders(data.reverse());
+      setNow(Date.now());
     } catch {
       // Keep the current queue visible if an auto-refresh request fails.
     } finally {
@@ -59,13 +75,13 @@ export default function OrderQueuePage() {
   };
 
   // one request per bill at a time: a double click must not cancel twice
-  const cancelOrder = async (order: Order) => {
+  const cancelOrder = async (order: Order, reason: string) => {
     if (busyId !== null) return;
-    if (!window.confirm(`ยืนยันยกเลิกบิล #${order.id}?\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้`)) return;
     setBusyId(order.id);
     try {
-      await updateOrderStatus(order.id, "CANCELLED");
+      await updateOrderStatus(order.id, "CANCELLED", reason);
       toast.success(`ยกเลิกบิล #${order.id} แล้ว`);
+      setCancelling(null);
       refresh();
       void refreshShift().catch(() => {});
     } catch (error) {
@@ -84,7 +100,7 @@ export default function OrderQueuePage() {
         </div>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
           <span className="badge badge--active" style={{ fontSize: "16px", padding: "8px 16px" }}>
-            รอจัดเตรียม {orders.length} รายการ
+            รอจัดเตรียม {loading ? "…" : orders.length} รายการ
           </span>
           <button className="btn btn--ghost" onClick={refresh}>รีเฟรช</button>
         </div>
@@ -101,11 +117,19 @@ export default function OrderQueuePage() {
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
-        {orders.map((order) => (
-          <div key={order.id} className="panel" style={{ padding: "20px", borderLeft: "4px solid var(--brand)" }}>
+        {orders.map((order) => {
+          const waited = waitedMinutes(order.createdAt, now);
+          const late = waited >= LATE_AFTER_MINUTES;
+          return (
+          <div key={order.id} className="panel" style={{ padding: "20px", borderLeft: `4px solid ${late ? "var(--danger)" : "var(--brand)"}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
               <strong style={{ fontSize: "22px" }}>#{order.id}</strong>
-              <span className="muted">{formatTime(order.createdAt)}</span>
+              <span style={{ textAlign: "right" }}>
+                <span className="muted">{formatTime(order.createdAt)}</span>
+                <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: late ? "var(--danger)" : "var(--text-muted)" }}>
+                  {formatWait(waited)}{late ? " · ทำเสร็จแล้วกด เสร็จสิ้น" : ""}
+                </span>
+              </span>
             </div>
 
             <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
@@ -120,27 +144,40 @@ export default function OrderQueuePage() {
               ))}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {/* the destructive action is small and set apart so it is not hit instead of "done" */}
+            <button
+              className="btn btn--primary btn--full"
+              style={{ padding: "14px", fontSize: "16px" }}
+              onClick={() => markReady(order)}
+              disabled={busyId !== null}
+            >
+              <CheckCircle2 size={18} /> เสร็จสิ้น
+            </button>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
               <button
-                className="btn btn--primary btn--full"
-                style={{ padding: "14px", fontSize: "16px" }}
-                onClick={() => markReady(order)}
+                className="btn btn--ghost"
+                style={{ padding: "6px 12px", fontSize: "13px", color: "var(--danger)" }}
+                onClick={() => setCancelling(order)}
                 disabled={busyId !== null}
               >
-                <CheckCircle2 size={18} /> เสร็จสิ้น
-              </button>
-              <button
-                className="btn btn--danger btn--full"
-                style={{ padding: "14px", fontSize: "16px" }}
-                onClick={() => cancelOrder(order)}
-                disabled={busyId !== null}
-              >
-                <Ban size={18} /> ยกเลิกบิล
+                <Ban size={14} /> ยกเลิกบิล…
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
+
+      {cancelling && (
+        <ConfirmReasonDialog
+          title={`ยกเลิกบิล #${cancelling.id}`}
+          detail={`${cancelling.items.map((item) => `${item.qty}x ${item.name}`).join(", ")}\nระบบจะคืนสต็อกและหักยอดขายของกะออกให้ · ยกเลิกแล้วย้อนกลับไม่ได้`}
+          confirmLabel="ยืนยันยกเลิกบิล"
+          busy={busyId === cancelling.id}
+          onConfirm={(reason) => cancelOrder(cancelling, reason)}
+          onClose={() => setCancelling(null)}
+        />
+      )}
     </div>
   );
 }

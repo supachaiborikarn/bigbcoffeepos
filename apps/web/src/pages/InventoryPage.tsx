@@ -25,6 +25,7 @@ import { printBarcodeLabels } from "../utils/barcode";
 import StockManager from "../components/inventory/StockManager";
 import StockLedger from "../components/inventory/StockLedger";
 import PurchaseReceiving from "../components/inventory/PurchaseReceiving";
+import { needsRestock } from "../utils/stockAlert";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -286,11 +287,8 @@ export default function InventoryPage() {
     setSearchParams(next, { replace: true });
   };
 
-  // same rule as the stock list (StockManager.stockStatus): at/below the alert level, or out (≤ 0)
-  const lowStockItems = useMemo(
-    () => inventory.filter((item) => item.stockQty <= 0 || (item.reorderLevel > 0 && item.stockQty <= item.reorderLevel)),
-    [inventory]
-  );
+  // same rule as the dashboards: tracked items (alert level set) at or below their level
+  const lowStockItems = useMemo(() => inventory.filter(needsRestock), [inventory]);
 
   const branchProducts = useMemo(() => {
     const branchType = activeBranch?.branchType;
@@ -946,7 +944,7 @@ export default function InventoryPage() {
             <strong style={{ display: "block", fontSize: "28px", color: "var(--text-primary)", marginTop: "4px" }}>{activeProductCount}</strong>
           </div>
           <div style={{ flex: 1, background: "var(--bg-surface)", padding: "20px", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
-            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>ใกล้หมด / หมดแล้ว</span>
+            <span style={{ color: "var(--text-secondary)", fontSize: "13px" }}>ใกล้หมด / หมดแล้ว <small>(เฉพาะที่ตั้งจุดแจ้งเตือน)</small></span>
             <strong className={lowStockItems.length ? "negative" : "positive"} style={{ display: "block", fontSize: "28px", color: lowStockItems.length > 0 ? "var(--warning)" : "var(--success)", marginTop: "4px" }}>{lowStockItems.length}</strong>
           </div>
         </div>

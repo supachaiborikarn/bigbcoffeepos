@@ -22,6 +22,7 @@ const CustomersPage = lazyRoute(() => import("./pages/CustomersPage"));
 const OrdersPage = lazyRoute(() => import("./pages/OrdersPage"));
 const ParityPage = lazyRoute(() => import("./pages/ParityPage"));
 const CustomerDisplayPage = lazyRoute(() => import("./pages/CustomerDisplayPage"));
+const WarehousePage = lazyRoute(() => import("./pages/WarehousePage"));
 
 function routeElement(children: ReactNode) {
   return (
@@ -43,6 +44,7 @@ export const router = createBrowserRouter([{ errorElement: <RouteErrorPage />, c
       { path: "/queue", element: routeElement(<OrderQueuePage />) },
       { path: "/orders", element: routeElement(<OrdersPage />) },
       { path: "/inventory", element: routeElement(<InventoryRoute />) },
+      { path: "/warehouse", element: routeElement(<WarehousePage />) },
       { path: "/customers", element: routeElement(<CustomersPage />) },
       { path: "/staff", element: routeElement(<StaffPage />) },
       { path: "/reports", element: routeElement(<ReportsPage />) },

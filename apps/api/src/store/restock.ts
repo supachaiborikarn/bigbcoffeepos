@@ -1,6 +1,9 @@
 import prisma from "../prisma.js";
+import type { Prisma } from "@prisma/client";
 
 const roundQty = (value: number) => Math.round(value * 1000) / 1000;
+// requests whose reserved stock is still held in the warehouse
+const OPEN_STATUSES = ["SUBMITTED", "PICKING", "PARTIAL", "IN_TRANSIT"];
 
 export async function getCentralWarehouses() {
   return prisma.centralWarehouse.findMany({
@@ -41,7 +44,7 @@ export async function getWarehouseInventory(warehouseId: number) {
     by: ["ingredientId"],
     where: {
       reservedQty: { gt: 0 },
-      request: { warehouseId, status: { in: ["SUBMITTED", "PICKING", "PARTIAL"] } }
+      request: { warehouseId, status: { in: OPEN_STATUSES } }
     },
     _sum: { reservedQty: true }
   });
@@ -70,7 +73,9 @@ export async function adjustWarehouseStock(input: {
   actorUserId?: number | null;
 }) {
   if (!Number.isFinite(input.qty) || input.qty === 0) throw new Error("จำนวนปรับสต็อกไม่ถูกต้อง");
+  if (input.reorderLevel !== undefined && (!Number.isFinite(input.reorderLevel) || input.reorderLevel < 0)) throw new Error("จุดแจ้งเตือนต้องไม่ติดลบ");
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`restock-warehouse:${input.warehouseId}`}))::text`;
     const stock = await tx.warehouseStock.upsert({
       where: { warehouseId_ingredientId: { warehouseId: input.warehouseId, ingredientId: input.ingredientId } },
       update: {
@@ -85,6 +90,13 @@ export async function adjustWarehouseStock(input: {
       }
     });
     if (stock.stockQty < 0) throw new Error("สต็อกกลางไม่พอสำหรับรายการนี้");
+    if (input.qty < 0) {
+      const reserved = await tx.restockRequestItem.aggregate({
+        where: { ingredientId: input.ingredientId, reservedQty: { gt: 0 }, request: { warehouseId: input.warehouseId, status: { in: OPEN_STATUSES } } },
+        _sum: { reservedQty: true }
+      });
+      if (stock.stockQty < Number(reserved._sum.reservedQty ?? 0)) throw new Error("ตัดออกไม่ได้ ของส่วนนี้ถูกจองไว้ให้ใบเบิกของสาขาแล้ว");
+    }
     const movement = await tx.warehouseStockMovement.create({
       data: {
         warehouseId: input.warehouseId,
@@ -121,6 +133,14 @@ export async function createRestockRequest(input: {
   requestedByUserId?: number | null;
   items: { ingredientId: number; requestedQty: number }[];
 }) {
+  const [warehouse, branch] = await Promise.all([
+    prisma.centralWarehouse.findUnique({ where: { id: input.warehouseId }, include: { managerBranch: true } }),
+    prisma.branch.findUnique({ where: { id: input.branchId }, select: { branchType: true } })
+  ]);
+  if (!warehouse || !warehouse.active) throw new Error("ไม่พบคลังกลาง");
+  if (!branch) throw new Error("ไม่พบสาขา");
+  // the warehouse serves the business of the branch that runs it (oil service), never another business
+  if (warehouse.managerBranch && warehouse.managerBranch.branchType !== branch.branchType) throw new Error("สาขานี้เบิกจากคลังกลางนี้ไม่ได้ (คนละธุรกิจ)");
   if (!input.items.length) throw new Error("กรุณาเพิ่มสินค้าอย่างน้อย 1 รายการ");
   if (input.items.some((item) => !Number.isFinite(item.requestedQty) || item.requestedQty <= 0)) throw new Error("จำนวนเบิกต้องมากกว่า 0");
   const unique = new Set(input.items.map((item) => item.ingredientId));
@@ -137,31 +157,36 @@ export async function createRestockRequest(input: {
   });
 }
 
-export async function submitRestockRequest(id: number) {
-  return prisma.$transaction(async (tx) => {
-    const request = await tx.restockRequest.findUnique({ where: { id }, include: { items: true } });
-    if (!request) throw new Error("ไม่พบใบเบิก");
-    if (request.status !== "DRAFT" && request.status !== "PARTIAL") throw new Error("ใบเบิกนี้ส่งคำขอแล้ว");
-
+/** Hold warehouse stock for whatever the request still needs, as far as unreserved stock allows. */
+async function reserveOutstanding(tx: Prisma.TransactionClient, request: { id: number; warehouseId: number; items: Array<{ id: number; ingredientId: number; requestedQty: number; receivedQty: number; shippedQty: number; reservedQty: number }> }) {
     for (const item of request.items) {
       const outstanding = roundQty(item.requestedQty - item.receivedQty - item.shippedQty - item.reservedQty);
       if (outstanding <= 0) continue;
       const warehouseStock = await tx.warehouseStock.findUnique({
         where: { warehouseId_ingredientId: { warehouseId: request.warehouseId, ingredientId: item.ingredientId } }
       });
-      const otherReserved = await tx.restockRequestItem.aggregate({
+      // everything reserved for this ingredient, this request included: the warehouse holds it all
+      const allReserved = await tx.restockRequestItem.aggregate({
         where: {
           ingredientId: item.ingredientId,
-          requestId: { not: request.id },
           reservedQty: { gt: 0 },
-          request: { warehouseId: request.warehouseId, status: { in: ["SUBMITTED", "PICKING", "PARTIAL"] } }
+          request: { warehouseId: request.warehouseId, status: { in: OPEN_STATUSES } }
         },
         _sum: { reservedQty: true }
       });
-      const available = Math.max(0, Number(warehouseStock?.stockQty ?? 0) - Number(otherReserved._sum.reservedQty ?? 0));
+      const available = Math.max(0, Number(warehouseStock?.stockQty ?? 0) - Number(allReserved._sum.reservedQty ?? 0));
       const reserve = roundQty(Math.min(outstanding, available));
       if (reserve > 0) await tx.restockRequestItem.update({ where: { id: item.id }, data: { reservedQty: { increment: reserve } } });
     }
+}
+
+export async function submitRestockRequest(id: number) {
+  return prisma.$transaction(async (tx) => {
+    await lockWarehouseFor(tx, id);
+    const request = await tx.restockRequest.findUnique({ where: { id }, include: { items: true } });
+    if (!request) throw new Error("ไม่พบใบเบิก");
+    if (request.status !== "DRAFT" && request.status !== "PARTIAL") throw new Error("ใบเบิกนี้ส่งคำขอแล้ว");
+    await reserveOutstanding(tx, request);
 
     return tx.restockRequest.update({
       where: { id },
@@ -169,6 +194,37 @@ export async function submitRestockRequest(id: number) {
       include: { branch: true, warehouse: true, items: { include: { ingredient: true } } }
     });
   });
+}
+
+/** Warehouse side: reserve again after new stock arrived, without changing where the request is. */
+export async function reserveRestockRequest(id: number) {
+  return prisma.$transaction(async (tx) => {
+    await lockWarehouseFor(tx, id);
+    const request = await tx.restockRequest.findUnique({ where: { id }, include: { items: true } });
+    if (!request) throw new Error("ไม่พบใบเบิก");
+    if (!OPEN_STATUSES.includes(request.status)) throw new Error("ใบเบิกนี้จองของเพิ่มไม่ได้");
+    await reserveOutstanding(tx, request);
+    return tx.restockRequest.findUnique({ where: { id }, include: { branch: true, warehouse: true, items: { include: { ingredient: true } } } });
+  });
+}
+
+/** Stop a request: give back what it held. Shipments already on the road must be received first. */
+export async function cancelRestockRequest(id: number) {
+  return prisma.$transaction(async (tx) => {
+    await lockWarehouseFor(tx, id);
+    const request = await tx.restockRequest.findUnique({ where: { id }, include: { shipments: { where: { status: "IN_TRANSIT" }, select: { id: true } } } });
+    if (!request) throw new Error("ไม่พบใบเบิก");
+    if (request.status === "RECEIVED" || request.status === "CANCELLED") throw new Error("ใบเบิกนี้ปิดไปแล้ว");
+    if (request.shipments.length) throw new Error("มีของที่ส่งออกไปแล้วยังไม่ได้รับ ให้สาขากดรับของก่อนยกเลิก");
+    await tx.restockRequestItem.updateMany({ where: { requestId: id }, data: { reservedQty: 0 } });
+    return tx.restockRequest.update({ where: { id }, data: { status: "CANCELLED", cancelledAt: new Date() } });
+  });
+}
+
+// one request at a time per warehouse touches reservations, so two submits can't both claim the same stock
+async function lockWarehouseFor(tx: Prisma.TransactionClient, requestId: number) {
+  const row = await tx.restockRequest.findUnique({ where: { id: requestId }, select: { warehouseId: true } });
+  if (row) await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`restock-warehouse:${row.warehouseId}`}))::text`;
 }
 
 export async function startRestockPicking(id: number) {
@@ -186,9 +242,11 @@ export async function dispatchRestockShipment(input: {
 }) {
   if (!input.items.length) throw new Error("กรุณาเลือกสินค้าที่จะส่ง");
   return prisma.$transaction(async (tx) => {
+    await lockWarehouseFor(tx, input.requestId);
     const request = await tx.restockRequest.findUnique({ where: { id: input.requestId }, include: { items: true } });
     if (!request) throw new Error("ไม่พบใบเบิก");
-    if (!["SUBMITTED", "PICKING", "PARTIAL"].includes(request.status)) throw new Error("ใบเบิกนี้ไม่สามารถออกส่งได้");
+    // IN_TRANSIT too: the rest of a request can go out while an earlier shipment is still on the road
+    if (!["SUBMITTED", "PICKING", "PARTIAL", "IN_TRANSIT"].includes(request.status)) throw new Error("ใบเบิกนี้ไม่สามารถออกส่งได้");
     const requestItems = new Map(request.items.map((item) => [item.id, item]));
 
     for (const line of input.items) {
@@ -290,9 +348,10 @@ export async function receiveRestockShipment(input: {
     });
 
     const refreshedItems = await tx.restockRequestItem.findMany({ where: { requestId: shipment.request.id } });
-    const allReceived = refreshedItems.every((item) => item.receivedQty >= item.requestedQty);
+    // done once everything asked for has left the warehouse and arrived; a short count stays on the shipment as DISCREPANCY
+    const allShipped = refreshedItems.every((item) => item.shippedQty >= item.requestedQty);
     const anyInTransit = await tx.restockShipment.count({ where: { restockRequestId: shipment.request.id, status: "IN_TRANSIT" } });
-    const nextStatus = allReceived ? "RECEIVED" : anyInTransit > 0 ? "IN_TRANSIT" : "PARTIAL";
+    const nextStatus = anyInTransit > 0 ? "IN_TRANSIT" : allShipped ? "RECEIVED" : "PARTIAL";
     await tx.restockRequest.update({ where: { id: shipment.request.id }, data: { status: nextStatus } });
 
     return tx.restockShipment.findUnique({ where: { id: shipment.id }, include: { items: { include: { ingredient: true } }, request: { include: { branch: true } } } });

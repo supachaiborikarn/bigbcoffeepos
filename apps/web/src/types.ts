@@ -410,6 +410,20 @@ export type StockTransfer = {
   items?: Array<{ id: number; ingredientId: number; qty: number; ingredient?: Ingredient }>;
 };
 
+export type CentralWarehouse = { id: number; name: string; managerBranchId: number | null; active: boolean; managerBranch?: Branch | null };
+export type WarehouseStockItem = { warehouseId: number; ingredientId: number; name: string; unit: string; stockQty: number; reservedQty: number; availableQty: number; reorderLevel: number };
+export type RestockStatus = "DRAFT" | "SUBMITTED" | "PICKING" | "IN_TRANSIT" | "PARTIAL" | "RECEIVED" | "CANCELLED";
+export type RestockRequestItem = { id: number; ingredientId: number; requestedQty: number; reservedQty: number; shippedQty: number; receivedQty: number; ingredient?: Ingredient };
+export type RestockShipment = {
+  id: number; restockRequestId: number; status: "IN_TRANSIT" | "RECEIVED" | "DISCREPANCY"; note: string; dispatchedAt: string; receivedAt: string | null;
+  items: Array<{ id: number; requestItemId: number; ingredientId: number; shippedQty: number; receivedQty: number; ingredient?: Ingredient }>;
+};
+export type RestockRequest = {
+  id: number; warehouseId: number; branchId: number; status: RestockStatus; note: string;
+  createdAt: string; submittedAt: string | null; pickingAt: string | null; cancelledAt: string | null;
+  branch?: Branch; items: RestockRequestItem[]; shipments?: RestockShipment[];
+};
+
 export type ProductUnit = { id: number; menuItemId: number; unitName: string; factor: number; price: number | null; barcode: string | null; active: boolean };
 export type PriceRule = { id: number; menuItemId: number | null; customerTier: string; minQty: number; price: number; active: boolean; createdAt: string };
 export type InventoryLot = { id: number; branchId: number; ingredientId: number; lotNo: string; qty: number; expiryDate: string | null; createdAt: string; ingredient?: Ingredient };

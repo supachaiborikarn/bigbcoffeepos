@@ -28,6 +28,7 @@
     "qa:inventory-documents:check": "node --import tsx src/scripts/qa-document-regression-check.ts",
     "qa:purchasing-workflows:check": "node --import tsx src/scripts/qa-purchasing-workflows-check.ts",
     "qa:stock-documents:check": "node --import tsx src/scripts/qa-stock-documents-check.ts",
+    "qa:restock:check": "node --import tsx src/scripts/qa-restock-check.ts",
     "qa:inventory-http:check": "node --import tsx src/scripts/qa-inventory-http-check.ts",
     "orders:check": "tsx src/scripts/check-orders.ts",
     "menu:clean": "tsx src/scripts/clean-menu-data.ts",

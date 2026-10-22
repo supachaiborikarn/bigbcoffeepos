@@ -18,7 +18,7 @@ import {
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, normalizeBarcode, assertBarcodeFree,
   getCentralWarehouses, ensureCentralWarehouse, getWarehouseInventory, adjustWarehouseStock,
-  listRestockRequests, createRestockRequest, submitRestockRequest, startRestockPicking, dispatchRestockShipment, receiveRestockShipment,
+  listRestockRequests, createRestockRequest, submitRestockRequest, reserveRestockRequest, cancelRestockRequest, startRestockPicking, dispatchRestockShipment, receiveRestockShipment,
   getRecipes, getRecipeCoverage, getRecipe, setRecipe,
   getCupStockSettings, setCupStockSettings,
   getOrders, getOrder, getOrderByIdempotencyKey, createOrder, updateOrderStatusWithContext,
@@ -562,9 +562,13 @@ app.post("/api/warehouses/setup", requireAdmin, async (req, res) => {
 app.get("/api/warehouses/:id/inventory", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const warehouseId = parseId(req.params.id);
   if (warehouseId === null) return res.status(400).json({ error: "Invalid warehouse" });
-  const warehouse = await prisma.centralWarehouse.findUnique({ where: { id: warehouseId } });
+  const warehouse = await prisma.centralWarehouse.findUnique({ where: { id: warehouseId }, include: { managerBranch: { select: { branchType: true } } } });
   if (!warehouse) return res.status(404).json({ error: "ไม่พบสต็อกกลาง" });
-  if (req.user?.role !== "admin" && warehouse.managerBranchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ดูสต็อกกลาง" });
+  if (req.user?.role !== "admin" && warehouse.managerBranchId !== req.user?.branchId) {
+    // branches of the same business may look (read-only) so they can see what is available before asking
+    const own = req.user?.branchId ? await prisma.branch.findUnique({ where: { id: req.user.branchId }, select: { branchType: true } }) : null;
+    if (!own || !warehouse.managerBranch || own.branchType !== warehouse.managerBranch.branchType) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ดูสต็อกกลาง" });
+  }
   return res.json({ items: await getWarehouseInventory(warehouseId) });
 });
 
@@ -626,6 +630,35 @@ async function requireWarehouseOperator(req: AuthRequest, requestId: number) {
   if (req.user?.role !== "admin" && row.warehouse.managerBranchId !== req.user?.branchId) throw new Error("FORBIDDEN");
   return row;
 }
+
+app.post("/api/restock-requests/:id/reserve", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    await requireWarehouseOperator(req, id);
+    const request = await reserveRestockRequest(id);
+    audit("restock_request.reserved", req, { requestId: id });
+    return res.json({ request });
+  } catch (e) {
+    if ((e as Error).message === "NOT_FOUND") return res.status(404).json({ error: "ไม่พบใบเบิก" });
+    if ((e as Error).message === "FORBIDDEN") return res.status(403).json({ error: "คุณไม่มีสิทธิ์จองของในคลังกลาง" });
+    return res.status(400).json({ error: publicError(e) });
+  }
+});
+
+app.post("/api/restock-requests/:id/cancel", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const row = await prisma.restockRequest.findUnique({ where: { id }, include: { warehouse: true } });
+  if (!row) return res.status(404).json({ error: "ไม่พบใบเบิก" });
+  // the requesting branch or the warehouse may call it off
+  if (req.user?.role !== "admin" && row.branchId !== req.user?.branchId && row.warehouse.managerBranchId !== req.user?.branchId) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ยกเลิกใบเบิกนี้" });
+  try {
+    const request = await cancelRestockRequest(id);
+    audit("restock_request.cancelled", req, { requestId: id, branchId: row.branchId });
+    return res.json({ request });
+  } catch (e) { return res.status(400).json({ error: publicError(e) }); }
+});
 
 app.post("/api/restock-requests/:id/picking", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);

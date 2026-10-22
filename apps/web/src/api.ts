@@ -1,5 +1,9 @@
 import type {
   Branch,
+  CentralWarehouse,
+  RestockRequest,
+  RestockShipment,
+  WarehouseStockItem,
   BusinessDocument,
   CartItem,
   CompareReport,
@@ -1079,6 +1083,52 @@ export async function receiveStockTransfer(id: number) {
     body: JSON.stringify({})
   });
   return payload.transfer;
+}
+
+/* ─── Central warehouse & branch restock requests ─── */
+export async function getWarehouses() {
+  return (await fetchJson<{ items: CentralWarehouse[] }>(`${API_URL}/warehouses`)).items;
+}
+
+export async function setupWarehouse(input: { name?: string; managerBranchId: number | null }) {
+  return (await fetchJson<{ warehouse: CentralWarehouse }>(`${API_URL}/warehouses/setup`, { method: "POST", body: JSON.stringify(input) })).warehouse;
+}
+
+export async function getWarehouseInventory(warehouseId: number) {
+  return (await fetchJson<{ items: WarehouseStockItem[] }>(`${API_URL}/warehouses/${warehouseId}/inventory`)).items;
+}
+
+export async function adjustWarehouseStock(warehouseId: number, input: { ingredientId: number; qty: number; reorderLevel?: number; reason: string }) {
+  await fetchJson(`${API_URL}/warehouses/${warehouseId}/adjustments`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function getRestockRequests(params: { warehouseId?: number; branchId?: number }) {
+  const query = new URLSearchParams();
+  if (params.warehouseId) query.set("warehouseId", String(params.warehouseId));
+  if (params.branchId) query.set("branchId", String(params.branchId));
+  return (await fetchJson<{ items: RestockRequest[] }>(`${API_URL}/restock-requests?${query}`)).items;
+}
+
+/** Creates the request and sends it to the warehouse in one go; a failed send leaves a draft the branch can resend. */
+export async function createRestockRequest(input: { warehouseId: number; branchId: number; note?: string; items: { ingredientId: number; requestedQty: number }[] }) {
+  const { request } = await fetchJson<{ request: RestockRequest }>(`${API_URL}/restock-requests`, { method: "POST", body: JSON.stringify(input) });
+  return submitRestockRequest(request.id);
+}
+
+export async function submitRestockRequest(id: number) {
+  return (await fetchJson<{ request: RestockRequest }>(`${API_URL}/restock-requests/${id}/submit`, { method: "POST", body: JSON.stringify({}) })).request;
+}
+
+export async function restockRequestAction(id: number, action: "reserve" | "picking" | "cancel") {
+  return (await fetchJson<{ request: RestockRequest }>(`${API_URL}/restock-requests/${id}/${action}`, { method: "POST", body: JSON.stringify({}) })).request;
+}
+
+export async function dispatchRestock(id: number, input: { note?: string; items: { requestItemId: number; qty: number }[] }) {
+  return (await fetchJson<{ shipment: RestockShipment }>(`${API_URL}/restock-requests/${id}/dispatch`, { method: "POST", body: JSON.stringify(input) })).shipment;
+}
+
+export async function receiveRestockShipment(id: number, items: { shipmentItemId: number; receivedQty: number }[]) {
+  return (await fetchJson<{ shipment: RestockShipment }>(`${API_URL}/restock-shipments/${id}/receive`, { method: "POST", body: JSON.stringify({ items }) })).shipment;
 }
 
 export async function getProductUnits(menuItemId?: number) {

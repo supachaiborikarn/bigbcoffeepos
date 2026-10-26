@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     services:
@@ -45,6 +45,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify product short-code search
+        run: npm run qa:product-search:check --workspace apps/web
 
       - name: Install browser for E2E
         run: npx playwright install --with-deps chromium

@@ -74,9 +74,14 @@ const checks: Array<{ name: string; file: string; pattern: RegExp }> = [
     pattern: /getCupStockRequirements[\s\S]*addModifierStockRequirements[\s\S]*modifier\.name !== "Cup"/
   },
   {
-    name: "cup variant menu cards are hidden from POS grid",
+    name: "cup variants are hidden by default but may be found with a product code",
+    file: "apps/web/src/utils/productSearch.ts",
+    pattern: /if \(!query\)[\s\S]*!isHiddenByDefault\(item\)/
+  },
+  {
+    name: "POS product grid applies the cup-variant visibility guard",
     file: "apps/web/src/components/pos/ProductGrid.tsx",
-    pattern: /isCupVariantMenuItem[\s\S]*return false/
+    pattern: /filterPosMenuProducts[\s\S]*isHiddenByDefault:\s*isCupVariantMenuItem/
   },
   {
     name: "order center no longer uses mock orders",

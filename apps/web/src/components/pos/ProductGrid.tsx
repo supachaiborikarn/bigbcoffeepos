@@ -57,14 +57,15 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
       return {
         key: primary.optionGroup ? `group:${primary.optionGroup}:${primary.category}` : `item:${primary.id}`,
         label: primary.optionGroup || primary.name,
-        primary: primary.optionGroup ? { ...primary, name: primary.optionGroup } : primary,
+        // While searching by code, show the real variant name rather than the group label.
+        primary: primary.optionGroup && !deferredSearch.trim() ? { ...primary, name: primary.optionGroup } : primary,
         variants: sorted,
         priceLabel: sorted.length > 1 && minPrice !== maxPrice
           ? `${priceFormatter.format(minPrice)}-${priceFormatter.format(maxPrice)}`
           : priceFormatter.format(primary.basePrice)
       };
     });
-  }, [visibleMenu]);
+  }, [visibleMenu, deferredSearch]);
 
   const renderedTiles = productTiles.slice(0, PRODUCT_RENDER_LIMIT);
   const hiddenCount = Math.max(0, productTiles.length - renderedTiles.length);
@@ -87,7 +88,7 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
               priceLabel={tile.priceLabel}
               onClick={() => {
                 if (tile.variants.length > 1) setVariantGroup({ label: tile.label, variants: tile.variants });
-                else onItemClick(tile.primary);
+                else onItemClick(tile.variants[0]);
               }}
             />
           ))}

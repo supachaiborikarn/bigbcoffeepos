@@ -42,4 +42,4 @@ assert.deepEqual(
   [1, 8],
   "duplicate codes must be returned so the POS can ask the user to choose"
 );
-console.log("Product short-code search regression: 16 checks passed");
+console.log("Product short-code search regression: 17 checks passed");

@@ -255,7 +255,7 @@ export default function POSPage() {
   };
 
   /** Return true only after a unique, exact SKU/barcode/name was selected. */
-  const processBarcodeScan = (rawCode: string): boolean => {
+  const processBarcodeScan = (rawCode: string, focusScanner = true): boolean => {
     const code = normalizeProductCode(rawCode);
     if (!code) return false;
 
@@ -293,7 +293,7 @@ export default function POSPage() {
         modifiers: []
       });
       setScanFeedback({ tone: "success", message: `เพิ่ม ${parent.name} (${unit.unitName}) เข้าตะกร้าแล้ว`, code });
-      window.requestAnimationFrame(() => scannerInputRef.current?.focus());
+      if (focusScanner) window.requestAnimationFrame(() => scannerInputRef.current?.focus());
       return true;
     }
 
@@ -312,7 +312,7 @@ export default function POSPage() {
       return false;
     }
     handleMenuItemClick(item);
-    window.requestAnimationFrame(() => scannerInputRef.current?.focus());
+    if (focusScanner) window.requestAnimationFrame(() => scannerInputRef.current?.focus());
     return true;
   };
 
@@ -322,7 +322,10 @@ export default function POSPage() {
     if (!query) return;
     event.preventDefault();
     // Preserve partial searches and ambiguous codes so the cashier can tap the correct result.
-    if (processBarcodeScan(query)) setSearch("");
+    if (processBarcodeScan(query, false)) {
+      setSearch("");
+      window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
   };
 
   const handleAddDiscountRule = () => {

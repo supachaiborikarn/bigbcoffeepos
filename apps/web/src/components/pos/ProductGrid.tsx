@@ -3,6 +3,7 @@ import type { MenuItem } from "../../types";
 import ProductCard from "./ProductCard";
 import { isCupVariantMenuItem } from "../../utils/menuRules";
 import { displayCategoryLabel } from "../../utils/categoryLabel";
+import { filterPosMenuProducts } from "../../utils/productSearch";
 
 const PRODUCT_RENDER_LIMIT = 120;
 const priceFormatter = new Intl.NumberFormat("th-TH", {
@@ -27,17 +28,15 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
   // Defer the search term so heavy grid filtering/re-rendering never blocks the
   // search/scan input — keeps characters appearing instantly on iPad.
   const deferredSearch = useDeferredValue(search);
-  const visibleMenu = useMemo(() => {
-    const q = deferredSearch.trim().toLowerCase();
-    return menu.filter((item) => {
-      if (!item.active) return false;
-      if (isCupVariantMenuItem(item)) return false;
-      if (branchType && (item as Record<string, any>).branchType && (item as Record<string, any>).branchType !== branchType) return false;
-      if (category !== "ทั้งหมด" && item.category !== category) return false;
-      if (q && !`${item.name} ${item.optionGroup ?? ""} ${item.optionLabel ?? ""} ${item.barcode ?? ""} ${item.sku ?? ""}`.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [menu, category, deferredSearch, branchType]);
+  const visibleMenu = useMemo(
+    () => filterPosMenuProducts(menu, {
+      search: deferredSearch,
+      category,
+      branchType,
+      isHiddenByDefault: isCupVariantMenuItem,
+    }),
+    [menu, category, deferredSearch, branchType]
+  );
 
   const productTiles = useMemo(() => {
     const groups = new Map<string, MenuItem[]>();

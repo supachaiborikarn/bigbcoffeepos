@@ -18,6 +18,7 @@ import CupStockStrip, { useCupStock } from "../components/pos/CupStockStrip";
 import { businessProfile } from "../utils/business";
 import { drinkAddOns, shouldUseModifierModal } from "../utils/menuRules";
 import { displayCategoryLabel } from "../utils/categoryLabel";
+import { findExactProductCodeMatches, normalizeProductCode } from "../utils/productSearch";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -253,39 +254,66 @@ export default function POSPage() {
     setScanFeedback({ tone: "success", message: `เพิ่ม ${item.name} เข้าตะกร้าแล้ว` });
   };
 
-  const processBarcodeScan = (rawCode: string) => {
-    const code = rawCode.trim().toLowerCase();
-    if (!code) return;
-    const productUnit = productUnits.find((unit) => unit.active && unit.barcode?.toLowerCase() === code);
-    if (productUnit) {
-      const parent = menu.find((item) => item.id === productUnit.menuItemId && item.active);
+  /** Return true only after a unique, exact SKU/barcode/name was selected. */
+  const processBarcodeScan = (rawCode: string): boolean => {
+    const code = normalizeProductCode(rawCode);
+    if (!code) return false;
+
+    const matchingUnits = productUnits.filter((unit) =>
+      unit.active &&
+      normalizeProductCode(unit.barcode) === code &&
+      menu.some((item) => item.active && item.id === unit.menuItemId)
+    );
+    const matchingItems = findExactProductCodeMatches(menu, code, activeBranch?.branchType);
+    const unit = matchingUnits[0];
+
+    // Never choose the first row arbitrarily if an imported POSPOS code is duplicated.
+    if (matchingUnits.length > 1 || matchingItems.length > 1 ||
+      (unit && matchingItems.some((item) => item.id !== unit.menuItemId))) {
+      setScanFeedback({ tone: "error", message: `รหัส ${code} ตรงกับสินค้าหลายรายการ กรุณาแตะเลือกจากผลค้นหา`, code });
+      return false;
+    }
+
+    if (unit) {
+      const parent = menu.find((item) => item.id === unit.menuItemId && item.active);
       if (!parent) {
         setScanFeedback({ tone: "error", message: `หน่วยสินค้าไม่มีสินค้าแม่: ${code}`, code });
-        return;
+        return false;
       }
       addItem({
         id: Math.random().toString(36).slice(2, 9),
         menuItemId: parent.id,
-        productUnitId: productUnit.id,
-        unitLabel: productUnit.unitName,
-        unitFactor: productUnit.factor,
-        name: `${parent.name} (${productUnit.unitName})`,
+        productUnitId: unit.id,
+        unitLabel: unit.unitName,
+        unitFactor: unit.factor,
+        name: `${parent.name} (${unit.unitName})`,
         category: parent.category,
-        basePrice: productUnit.price ?? parent.basePrice * productUnit.factor,
+        basePrice: unit.price ?? parent.basePrice * unit.factor,
         qty: 1,
         modifiers: []
       });
-      setScanFeedback({ tone: "success", message: `เพิ่ม ${parent.name} (${productUnit.unitName}) เข้าตะกร้าแล้ว`, code });
+      setScanFeedback({ tone: "success", message: `เพิ่ม ${parent.name} (${unit.unitName}) เข้าตะกร้าแล้ว`, code });
       window.requestAnimationFrame(() => scannerInputRef.current?.focus());
-      return;
+      return true;
     }
-    const item = menu.find((i) => i.active && (i.barcode?.toLowerCase() === code || i.sku?.toLowerCase() === code || i.name.toLowerCase() === code));
+
+    // Keep the previous full-name Enter shortcut, without guessing between duplicates.
+    const namedItems = matchingItems.length ? [] : menu.filter(
+      (item) => item.active && normalizeProductCode(item.name) === code
+    );
+    if (namedItems.length > 1) {
+      setScanFeedback({ tone: "error", message: `ชื่อ ${code} ตรงกับสินค้าหลายรายการ กรุณาแตะเลือกจากผลค้นหา`, code });
+      return false;
+    }
+
+    const item = matchingItems[0] ?? namedItems[0];
     if (!item) {
-      setScanFeedback({ tone: "error", message: `ไม่พบสินค้า: ${code}`, code });
-      return;
+      setScanFeedback({ tone: "error", message: `ไม่พบรหัสตรงตัว: ${code} — ลองเลือกสินค้าจากผลค้นหา`, code });
+      return false;
     }
     handleMenuItemClick(item);
     window.requestAnimationFrame(() => scannerInputRef.current?.focus());
+    return true;
   };
 
   const handleProductSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -293,8 +321,8 @@ export default function POSPage() {
     const query = search.trim();
     if (!query) return;
     event.preventDefault();
-    processBarcodeScan(query);
-    setSearch("");
+    // Preserve partial searches and ambiguous codes so the cashier can tap the correct result.
+    if (processBarcodeScan(query)) setSearch("");
   };
 
   const handleAddDiscountRule = () => {
@@ -486,7 +514,7 @@ export default function POSPage() {
         {heldBills.length > 0 && <div className="studio-held-bills" aria-label="บิลที่พักไว้">{heldBills.map((bill) => <div key={bill.id}><button onClick={() => restoreHeldBill(bill.id)}><PauseCircle size={15} />{bill.label} · {formatMoney(bill.total)}</button><button aria-label={`ลบ ${bill.label}`} onClick={() => removeHeldBill(bill.id)}><X size={14} /></button></div>)}</div>}
         <div className="studio-catalog-toolbar">
         <div className="studio-search-row">
-          <label className="studio-search"><Search size={20} /><input ref={searchInputRef} aria-label="ค้นหาสินค้า" placeholder={profile.type === "coffee" ? "ค้นหาเมนู เครื่องดื่ม หรือเบเกอรี่" : "ค้นหาสินค้า บริการ หรือรหัสสินค้า"} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={handleProductSearchKeyDown} /><kbd>F1</kbd></label>
+          <label className="studio-search"><Search size={20} /><input ref={searchInputRef} aria-label="ค้นหาสินค้า" placeholder={profile.type === "coffee" ? "ค้นหาชื่อสินค้า หรือรหัส เช่น C1, D2" : "ค้นหาชื่อสินค้า / รหัส เช่น C1, D2 / บาร์โค้ด"} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={handleProductSearchKeyDown} /><kbd>F1</kbd></label>
           <label className="studio-scanner"><ScanBarcode size={20} /><input ref={scannerInputRef} aria-label="ยิงบาร์โค้ด" inputMode="none" placeholder="สแกนบาร์โค้ด" onKeyDown={(e) => { if (e.key === "Enter") { processBarcodeScan(e.currentTarget.value); e.currentTarget.value = ""; } }} /></label>
         </div>
         <div className="studio-categories" aria-label="หมวดสินค้า">{categories.map((item) => <button key={item} aria-pressed={category === item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{displayCategoryLabel(item)}<span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span></button>)}</div>

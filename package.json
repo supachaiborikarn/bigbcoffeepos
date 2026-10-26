@@ -1,11 +1,13 @@
 {
   "name": "coffee-pos",
   "private": true,
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "echo \"Run dev servers:\\n1) npm run dev --workspace apps/api\\n2) npm run dev --workspace apps/web\"",
     "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
-    "ci:verify": "npm run production-hardening:check --workspace apps/api && npm run monitoring:check --workspace apps/api && npm run db:migrate --workspace apps/api && npm run db:migrate:status --workspace apps/api && npm run build && npm run checkout:integration --workspace apps/api && npm run load:concurrency --workspace apps/api && npm run browser:e2e --workspace apps/api",
+    "ci:verify": "npm run production-hardening:check --workspace apps/api && npm run monitoring:check --workspace apps/api && npm run db:migrate --workspace apps/api && npm run db:migrate:status --workspace apps/api && npm run qa:product-search:check --workspace apps/web && npm run build && npm run checkout:integration --workspace apps/api && npm run load:concurrency --workspace apps/api && npm run browser:e2e --workspace apps/api",
     "pos:smoke": "npm run pos:smoke --workspace apps/api",
     "qa:check": "npm run qa:financial:check --workspace apps/api && npm run qa:api:check --workspace apps/web && npm run qa:ui:check --workspace apps/web",
     "qa:database:check": "npm run qa:financial:postgres --workspace apps/api && npm run qa:inventory:check --workspace apps/api && npm run qa:inventory-documents:check --workspace apps/api",

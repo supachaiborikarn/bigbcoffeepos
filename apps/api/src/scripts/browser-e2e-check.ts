@@ -223,8 +223,16 @@ async function main() {
     await page.goto(`${webUrl}/login`, { waitUntil: "networkidle" });
     await page.getByPlaceholder("● ● ● ●").fill(data.pin);
     await page.getByRole("button", { name: "เข้าสู่ระบบ" }).click();
-    await page.waitForURL("**/branch", { timeout: 10_000 });
-    await page.getByText(data.branchName).click();
+    // A single permitted branch is auto-selected by BranchProvider. In that case
+    // the page may already be /pos before a branch selection can be clicked.
+    await page.waitForURL(/\/(branch|pos)$/, { timeout: 10_000 });
+    if (new URL(page.url()).pathname === "/branch") {
+      try {
+        await page.getByRole("button", { name: data.branchName }).click({ timeout: 4_000 });
+      } catch (error) {
+        if (new URL(page.url()).pathname !== "/pos") throw error;
+      }
+    }
     await page.waitForURL("**/pos", { timeout: 10_000 });
 
     await page.getByRole("button", { name: "เปิดกะ", exact: true }).click();

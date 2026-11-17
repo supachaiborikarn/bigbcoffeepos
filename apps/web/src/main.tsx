@@ -3,8 +3,11 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { flushOfflineOrders } from "./api";
 import { preloadRoutes, reloadForNewBuild } from "./utils/lazyRoute";
+import { initInstallPrompt } from "./utils/appDisplay";
 import "./styles.css";
 import "./studio.css";
+
+initInstallPrompt();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

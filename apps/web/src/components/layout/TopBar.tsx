@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Menu, Moon, Sun, MapPin, Printer, Wallet, Clock, ChevronDown } from "lucide-react";
+import { Menu, Moon, Sun, MapPin, Printer, Wallet, Clock, ChevronDown, Download, Maximize2, Minimize2 } from "lucide-react";
+import { canInstallApp, canToggleFullscreen, installApp, isFullscreen, onAppDisplayChange, toggleFullscreen } from "../../utils/appDisplay";
 import { businessProfile, roleLabels } from "../../utils/business";
 import { getShiftSummary } from "../../api";
 import { useAuth } from "../../contexts/AuthContext";
@@ -188,6 +189,7 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
 
         <div className="topbar__right">
           <OfflineStatus />
+          <AppDisplayButtons />
           <button className="studio-icon-button" aria-label="ตั้งค่าเครื่องพิมพ์" title="ตั้งค่าเครื่องพิมพ์" onClick={() => window.dispatchEvent(new Event("bbpos-open-printer-settings"))}><Printer size={18} /></button>
           <button className="studio-icon-button" onClick={onToggleAppearance} aria-label={appearance === "light" ? "ใช้โหมดมืด" : "ใช้โหมดสว่าง"} title={appearance === "light" ? "โหมดมืด" : "โหมดสว่าง"}>{appearance === "light" ? <Moon size={18} /> : <Sun size={18} />}</button>
           <div className="topbar__item" style={{ gap: 12, cursor: "default" }}>
@@ -201,12 +203,12 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
           </div>
 
           {activeBranch && (
-            <button className="btn btn--ghost topbar-cash-btn" onClick={() => setShowTimeClock(true)} title="ลงเวลาเข้า/ออกงานด้วย PIN">
+            <button className="btn btn--ghost topbar-cash-btn" onClick={() => setShowTimeClock(true)} title="ลงเวลาเข้า/ออกงานด้วย PIN" aria-label="ลงเวลา">
               <Clock size={17} /><span>ลงเวลา</span>
             </button>
           )}
           {activeShift && (
-            <button className="btn btn--ghost topbar-cash-btn" onClick={() => setShowCashDrawer(true)} title="บันทึกเงินจ่ายออก / เติมเข้าลิ้นชัก">
+            <button className="btn btn--ghost topbar-cash-btn" onClick={() => setShowCashDrawer(true)} title="บันทึกเงินจ่ายออก / เติมเข้าลิ้นชัก" aria-label="เงินเข้า/ออก">
               <Wallet size={17} /><span>เงินเข้า/ออก</span>
             </button>
           )}
@@ -413,4 +415,26 @@ export default function TopBar({ onOpenMenu, mobileOpen, appearance, onToggleApp
       {showCashDrawer && activeShift && <CashDrawerDialog shiftId={activeShift.id} onClose={() => setShowCashDrawer(false)} onChanged={reloadCloseSummary} />}
     </>
   );
+}
+
+/** "ติดตั้งแอป" (only while Chrome says the app is installable) and a full-screen toggle for the shop tablets. */
+function AppDisplayButtons() {
+  const [, rerender] = useState(0);
+  const toast = useToast();
+  useEffect(() => onAppDisplayChange(() => rerender((n) => n + 1)), []);
+  const fullscreen = isFullscreen();
+  return <>
+    {canInstallApp() && (
+      <button className="btn btn--ghost topbar-cash-btn" aria-label="ติดตั้งแอปบนหน้าจอหลัก" title="ติดตั้งเป็นแอปบนหน้าจอหลัก (เปิดเต็มจอ)"
+        onClick={() => { void installApp().then((ok) => { if (ok) toast.success("ติดตั้งแอปแล้ว เปิดจากไอคอน BigB POS บนหน้าจอหลักได้เลย"); }); }}>
+        <Download size={17} /><span>ติดตั้งแอป</span>
+      </button>
+    )}
+    {canToggleFullscreen() && (
+      <button className="studio-icon-button" aria-label={fullscreen ? "ออกจากโหมดเต็มจอ" : "เต็มจอ"} title={fullscreen ? "ออกจากโหมดเต็มจอ" : "เต็มจอ (ซ่อนแถบเบราว์เซอร์)"} aria-pressed={fullscreen}
+        onClick={() => { toggleFullscreen().catch(() => toast.error("เบราว์เซอร์นี้เปิดโหมดเต็มจอไม่ได้")); }}>
+        {fullscreen ? <Minimize2 size={19} /> : <Maximize2 size={19} />}
+      </button>
+    )}
+  </>;
 }

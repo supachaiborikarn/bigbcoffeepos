@@ -322,11 +322,9 @@
 .studio-product-art>small { position:absolute; right:7px; bottom:6px; padding:2px 5px; border-radius:5px; color:#776c5f; background:#f7f3eccf; font-size:10px; }
 
 /* Keep the sale summary beside products on landscape tablets. */
+/* (The sidebar is no longer forced to icons here — that made its expand button do nothing on
+   1000–1200px tablets. The collapsed state comes from AppLayout and the toggle.) */
 @media(min-width:1000px) and (max-width:1200px) {
- .studio-app { --sidebar-width:76px; }
- .studio-app .sidebar { width:76px; min-width:76px; }
- .studio-app .sidebar__brand-text,.studio-app .sidebar__section-label,.studio-app .studio-branch-card,.studio-app .studio-scope-note,.studio-app .sidebar__user-info,.studio-app .sidebar__link span { display:none; }
- .studio-app .sidebar__link { justify-content:center; }
  .studio-pos { grid-template-columns:minmax(0,1fr) 330px; }
  .studio-catalog { --catalog-pad-x:14px; --catalog-pad-top:18px; }
  .studio-product-grid { grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); }
@@ -732,4 +730,199 @@ span.rcv-costopt { cursor:default; color:var(--text-muted); font-size:12px; }
   .studio-app .studio-cart > .order-list { flex:none !important; overflow:visible !important; min-height:auto !important; }
   .studio-app .studio-cart .studio-checkout-dock { max-height:none !important; overflow:visible !important; }
   .studio-app .studio-cart .studio-pay-button { position:static; }
+}
+
+/* ═══ Tablet pass (2026-11) — touch tablets around 1280×854 landscape / 854×1280 portrait ═══ */
+/* Layout bugs (all screens) */
+.shift-cash-display { width:calc(100% - 48px); }
+.app__grid>* { min-width:0; }
+/* A toast must never sit on a dialog's confirm buttons: while a dialog or the cart sheet is open it moves to the top. */
+:root:has([role="dialog"],.modal-backdrop,.stk-backdrop,.pos-cart-sheet.is-open) .toast-container { top:max(12px,env(safe-area-inset-top)); bottom:auto; }
+.inventory-toolbar>select.input,.report-filters>.input { width:auto; flex:0 1 190px; }
+.inventory-add-form { padding:0 24px 24px; }
+/* a flex:1 search box with a zero basis collapses to nothing when its row is full */
+.activity-tools>.studio-search { flex:1 1 220px; }
+/* placeholders are the only labels here, so a column must be wide enough to show them */
+.inventory-add-form>.inventory-form-grid { grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
+.inventory-toolbar { margin-bottom:12px; }
+@media(max-width:1024px) {
+  .inventory-layout { align-items:stretch; }
+  .inventory-layout>* { min-width:0; }
+  .inventory-toolbar { flex-direction:row; }
+}
+@media(max-width:560px) {
+  .inventory-toolbar { flex-direction:column; }
+  .inventory-toolbar>select.input,.report-filters>.input { flex:1 1 100%; }
+}
+
+/* Cart lines: price and note share a row so more lines fit above the payment dock. */
+.cart-line__meta { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 10px; margin-top:4px; min-width:0; }
+.studio-app .cart-line__note { min-height:0; padding:2px 8px; border:0; font-size:12px; max-width:100%; }
+
+/* Sidebar becomes a slide-in drawer below 1000px (portrait tablets), matching the POS cart-sheet breakpoint. */
+@media(max-width:999px) {
+  .studio-app .sidebar { display:flex; position:fixed; inset:0 auto 0 0; height:100dvh; width:260px; min-width:0; z-index:105; transform:translateX(-100%); transition:transform .2s ease; }
+  .studio-app .sidebar--mobile-open { transform:translateX(0); }
+  .studio-app .sidebar__brand-text,.studio-app .sidebar__link span,.studio-app .sidebar__user-info { display:flex; }
+  .studio-app .sidebar__section-label,.studio-app .studio-branch-card,.studio-app .studio-scope-note { display:flex; }
+  .studio-app .sidebar__brand { padding:22px 17px; flex-direction:row; }
+  .studio-app .sidebar__brand-name { font-size:16px; }
+  .studio-app .sidebar__toggle { display:none; }
+  .studio-app .sidebar__link { justify-content:flex-start; padding:13px; font-size:13px; margin:0; }
+  .studio-app .sidebar__user-panel { flex-direction:row; }
+  .studio-app .sidebar__footer { padding:16px 12px; }
+  .studio-nav-close { display:grid; place-items:center; margin-left:auto; border:0; color:#dae8dc; background:none; min-width:44px; min-height:44px; }
+  .studio-nav-scrim { display:block; position:fixed; inset:0; z-index:104; border:0; background:#071d16a3; backdrop-filter:blur(4px); }
+  .studio-menu-toggle { display:inline-flex; }
+}
+
+/* Touch screens: finger-sized targets and readable text, whatever the width. */
+@media(pointer:coarse) {
+  .studio-app .btn,.studio-app .tab,.studio-categories button,.studio-tabs button,.seg-paper button,.stk-seg button,.bo-tabs button,.studio-app .sidebar__link { min-height:44px; }
+  .studio-app .btn { min-width:44px; }
+  .studio-app .input { min-height:44px; }
+  .studio-app textarea.input { min-height:72px; }
+  .studio-app input[type=checkbox],.studio-app input[type=radio] { width:22px; height:22px; accent-color:var(--brand); flex-shrink:0; }
+  .studio-icon-button,.studio-menu-toggle,.icon-action,.modal__close { min-width:44px; min-height:44px; }
+  .studio-logout-icon { min-width:44px; min-height:44px; display:grid; place-items:center; }
+  .sidebar__toggle::after { content:""; position:absolute; inset:-9px; }
+  .studio-counter-strip a { padding:12px 0; margin-top:-12px; margin-bottom:-12px; }
+  .cart-line__qty .btn { min-width:40px; }
+  .cart-line__remove { min-width:44px; }
+  .studio-app .cart-line__note { min-height:36px; padding:0 10px; font-size:13px; }
+  .studio-app .studio-cart>.order-list { padding-left:16px !important; padding-right:16px !important; }
+  .cash-count-grid { gap:4px; }
+  .studio-eyebrow,.eyebrow { font-size:12px; }
+  .studio-pos-heading p,.studio-product-category,.studio-product-placeholder>span,.cup-chip,.studio-cart .empty,.studio-recipe-note { font-size:13px; }
+  .studio-product-art>small { font-size:11px; }
+  .studio-categories button { font-size:14px; }
+  .studio-categories button span { font-size:12px; }
+  .studio-search input,.studio-scanner input { font-size:15px; }
+  .studio-heading-actions .btn,.studio-counter-strip,.studio-catalog-label>span { font-size:13px; }
+  .studio-product-grid .menu-card__name--pos { font-size:15px; }
+  .studio-payment-method { font-size:13px !important; }
+  .studio-app .sidebar__link { font-size:14px; }
+  .studio-location strong { font-size:14px; }
+  .studio-branch-card strong { font-size:12px; }
+  .badge,.status-badge,.stk-badge,.dash-bar-value,.dash-bar-label,.dash-bar-orders,.dash-top-rank,.dash-top-info .muted,.dash-shift-row .muted { font-size:12px; }
+  .inventory-table th,.inventory-table td small,.inventory-kpis span,.menu-manager-card__main small,.stk-name small,.stk-kpis small,.stk-field>small,.cup-stock-card__header small,.cup-stock-line span small,.cup-stock-line>small,.stock-row small,.movement-row small,.recipe-product-row small,.summary-card span,.bo-row small,.rst-line small,.rst-stock small,.xfer-line small { font-size:12px; }
+  .studio-customer-insights p,.studio-member-name span,.studio-member-name small,.studio-member-date,.studio-stock-row small,.studio-stock-header { font-size:12px; }
+}
+/* No hover on touch: don't leave the last-tapped card looking selected. */
+@media(hover:none) {
+  .menu-card:hover { box-shadow:none; transform:none; }
+  .studio-product-grid .menu-card:hover .studio-add-product { background:var(--bg-subtle); color:var(--brand); }
+  .menu-card:active { transform:scale(.97); }
+  .studio-product-grid .menu-card:active .studio-add-product { background:var(--brand); color:var(--studio-cta-text); }
+}
+
+/* Landscape tablets are short (≈750–850px): spend the height on products and cart lines, not headings. */
+@media(pointer:coarse) and (min-width:769px) and (max-height:900px) {
+  .studio-catalog { --catalog-pad-top:14px; }
+  .studio-pos-heading { margin-bottom:10px; }
+  .studio-pos-heading .studio-eyebrow,.studio-pos-heading p { display:none; }
+  .studio-pos-heading h1 { font-size:24px; line-height:1.3; letter-spacing:-.5px; }
+  .studio-counter-strip { padding:8px 0; margin-bottom:12px; }
+  .studio-search-row { margin-bottom:12px; }
+  .studio-catalog-label { padding:8px 0 10px; }
+  .studio-product-grid .menu-card__thumb { aspect-ratio:1.6; }
+  .studio-product-category { margin:9px 12px 2px; }
+  .studio-product-grid .menu-card__name--pos { margin:0 12px; }
+  .studio-product-bottom { margin:6px 12px 10px; }
+  .studio-cart .cart-head { padding:10px 16px !important; }
+  .studio-cart .cart-head .studio-eyebrow { display:none; }
+  .studio-cart .cart-line { padding-top:9px !important; padding-bottom:9px !important; }
+  .studio-app .studio-cart .studio-checkout-dock { padding:10px 16px 14px !important; gap:8px !important; }
+  .studio-cart .cart-totals { padding:8px 14px !important; gap:2px !important; }
+  .studio-payment-method { flex-direction:row; gap:8px; min-height:48px !important; }
+  .studio-pay-button { min-height:52px !important; padding:12px !important; }
+  .studio-app .sidebar__brand { padding-top:18px; padding-bottom:14px; }
+  .studio-app .sidebar__section-label { padding:10px 13px 5px; }
+  .studio-app .sidebar__link { padding-top:9px; padding-bottom:9px; }
+  .studio-branch-card { padding:10px 14px; margin-bottom:6px; }
+  .studio-app .sidebar--collapsed .sidebar__brand { padding:16px 0 40px; }
+  .studio-app .sidebar--collapsed .sidebar__toggle { top:66px; }
+  .studio-app .sidebar--collapsed .sidebar__link { margin:0; }
+  .studio-app .sidebar__footer { padding-top:10px; padding-bottom:10px; }
+  .studio-scope-note { display:none; }
+}
+
+/* ═══ Device pass (2026-11-17) — measured on the Xiaomi Pad 7 in Chrome ═══
+   Landscape in Chrome is only ≈1200×650 (tabs + address bar take ~125px); installed as an app it is ≈1200×800. */
+
+/* Top bar: the branch name shrinks with "…" instead of breaking one letter per line. */
+.studio-app .topbar__left,.studio-location,.studio-location>div,.studio-branch-picker { min-width:0; }
+.studio-location strong { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }
+.studio-app .shift-status-pill { flex-shrink:0; }
+@media(max-width:1100px) {
+  .studio-app .topbar-cash-btn span { display:none; }
+  .studio-app .topbar-cash-btn { padding:0 11px; }
+  .studio-app .topbar__right { gap:8px; }
+}
+/* An expanded sidebar leaves less room: the time-clock / cash buttons go icon-only. */
+@media(max-width:1280px) {
+  .studio-app:has(.sidebar:not(.sidebar--collapsed)) .topbar-cash-btn span { display:none; }
+  .studio-app:has(.sidebar:not(.sidebar--collapsed)) .topbar-cash-btn { padding:0 11px; }
+}
+
+/* Cart: the payment area reads more clearly (solid buttons, larger amounts). */
+.studio-cart .cart-actions .btn { border-style:solid !important; background:var(--bg-surface); }
+@media(pointer:coarse) {
+  .studio-app .sidebar__toggle { width:36px; height:36px; padding:8px; }
+  .studio-app .sidebar--collapsed .sidebar__toggle { top:70px; right:20px; }
+  .studio-app .sidebar--collapsed .sidebar__brand { padding-bottom:58px; }
+  .studio-app .sidebar:not(.sidebar--collapsed) .studio-branch-card { padding-right:52px; } /* room for the bigger toggle */
+  .studio-cart .cart-line strong { font-size:16px !important; }
+  .studio-cart .cart-line>div:first-child>div:not(.cart-line__meta)>span { font-size:13px !important; }
+  .studio-cart .cart-line__meta>span { font-size:15px !important; }
+  .studio-cart .cart-totals__net { font-size:22px !important; }
+  .studio-cart .cart-actions .btn { font-size:14px !important; }
+  .studio-payment-method { font-size:14px !important; }
+  .studio-pay-button { font-size:17px !important; }
+}
+/* Touch cart lines: name and options use the full width; price, note, qty and delete share the last row
+   (the qty buttons used to squeeze the options onto two or three lines). */
+@media(pointer:coarse) {
+  /* name on its own row; options and price/note stack on the left while qty + delete sit on the right */
+  .studio-cart .cart-line { display:grid !important; grid-template-columns:minmax(0,1fr) auto; grid-auto-flow:row dense; gap:2px 10px !important; align-items:center; }
+  .studio-cart .cart-line>div:first-child { display:contents; }
+  .studio-cart .cart-line>div:first-child>* { order:3; grid-column:1; margin-top:0 !important; }
+  .studio-cart .cart-line>div:first-child>strong { order:1; grid-column:1 / -1; }
+  .studio-cart .cart-line>div:last-child { order:2; grid-column:2; grid-row:span 2; }
+  .studio-cart .cart-line__qty { padding:0 !important; }
+  .studio-app .studio-cart .cart-line__note { min-height:32px; }
+}
+
+/* Short landscape tablets with the cart beside the products. */
+@media(pointer:coarse) and (min-width:1000px) and (max-height:900px) {
+  .studio-app .topbar { min-height:60px; height:auto; padding:8px 16px; }
+  .studio-pos { grid-template-columns:minmax(0,1fr) 360px; }
+  /* status strip and the hold-bill / settings buttons share one row; the page title is in the sidebar already */
+  .studio-catalog { flex-flow:row wrap; align-content:flex-start; }
+  .studio-catalog>* { order:3; flex:1 0 100%; min-width:0; }
+  .studio-catalog>.studio-counter-strip { order:1; flex:1 1 320px; margin:0 0 10px; border-top:0; }
+  .studio-catalog>.studio-pos-heading { order:2; flex:0 0 auto; margin:0 0 10px 12px; }
+  .studio-pos-heading>div:first-child { display:none; }
+  /* search and categories on one sticky row */
+  .studio-catalog-toolbar { display:flex; align-items:center; gap:10px; padding-bottom:6px; }
+  .studio-search-row { flex:0 1 270px; min-width:190px; margin-bottom:0; }
+  .studio-search { height:44px; }
+  .studio-search kbd { display:none; }
+  .studio-categories { flex:1 1 0; min-width:0; padding:2px 0 4px; }
+  .studio-catalog-label { padding:6px 0 8px; }
+  .studio-product-placeholder>span { display:none; }
+  .studio-product-grid .menu-card__thumb { aspect-ratio:2; }
+  .studio-app .sidebar--collapsed .sidebar__brand { padding:16px 0 54px; }
+  .studio-app .sidebar--collapsed .sidebar__toggle { top:62px; }
+  .studio-cart .empty { padding:16px !important; gap:6px !important; }
+  .studio-cart .empty>div:first-child { display:none !important; }
+  .studio-cart .cart-head h2 { font-size:18px !important; }
+  .studio-app .studio-cart>.order-list { padding-top:4px !important; padding-bottom:4px !important; }
+}
+/* Chrome with its bars (≈650px tall): smaller pictures so two full rows of products fit. */
+@media(pointer:coarse) and (min-width:1000px) and (max-height:720px) {
+  .studio-product-grid .menu-card__thumb { aspect-ratio:2.6; }
+  .studio-product-placeholder svg { width:34px; height:34px; }
+  .studio-product-grid .menu-card__name--pos { min-height:0; }
+  .studio-cart .cart-head { padding:8px 16px !important; }
 }

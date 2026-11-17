@@ -1245,6 +1245,7 @@ export default function InventoryPage() {
                 <Plus size={18} />
               </div>
             </div>
+            <div className="inventory-add-form">
             <div className="inventory-form-grid inventory-form-grid--compact">
               <input className="input" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
               <input className="input" value={menuForm.category} onChange={(e) => setMenuForm({ ...menuForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
@@ -1286,6 +1287,7 @@ export default function InventoryPage() {
               <Printer size={16} />
               พิมพ์สติ๊กเกอร์บาร์โค้ด
             </button>
+            </div>
           </form>
         </section>
       )}

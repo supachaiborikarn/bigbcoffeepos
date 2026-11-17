@@ -87,6 +87,7 @@ async (page) => {
   await page.getByRole('button',{name:'เลือกสมาชิก / สมัคร',exact:true}).click();
   await page.getByPlaceholder('ค้นหาเบอร์โทร / ชื่อลูกค้า').fill('ลูกค้า');
   await page.getByRole('button',{name:/ลูกค้าทดสอบ/}).click();
+  await page.getByRole('button',{name:'ใส่โค้ดคูปอง',exact:true}).click(); // the coupon field opens from a button
   await page.getByPlaceholder('โค้ดคูปอง').fill('QA10');
   await page.getByRole('button',{name:'ใช้คูปอง',exact:true}).click();
   await page.getByRole('button',{name:'ลบคูปอง',exact:true}).waitFor();

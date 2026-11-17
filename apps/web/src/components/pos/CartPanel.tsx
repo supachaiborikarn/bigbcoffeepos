@@ -5,7 +5,7 @@ import { useCart } from "../../contexts/CartContext";
 import { useShift } from "../../contexts/ShiftContext";
 import { useDialogFocus } from "../../utils/useDialogFocus";
 import { motion, AnimatePresence } from "framer-motion";
-import { User, Tag, Plus, Minus, X, Search, UserPlus, Banknote, QrCode, CreditCard, Wallet, ArrowRight, ReceiptText, ShieldCheck } from "lucide-react";
+import { User, Tag, Ticket, Plus, Minus, X, Search, UserPlus, Banknote, QrCode, CreditCard, Wallet, ArrowRight, ReceiptText, ShieldCheck } from "lucide-react";
 import type { Customer, DiscountRule, PaymentMethod, CartItem, Shift } from "../../types";
 
 // show satang when there are any (฿76.50) so every screen shows the amount actually charged
@@ -134,6 +134,10 @@ export default function CartPanel(props: CartPanelProps) {
     : "";
   const [couponInput, setCouponInput] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
+  // The coupon field opens from a button so the payment area stays short on tablets.
+  const [showCoupon, setShowCoupon] = useState(false);
+  const itemCount = cart.reduce((sum, i) => sum + i.qty, 0);
+  const hasDeductions = discountAmount > 0 || (Number(pointsToUse) || 0) > 0;
 
   async function handleApplyCoupon() {
     if (couponBusy) return;
@@ -141,6 +145,7 @@ export default function CartPanel(props: CartPanelProps) {
     try {
       await applyCoupon(couponInput);
       setCouponInput("");
+      setShowCoupon(false);
     } finally {
       setCouponBusy(false);
     }
@@ -165,7 +170,7 @@ export default function CartPanel(props: CartPanelProps) {
   return (
     <section className="panel studio-cart" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", padding: 0, borderRadius: 0, borderTop: 0, borderRight: 0, borderBottom: 0 }}>
       {/* Cart Header */}
-      <div style={{ padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+      <div className="cart-head" style={{ padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <div>
           <span className="studio-eyebrow">CURRENT ORDER</span><h2 style={{ fontSize: "20px" }}>{props.businessType === "oil_service" ? "รายการบริการ" : "บิลปัจจุบัน"}</h2>
           <p className="muted" style={{ fontSize: "13px" }}>{activeShift ? `กะ #${activeShift.id}` : shiftLoaded ? "ยังไม่ได้เปิดกะ" : "กำลังตรวจกะ..."}</p>
@@ -189,6 +194,7 @@ export default function CartPanel(props: CartPanelProps) {
               return (
                 <motion.div
                   key={item.id}
+                  className="cart-line"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
@@ -206,27 +212,29 @@ export default function CartPanel(props: CartPanelProps) {
                         ))}
                       </div>
                     )}
-                    {/* per-line note for the barista, e.g. "แยกน้ำแข็ง" */}
-                    <button type="button" className="btn btn--ghost" style={{ minHeight: 0, padding: "2px 0", border: "none", fontSize: 12, color: item.note ? "var(--brand-hover)" : "var(--text-muted)" }}
-                      onClick={() => { const note = window.prompt(`หมายเหตุสำหรับ ${item.name}`, item.note ?? ""); if (note !== null) setItemNote(item.id, note); }}>
-                      {item.note ? `📝 ${item.note}` : "+ หมายเหตุ"}
-                    </button>
-                    <div className="muted" style={{ fontSize: "13px", marginTop: 4, fontWeight: 600, color: "var(--brand)" }}>
-                      {formatMoney(itemUnitPrice)}
-                      {item.qty > 1 && (
-                        <span style={{ color: "var(--text-muted)", fontWeight: "normal", marginLeft: 6, fontSize: "12px" }}>
-                          (รวม {formatMoney(itemUnitPrice * item.qty)})
-                        </span>
-                      )}
+                    {/* price and the per-line note for the barista (e.g. "แยกน้ำแข็ง") share one row so more lines fit */}
+                    <div className="cart-line__meta">
+                      <span className="muted" style={{ fontSize: "13px", fontWeight: 600, color: "var(--brand)" }}>
+                        {formatMoney(itemUnitPrice)}
+                        {item.qty > 1 && (
+                          <span style={{ color: "var(--text-muted)", fontWeight: "normal", marginLeft: 6, fontSize: "12px" }}>
+                            (รวม {formatMoney(itemUnitPrice * item.qty)})
+                          </span>
+                        )}
+                      </span>
+                      <button type="button" className="btn btn--ghost cart-line__note" style={{ color: item.note ? "var(--brand-hover)" : "var(--text-muted)" }}
+                        onClick={() => { const note = window.prompt(`หมายเหตุสำหรับ ${item.name}`, item.note ?? ""); if (note !== null) setItemNote(item.id, note); }}>
+                        {item.note ? `📝 ${item.note}` : "+ หมายเหตุ"}
+                      </button>
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", background: "var(--bg-muted)", borderRadius: "var(--radius-sm)", padding: "4px" }}>
+                    <div className="cart-line__qty" style={{ display: "flex", alignItems: "center", background: "var(--bg-muted)", borderRadius: "var(--radius-sm)", padding: "4px" }}>
                       <button type="button" className="btn btn--ghost" style={{ padding: "6px", border: "none" }} onClick={() => updateQty(item.id, -1)} aria-label={`ลดจำนวน ${item.name}`}><Minus size={14} /></button>
                       <span style={{ width: "24px", textAlign: "center", fontWeight: 600 }}>{item.qty}</span>
                       <button type="button" className="btn btn--ghost" style={{ padding: "6px", border: "none" }} onClick={() => updateQty(item.id, 1)} aria-label={`เพิ่มจำนวน ${item.name}`}><Plus size={14} /></button>
                     </div>
-                    <button type="button" className="btn btn--ghost" style={{ color: "var(--danger)", padding: "8px", border: "none" }} onClick={() => removeItem(item.id)} aria-label={`ลบ ${item.name}`}><X size={18} /></button>
+                    <button type="button" className="btn btn--ghost cart-line__remove" style={{ color: "var(--danger)", padding: "8px", border: "none" }} onClick={() => removeItem(item.id)} aria-label={`ลบ ${item.name}`}><X size={18} /></button>
                   </div>
                 </motion.div>
               );
@@ -246,7 +254,7 @@ export default function CartPanel(props: CartPanelProps) {
         flexShrink: 0
       }}>
         {/* Row 1: Member Action / Tag */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <div className="cart-actions" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           {selectedMember ? (
             <div className="studio-member-chip" style={{ display: "flex", flex: 1, minWidth: 0, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 6, background: "var(--brand-subtle)", padding: "6px 12px", borderRadius: "8px", border: "1px solid rgba(139, 94, 60, 0.15)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "13px", minWidth: 0 }}>
@@ -287,8 +295,9 @@ export default function CartPanel(props: CartPanelProps) {
               className="btn btn--ghost"
               style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px", fontSize: "13px", height: "36px", border: "1px dashed var(--border)" }}
               onClick={() => setShowMemberModal(true)}
+              aria-label="เลือกสมาชิก / สมัคร"
             >
-              <User size={15} /> เลือกสมาชิก / สมัคร
+              <User size={15} /> สมาชิก
             </button>
           )}
 
@@ -313,11 +322,24 @@ export default function CartPanel(props: CartPanelProps) {
             <button
               type="button"
               className="btn btn--ghost"
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px", fontSize: "13px", height: "36px", border: "1px dashed var(--border)" }}
+              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px", fontSize: "13px", height: "36px", border: "1px dashed var(--border)" }}
               onClick={() => setShowDiscountModal(true)}
               disabled={cart.length === 0}
+              aria-label="ส่วนลด / โปรโมชัน"
             >
-              <Tag size={15} /> ส่วนลด / โปรโมชัน
+              <Tag size={15} /> ส่วนลด
+            </button>
+          )}
+          {!appliedCoupon && !showCoupon && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px", fontSize: "13px", height: "36px", border: "1px dashed var(--border)" }}
+              onClick={() => setShowCoupon(true)}
+              disabled={cart.length === 0}
+              aria-label="ใส่โค้ดคูปอง"
+            >
+              <Ticket size={15} /> คูปอง
             </button>
           )}
         </div>
@@ -354,15 +376,17 @@ export default function CartPanel(props: CartPanelProps) {
               <X size={15} />
             </button>
           </div>
-        ) : (
+        ) : showCoupon && (
           <div style={{ display: "flex", gap: 6 }}>
             <input
               className="input"
-              style={{ flex: 1, height: "36px", fontSize: "13px" }}
+              style={{ flex: 1, minWidth: 0, height: "36px", fontSize: "13px" }}
               placeholder="โค้ดคูปอง"
+              aria-label="โค้ดคูปอง"
+              autoFocus
               value={couponInput}
               onChange={(e) => setCouponInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleApplyCoupon(); }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleApplyCoupon(); if (e.key === "Escape") setShowCoupon(false); }}
               disabled={cart.length === 0}
             />
             <button
@@ -374,6 +398,7 @@ export default function CartPanel(props: CartPanelProps) {
             >
               {couponBusy ? "..." : "ใช้คูปอง"}
             </button>
+            <button type="button" className="btn btn--ghost" style={{ height: "36px", padding: "0 10px" }} onClick={() => { setShowCoupon(false); setCouponInput(""); }} aria-label="ปิดช่องคูปอง"><X size={16} /></button>
           </div>
         )}
 
@@ -398,11 +423,14 @@ export default function CartPanel(props: CartPanelProps) {
         {discountApproval && <div style={{ fontSize: 12, color: "#065f46", display: "flex", alignItems: "center", gap: 5 }}><ShieldCheck size={14} /> ส่วนลดอนุมัติโดย {discountApproval.approverName}</div>}
 
         {/* Totals Summary */}
-        <div style={{ background: "var(--bg-surface)", borderRadius: "10px", padding: "12px 16px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "6px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", color: "var(--text-secondary)", fontSize: "13px" }}>
-            <span>ยอดรวม ({cart.reduce((sum, i) => sum + i.qty, 0)} ชิ้น)</span>
-            <span>{formatMoney(subtotal)}</span>
-          </div>
+        <div className="cart-totals" style={{ background: "var(--bg-surface)", borderRadius: "10px", padding: "12px 16px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "6px" }}>
+          {/* the subtotal only differs from the net total when something is deducted */}
+          {hasDeductions && (
+            <div style={{ display: "flex", justifyContent: "space-between", color: "var(--text-secondary)", fontSize: "13px" }}>
+              <span>ยอดรวม ({itemCount} ชิ้น)</span>
+              <span>{formatMoney(subtotal)}</span>
+            </div>
+          )}
 
           {discountAmount > 0 && (
             <div style={{ display: "flex", justifyContent: "space-between", color: "#2e7d32", fontSize: "13px" }}>
@@ -418,8 +446,8 @@ export default function CartPanel(props: CartPanelProps) {
             </div>
           )}
 
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "20px", fontWeight: 800, marginTop: "4px", paddingTop: "8px", borderTop: "1px dashed var(--border)" }}>
-            <span>ยอดสุทธิ</span>
+          <div className="cart-totals__net" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: "20px", fontWeight: 800, ...(hasDeductions ? { marginTop: "4px", paddingTop: "8px", borderTop: "1px dashed var(--border)" } : {}) }}>
+            <span style={{ display: "inline-flex", alignItems: "baseline", gap: 8 }}><span>ยอดสุทธิ</span>{!hasDeductions && <small style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)" }}>{itemCount} ชิ้น</small>}</span>
             <span style={{ color: "var(--brand-hover)" }}>{formatMoney(total)}</span>
           </div>
         </div>

@@ -181,7 +181,7 @@ export default function ReportsPage() {
             <h2>รายงาน</h2>
             <p className="muted">สรุปยอดขาย, กำไร, และผลงานพนักงาน</p>
           </div>
-          <div style={{ display: "flex", gap: "12px", marginLeft: "auto", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div className="report-filters" style={{ display: "flex", gap: "12px", marginLeft: "auto", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <select className="input" value={reportBranchId ?? ""} onChange={e => setReportBranchId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">ทุกสาขา</option>
               {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}

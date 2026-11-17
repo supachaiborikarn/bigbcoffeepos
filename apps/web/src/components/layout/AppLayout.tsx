@@ -9,16 +9,38 @@ import { businessProfile } from "../../utils/business";
 
 const ADMIN_ROUTES = ["/admin", "/staff", "/migration", "/settings", "/parity", "/activity"];
 const MANAGER_ROUTES = ["/dashboard", "/reports", "/customers", "/inventory"];
+const DRAWER_QUERY = "(max-width: 999px)";
+const SIDEBAR_KEY = "bbpos.sidebarCollapsed.v2";
 
 export default function AppLayout() {
   const { user, loading: authLoading } = useAuth();
   const { activeBranch, loading } = useBranch();
   const location = useLocation();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("bbpos.sidebarCollapsed") === "1");
+  // No choice made yet: touch tablets (≈1200px wide in landscape) start with the icon-only
+  // sidebar so the sale screen gets the room. The toggle expands it and that choice is kept.
+  // (A new key: the old one was written on every page load, so it never meant a real choice.)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem(SIDEBAR_KEY);
+    if (saved !== null) return saved === "1";
+    return typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse) and (max-width: 1366px)").matches;
+  });
+  const toggleSidebar = () => setSidebarCollapsed((value) => {
+    try { localStorage.setItem(SIDEBAR_KEY, value ? "0" : "1"); } catch { /* storage blocked: keep it for this visit only */ }
+    return !value;
+  });
   const [mobileOpen, setMobileOpen] = useState(false);
+  // At ≤999px the sidebar is a slide-in drawer (studio.css); it always shows full labels there.
+  const [drawerNav, setDrawerNav] = useState(() => typeof window.matchMedia === "function" && window.matchMedia(DRAWER_QUERY).matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia(DRAWER_QUERY);
+    const sync = () => { setDrawerNav(mql.matches); if (!mql.matches) setMobileOpen(false); };
+    sync();
+    mql.addEventListener("change", sync);
+    return () => mql.removeEventListener("change", sync);
+  }, []);
   const [appearance, setAppearance] = useState(() => localStorage.getItem("bbpos.appearance") === "dark" ? "dark" : "light");
   const profile = businessProfile(activeBranch?.branchType);
-  useEffect(() => { localStorage.setItem("bbpos.sidebarCollapsed", sidebarCollapsed ? "1" : "0"); }, [sidebarCollapsed]);
   useEffect(() => { localStorage.setItem("bbpos.appearance", appearance); }, [appearance]);
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
   useEffect(() => {
@@ -35,7 +57,7 @@ export default function AppLayout() {
 
   return <div className="app-layout studio-app" data-business={profile.type} data-appearance={appearance}>
     <div className="app-layout__body">
-      <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((v) => !v)} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+      <Sidebar collapsed={sidebarCollapsed && !drawerNav} onToggle={toggleSidebar} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
       <div className="app-layout__main">
         <TopBar onOpenMenu={() => setMobileOpen(true)} mobileOpen={mobileOpen} appearance={appearance} onToggleAppearance={() => setAppearance((v) => v === "light" ? "dark" : "light")} />
         <PrintCenter key={`${user.id}:${activeBranch.id}`} />

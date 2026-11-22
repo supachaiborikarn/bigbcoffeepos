@@ -7,7 +7,7 @@ import { getPrinterMode, printerLabels, type PrinterMode } from '../utils/printe
 import { sendReceiptToNative } from '../utils/nativePrinter';
 import { sendRawbtText } from '../utils/rawbtPrinter';
 import { sendEpsonPrint } from '../utils/epsonPrinter';
-import { createReceiptJob, printWhenReady } from './ReceiptPrinter';
+import { buildEpsonReceiptEscPos, createReceiptJob, printWhenReady } from './ReceiptPrinter';
 import PrinterDeviceSettings from './settings/PrinterDeviceSettings';
 import { useDialogFocus } from '../utils/useDialogFocus';
 
@@ -55,8 +55,10 @@ export default function PrintCenter() {
       }
       if (value.mode === 'epson') {
         popup?.close();
+        const { source, widthMm, escpos } = value.job;
+        const receipt = source ? buildEpsonReceiptEscPos(source.data, source.branchName, widthMm, value.copy) : escpos;
         update('ส่งคำสั่งไปแอป Epson แล้ว กรุณาตรวจใบเสร็จที่เครื่อง · หากแอปไม่เปิด กดใบเสร็จ / พิมพ์ซ้ำ');
-        if (!sendEpsonPrint(value.job.escpos)) throw new Error('เปิด Epson TM Print Assistant ไม่สำเร็จ');
+        if (!sendEpsonPrint(receipt, Boolean(source))) throw new Error('เปิด Epson TM Print Assistant ไม่สำเร็จ');
         return;
       }
       if (value.mode === 'rawbt') {

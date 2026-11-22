@@ -171,6 +171,7 @@ export const ESCPOS = {
   boldOff: ESC + "E" + "\x00",
   doubleOn: GS + "!" + "\x11",
   doubleOff: GS + "!" + "\x00",
+  tallOn: GS + "!" + "\x01",
   cut: GS + "V" + "\x42" + "\x00"
 };
 const RECEIPT_COLS = 32;
@@ -196,81 +197,136 @@ export function padRow(left: string, right: string, cols = RECEIPT_COLS): string
   return leftStr + " ".repeat(gap) + right;
 }
 
-function escposSlip(data: ReceiptData, branchName: string, copyLabel?: string, cols = RECEIPT_COLS): string {
-  const row = (left: string, right: string) => padRow(left, right, cols);
+function epsonText(value: string): string {
+  return value.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+}
+
+function wrapThermalText(value: string, columns: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  let width = 0;
+  // Keep combining marks with their base letter even when a Thai name wraps.
+  for (const unit of epsonText(value).match(/\P{M}\p{M}*|\p{M}+/gu) ?? []) {
+    const unitWidth = displayWidth(unit);
+    if (width + unitWidth > columns && line) {
+      lines.push(line.trimEnd());
+      line = "";
+      width = 0;
+    }
+    if (!line && unit === " ") continue;
+    line += unit;
+    width += unitWidth;
+  }
+  lines.push(line.trimEnd());
+  return lines;
+}
+
+function escposSlip(data: ReceiptData, branchName: string, copyLabel: string | undefined, cols: number, epson: boolean): string {
+  const bodyLine = (text: string) => epson ? wrapThermalText(text, cols).map(line => " " + line).join("\n") : text;
+  const centerLine = (text: string) => epson ? wrapThermalText(text, cols).join("\n") : text;
+  const row = (left: string, right: string) => {
+    if (!epson) return padRow(left, right, cols);
+    const value = epsonText(right);
+    const labels = wrapThermalText(left, cols);
+    const last = labels.pop() ?? "";
+    if (displayWidth(last) + displayWidth(value) + 1 <= cols) labels.push(padRow(last, value, cols));
+    else labels.push(last, padRow("", value, cols));
+    return labels.map(line => " " + line).join("\n");
+  };
+  const amount = epson ? formatMoney2 : formatMoney;
   const ss = data.storeSetting ?? null;
   const shopName = ss?.shopName?.trim() || "Big B Coffee";
   const hasTaxId = Boolean(ss?.taxId?.trim());
   const now = new Date(data.order.createdAt);
   const dateStr = now.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Bangkok" });
   const timeStr = now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" });
-  const div = "-".repeat(cols) + "\n";
+  const div = bodyLine("-".repeat(cols)) + "\n";
 
   let out = ESCPOS.init + ESCPOS.alignCenter;
-  out += ESCPOS.doubleOn + shopName + ESCPOS.doubleOff + "\n";
-  out += branchName + "\n";
-  if (ss?.branchLabel?.trim()) out += ss.branchLabel.trim() + "\n";
-  if (ss?.addressLine?.trim()) out += ss.addressLine.trim() + "\n";
-  if (ss?.phone?.trim()) out += "โทร. " + ss.phone.trim() + "\n";
-  if (hasTaxId) out += "เลขภาษี " + ss!.taxId.trim() + "\n";
-  if (ss?.receiptHeader?.trim()) out += ss.receiptHeader.trim() + "\n";
-  out += (hasTaxId ? "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" : "ใบเสร็จรับเงิน") + "\n";
-  if (copyLabel) out += "[" + copyLabel + "]\n";
+  if (epson) out += ESCPOS.boldOn + centerLine(shopName) + "\n" + ESCPOS.boldOff;
+  else out += ESCPOS.doubleOn + shopName + ESCPOS.doubleOff + "\n";
+  out += centerLine(branchName) + "\n";
+  if (ss?.branchLabel?.trim()) out += centerLine(ss.branchLabel.trim()) + "\n";
+  if (ss?.addressLine?.trim()) out += centerLine(ss.addressLine.trim()) + "\n";
+  if (ss?.phone?.trim()) out += centerLine("โทร. " + ss.phone.trim()) + "\n";
+  if (hasTaxId) out += centerLine("เลขภาษี " + ss!.taxId.trim()) + "\n";
+  if (ss?.receiptHeader?.trim()) out += centerLine(ss.receiptHeader.trim()) + "\n";
+  const title = hasTaxId ? "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" : "ใบเสร็จรับเงิน";
+  if (epson) out += ESCPOS.boldOn + centerLine(title) + "\n" + ESCPOS.boldOff;
+  else out += title + "\n";
+  if (copyLabel) out += centerLine("[" + copyLabel + "]") + "\n";
 
   out += ESCPOS.alignLeft;
   out += row("บิล #" + data.order.id, dateStr + " " + timeStr) + "\n" + div;
+  if (epson) out += ESCPOS.boldOn + row("รายการ", "ราคา (บาท)") + "\n" + ESCPOS.boldOff;
 
   for (const item of data.cart) {
     const modTotal = item.modifiers.reduce((s, m) => s + (m.price || 0), 0);
     const unit = item.basePrice + modTotal;
-    out += row(item.name, formatMoney(unit * item.qty)) + "\n";
-    let detail = "  x" + item.qty + " @ " + formatMoney(unit);
+    out += row(item.name, amount(unit * item.qty)) + "\n";
+    let detail = "  x" + item.qty + " @ " + amount(unit);
     const mods = item.modifiers.map((m) => modifierLabel(m.value)).filter(Boolean).join(" ");
     if (mods) detail += " " + mods;
-    out += detail + "\n";
-    if (item.note) out += "  * " + item.note + "\n";
+    out += bodyLine(detail) + "\n";
+    if (item.note) out += bodyLine("  * " + item.note) + "\n";
   }
 
   out += div;
-  out += row("ยอดรวม", formatMoney(data.subtotal)) + "\n";
+  out += row("ยอดรวม", amount(data.subtotal)) + "\n";
   if (data.discountAmount > 0) {
     const named = data.order?.appliedDiscounts ?? [];
-    if (named.length) named.forEach((d) => { out += row(d.label.slice(0, 20), "-" + formatMoney(d.amount)) + "\n"; });
-    else out += row("ส่วนลด", "-" + formatMoney(data.discountAmount)) + "\n";
+    if (named.length) named.forEach((d) => { out += row(epson ? d.label : d.label.slice(0, 20), "-" + amount(d.amount)) + "\n"; });
+    else out += row("ส่วนลด", "-" + amount(data.discountAmount)) + "\n";
   }
-  if (data.pointsUsed > 0) out += row("แลกแต้ม", "-" + formatMoney(data.pointsUsed)) + "\n";
-  out += ESCPOS.boldOn + row("ยอดสุทธิ", "฿" + formatMoney(data.total)) + ESCPOS.boldOff + "\n";
+  if (data.pointsUsed > 0) out += row("แลกแต้ม", "-" + amount(data.pointsUsed)) + "\n";
+  if (epson) {
+    const rule = bodyLine("=".repeat(cols)) + "\n";
+    out += rule + ESCPOS.boldOn + ESCPOS.tallOn + row("ยอดสุทธิ", "฿" + amount(data.total)) + "\n" + ESCPOS.doubleOff + ESCPOS.boldOff + rule;
+  } else {
+    out += ESCPOS.boldOn + row("ยอดสุทธิ", "฿" + amount(data.total)) + ESCPOS.boldOff + "\n";
+  }
 
   const vatMode = ss?.vatMode ?? "INCLUSIVE";
   const vatRate = ss?.vatRate ?? 0;
-  if (vatMode !== "NONE" && vatRate > 0 && data.total > 0) {
+  const showVat = vatMode !== "NONE" && vatRate > 0 && data.total > 0;
+  if (showVat) {
     const vat = Math.round((data.total * vatRate / (100 + vatRate)) * 100) / 100;
     const base = Math.round((data.total - vat) * 100) / 100;
     out += row("มูลค่าสินค้า", formatMoney2(base)) + "\n";
     out += row("VAT " + vatRate + "%", formatMoney2(vat)) + "\n";
   }
 
-  out += div;
+  if (!epson || showVat) out += div;
   out += row("ชำระโดย", paymentLabel(data.paymentMethod)) + "\n";
   if (data.cashReceived != null && data.changeAmount != null) {
-    out += row("รับเงิน", formatMoney(data.cashReceived)) + "\n";
-    out += row("เงินทอน", formatMoney(data.changeAmount)) + "\n";
+    out += row("รับเงิน", amount(data.cashReceived)) + "\n";
+    out += row("เงินทอน", amount(data.changeAmount)) + "\n";
   }
 
   out += "\n" + ESCPOS.alignCenter;
-  out += (ss?.receiptFooter?.trim() || "ขอบคุณที่ใช้บริการ") + "\n";
-  out += shopName + "\n\n\n";
+  out += centerLine(ss?.receiptFooter?.trim() || "ขอบคุณที่ใช้บริการ") + "\n";
+  out += epson ? "\n\n" : shopName + "\n\n\n";
+  return out;
+}
+
+function buildThermalReceipt(data: ReceiptData, branchName: string, columns: number, epson = false, firstCopy = 0): string {
+  const copies = Math.max(1, Math.floor(data.copies ?? 1));
+  const labels = data.copyLabels ?? [];
+  let out = "";
+  for (let i = firstCopy; i < copies; i++) {
+    out += escposSlip(data, branchName, labels[i], columns, epson) + ESCPOS.cut;
+  }
   return out;
 }
 
 export function buildReceiptEscPos(data: ReceiptData, branchName: string): string {
-  const copies = Math.max(1, Math.floor(data.copies ?? 1));
-  const labels = data.copyLabels ?? [];
-  let out = "";
-  for (let i = 0; i < copies; i++) {
-    out += escposSlip(data, branchName, labels[i], getPaperWidth() === 80 ? 48 : 32) + ESCPOS.cut;
-  }
-  return out;
+  return buildThermalReceipt(data, branchName, getPaperWidth() === 80 ? 48 : 32);
+}
+
+export function buildEpsonReceiptEscPos(data: ReceiptData, branchName: string, widthMm: 58 | 80, firstCopy = 0): string {
+  // TM-m30III Font A supports 42/32 columns in its narrower mode.
+  // Leave a one-column gutter on both sides of the printable area.
+  return buildThermalReceipt(data, branchName, widthMm === 80 ? 40 : 30, true, firstCopy);
 }
 
 export function buildReceiptHtml(data: ReceiptData, branchName: string, widthMm: 58 | 80 = getPaperWidth(), device = false) {

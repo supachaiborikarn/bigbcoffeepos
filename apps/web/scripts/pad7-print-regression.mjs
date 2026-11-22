@@ -23,13 +23,14 @@ const entry = `
   import POSPage from '/src/pages/POSPage.tsx';
   import PrintCenter from '/src/components/PrintCenter.tsx';
   import * as settings from '/src/utils/printerSettings.ts';
-  import { createReceiptJob } from '/src/components/ReceiptPrinter.tsx';
+  import { buildEpsonReceiptEscPos, createReceiptJob } from '/src/components/ReceiptPrinter.tsx';
   import { submitPrintJob } from '/src/utils/printJob.ts';
   import * as epson from '/src/utils/epsonPrinter.ts';
   import '/src/styles.css';
   import '/src/studio.css';
   window.__settings = settings;
   window.__createReceiptJob = createReceiptJob;
+  window.__buildEpsonReceiptEscPos = buildEpsonReceiptEscPos;
   window.__submitPrintJob = submitPrintJob;
   window.__epson = epson;
   let tree = React.createElement(React.Fragment, null, React.createElement(PrintCenter), React.createElement(POSPage));
@@ -144,7 +145,9 @@ try {
   assert.equal(defaults.mode, 'epson'); assert.equal(defaults.auto, true);
   const xml = new URL(sent[0]).searchParams.get('data');
   assert.match(xml, /ขนม &amp; ชา &lt;ไทย&gt;/);
-  assert.match(xml, /เงินทอน/); assert.match(xml, /35/);
+  assert.match(xml, /เงินทอน +35\.00/);
+  assert.match(xml, /<image width="128" height="176" align="center" mode="mono">[A-Za-z0-9+/=]+<\/image>/);
+  assert.match(xml, /<text em="true" \/><text width="1" height="2" \/><text> ยอดสุทธิ +฿65\.00&#10;<\/text>/);
   assert.equal((xml.match(/<cut /g) || []).length, 1);
   assert.match(await page.locator('.printer-status').innerText(), /Epson/);
   console.log('PASS sale saved before Epson hand-off; Thai, totals and one cut preserved; no popup');
@@ -165,7 +168,8 @@ try {
   const testUrl = await page.evaluate(() => window.__dispatches.at(-1));
   const testXml = new URL(testUrl).searchParams.get('data');
   assert.match(testXml, /ทดสอบเครื่องพิมพ์/); assert.match(testXml, /ไม่มีการขายหรือรับเงินจริง/);
-  assert.match(testXml, /-{48}/, '80 mm uses the wider slip');
+  assert.match(testXml, /-{40}/, '80 mm uses the wider Epson slip');
+  assert.match(testXml, /<image width="128"/);
   assert.equal(writes, 1);
   await page.getByRole('button', { name: 'ตั้งค่าเครื่องพิมพ์', exact: true }).click();
   await page.getByRole('combobox', { name: /วิธีพิมพ์/ }).selectOption('browser');
@@ -181,27 +185,57 @@ try {
   assert.equal(await page.evaluate(() => window.__dispatches.length), 0, 'explicit auto-print off survives reload');
   console.log('PASS persisted job retry and test slip do not create sales; 80 mm and explicit auto-print off survive reload');
 
-  // Use the existing receipt builder to test the Epson XML boundary, including all
-  // three oil-service copies and text that must never be interpreted as XML.
+  // Check all three oil-service copies, including a long Thai item name and named promotion.
   const formatChecks = await page.evaluate(item => {
-    const data = { order: { id: 301, branchId: 21, createdAt: '2026-11-22T02:00:00Z' }, cart: [item], discountRules: [], subtotal: 65, total: 65, discountAmount: 0, pointsUsed: 0, paymentMethod: 'CASH', cashReceived: 100, changeAmount: 35, copies: 3, copyLabels: ['สำหรับสำนักงาน', 'สำหรับร้าน', 'สำหรับลูกค้า'] };
+    const name = 'ลาเต้เย็นแก้วใหญ่เพิ่มช็อตกาแฟและนมโอ๊ตแบบหวานน้อย';
+    const data = {
+      order: { id: 301, branchId: 21, createdAt: '2026-11-22T02:00:00Z', appliedDiscounts: [{ label: 'โปรโมชันสำหรับรายการกาแฟและขนมของร้าน', amount: 15.25 }] },
+      cart: [item, { ...item, name, basePrice: 1_234.75 }], discountRules: [], subtotal: 1_299.75, discountAmount: 15.25,
+      total: 1_284.5, pointsUsed: 0, paymentMethod: 'CASH', cashReceived: 1_500, changeAmount: 215.5,
+      copies: 3, copyLabels: ['สำหรับสำนักงาน', 'สำหรับร้าน', 'สำหรับลูกค้า']
+    };
     const result = [];
     for (const width of [58, 80]) {
       window.__settings.setPaperWidth(width);
       const job = window.__createReceiptJob(data, 'ทดสอบ');
-      const xml = window.__epson.buildEpsonPrintXml(job.escpos);
+      const styled = window.__buildEpsonReceiptEscPos(data, 'ทดสอบ', width);
+      const xml = window.__epson.buildEpsonPrintXml(styled, true);
       const document = new DOMParser().parseFromString(xml, 'application/xml');
-      result.push({ width: job.widthMm, cuts: document.querySelectorAll('cut').length, invalid: !!document.querySelector('parsererror'), text: document.documentElement.textContent, rawControls: /[\x00-\x08\x0b-\x1f]/.test(xml) });
+      const text = [...document.querySelectorAll('text')].map(node => node.textContent).join('');
+      const prices = text.split('\n').filter(line => /(?:65\.00|1,234\.75|1,299\.75|-15\.25|1,284\.50|1,500\.00|215\.50)$/.test(line) && !line.includes('@'));
+      const logo = document.querySelector('image');
+      const logoBytes = atob(logo.textContent);
+      result.push({
+        width: job.widthMm, cuts: document.querySelectorAll('cut').length,
+        logoCount: document.querySelectorAll('image').length, logoSize: logoBytes.length, logoHasInk: /[^\x00]/.test(logoBytes),
+        logoFirst: logo.previousElementSibling.getAttribute('width') === '1' && !logo.previousElementSibling.textContent,
+        invalid: !!document.querySelector('parsererror'), text, prices, name,
+        rawControls: /[\x00-\x08\x0b-\x1f]/.test(xml), rawbtUnchanged: !job.escpos.includes('ราคา (บาท)')
+      });
     }
     const rejects = input => { try { window.__epson.buildEpsonPrintUrl(input); return false; } catch { return true; } };
-    return { result, oversized: rejects('ก'.repeat(30_000)), unsupported: rejects('\x1bx'), empty: rejects('') };
+    const largeText = '\x1b@' + 'ก'.repeat(20_950);
+    const fallback = new URL(window.__epson.buildEpsonPrintUrl(largeText, true)).searchParams.get('data');
+    const remaining = window.__buildEpsonReceiptEscPos(data, 'ทดสอบ', 58, 1);
+    return {
+      result, remaining, longReceiptPreserved: fallback.includes('ก'.repeat(20_950)) && !fallback.includes('<image'),
+      oversized: rejects('ก'.repeat(30_000)), unsupported: rejects('\x1bx'), empty: rejects('')
+    };
   }, item);
   for (const result of formatChecks.result) {
     assert.equal(result.cuts, 3); assert.equal(result.invalid, false); assert.equal(result.rawControls, false);
+    assert.equal(result.logoCount, 3); assert.equal(result.logoSize, 128 * 176 / 8);
+    assert.equal(result.logoHasInk, true); assert.equal(result.logoFirst, true); assert.equal(result.rawbtUnchanged, true);
     for (const text of ['สำหรับสำนักงาน', 'สำหรับร้าน', 'สำหรับลูกค้า', item.name, 'เงินทอน']) assert.ok(result.text.includes(text));
+    assert.ok(result.text.replace(/\s/g, '').includes(result.name), 'long item name must wrap without losing Thai text');
+    assert.equal(result.prices.length, 21, 'seven monetary rows on each of three copies');
+    for (const line of result.prices) assert.equal([...line.replace(/\p{M}/gu, '')].length, result.width === 80 ? 41 : 31, line);
   }
+  assert.doesNotMatch(formatChecks.remaining, /สำหรับสำนักงาน/);
+  assert.match(formatChecks.remaining, /สำหรับร้าน/);
+  assert.equal(formatChecks.longReceiptPreserved, true, 'drop only the logo when the URL would be too long');
   assert.equal(formatChecks.oversized, true); assert.equal(formatChecks.unsupported, true); assert.equal(formatChecks.empty, true);
-  console.log('PASS valid Epson XML at 58/80 mm, three copies/cuts, escaped Thai text; oversized/unsupported/empty jobs rejected');
+  console.log('PASS 58/80 mm Epson logo and right-aligned amounts, long Thai names, three cuts, remaining copies, RawBT and large-receipt fallback');
   await context.close();
 
   const desktop = await openDevice({ userAgent: desktopUA });

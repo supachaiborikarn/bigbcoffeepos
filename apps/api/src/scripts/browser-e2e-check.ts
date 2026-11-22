@@ -23,6 +23,12 @@ type TestData = {
   createdCupIngredientIds: number[];
 };
 
+// The cart shows "ยอดสุทธิ · N ชิ้น" and only adds a "ยอดรวม (N ชิ้น)" line when
+// something is deducted, so wait on the count inside the totals box either way.
+async function waitForCartItemCount(page: Page, count: number) {
+  await page.locator(".cart-totals").filter({ hasText: new RegExp(`(^|[^0-9])${count} ชิ้น`) }).first().waitFor({ timeout: 10_000 });
+}
+
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
 }
@@ -241,7 +247,7 @@ async function main() {
 
     await addModifiedLatte(page, data.latte.name);
     await addSimpleItem(page, data.cookie.name);
-    await page.getByText(/ยอดรวม \(2 ชิ้น\)/).waitFor({ timeout: 10_000 });
+    await waitForCartItemCount(page, 2);
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByText("รับเงินสด").waitFor({ timeout: 10_000 });
     const cashModal = page.locator(".modal-backdrop").last();
@@ -269,7 +275,7 @@ async function main() {
     assert(cashOrder.payments[0]?.changeAmount === 15, "Cash change amount mismatch");
 
     await addSimpleItem(page, data.cookie.name);
-    await page.getByText(/ยอดรวม \(1 ชิ้น\)/).waitFor({ timeout: 10_000 });
+    await waitForCartItemCount(page, 1);
     await page.getByRole("button", { name: "QR", exact: true }).click();
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน QR/ }).waitFor({ timeout: 10_000 });
@@ -283,7 +289,7 @@ async function main() {
     assert(qrOrder.payments[0]?.status === "CONFIRMED", "QR payment confirmation was not persisted");
 
     await addSimpleItem(page, data.cookie.name);
-    await page.getByText(/ยอดรวม \(1 ชิ้น\)/).waitFor({ timeout: 10_000 });
+    await waitForCartItemCount(page, 1);
     await page.getByRole("button", { name: "บัตร", exact: true }).click();
     await page.getByRole("button", { name: /ชำระเงิน/ }).click();
     await page.getByRole("heading", { name: /ยืนยันชำระเงิน บัตรเครดิต/ }).waitFor({ timeout: 10_000 });

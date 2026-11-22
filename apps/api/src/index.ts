@@ -141,6 +141,8 @@ import { normalizeThaiTaxId } from "./lib/taxId.js";
 import { publicError } from "./lib/publicError.js";
 import { requireAuth, requireAdmin, requireRole, requireBranchAccess, generateToken, signDiscountApproval, verifyDiscountApproval, type AuthRequest } from "./middleware/auth.js";
 import { listAuditEvents } from "./store/auditEvents.js";
+import { isCupOption } from "./store/cupStockSettings.js";
+import { CatalogChangeError, approveCatalogChange, cancelCatalogChange, countPendingCatalogChanges, getCatalogChangeRequest, listCatalogChangeRequests, rejectCatalogChange, submitCatalogEdit, type CatalogChangeKind } from "./store/catalogChanges.js";
 import { closeTimeEntry, getTimeEntryBranch, listTimeEntries, punch } from "./store/timeClock.js";
 import { addCashEntry, CASH_IN_CATEGORIES, CASH_OUT_CATEGORIES, getCashEntryBranch, listCashEntries, voidCashEntry } from "./store/cashDrawer.js";
 
@@ -326,15 +328,98 @@ app.put("/api/customers/:id", requireRole("admin", "manager"), async (req: AuthR
   } catch (e) { return res.status(400).json({ error: publicError(e) }); }
 });
 
+/* ─── Catalog edits: managers add freely, their edits wait for an admin ─── */
+/** Menus and ingredients are shared by every branch of a kind; a manager only touches their own kind. */
+async function managerOwnsMenuItem(req: AuthRequest, menuItemId: number) {
+  if (req.user?.role === "admin") return true;
+  const branchType = req.branchScope?.branchType;
+  if (!branchType) return false;
+  return Boolean(await prisma.menuItem.findFirst({ where: { id: menuItemId, branchType }, select: { id: true } }));
+}
+async function managerSeesIngredient(req: AuthRequest, ingredientId: number) {
+  if (req.user?.role === "admin") return true;
+  const scope = req.branchScope;
+  if (!scope) return false;
+  return Boolean(await prisma.ingredient.findFirst({
+    where: { id: ingredientId, OR: [{ stocks: { some: { branchId: scope.id } } }, { recipes: { some: { menuItem: { branchType: scope.branchType } } } }] },
+    select: { id: true }
+  }));
+}
+async function sendCatalogEdit(req: AuthRequest, res: express.Response, input: { kind: CatalogChangeKind; targetId: number; branchId: number | null; payload: unknown }, auditAction: string, auditDetails: Record<string, unknown>) {
+  try {
+    const outcome = await submitCatalogEdit({ ...input, actor: { id: req.user!.id, role: req.user!.role } });
+    if (outcome.status === "pending") {
+      audit("catalog_change.requested", req, { changeRequestId: outcome.request.id, kind: input.kind, targetId: input.targetId, branchId: input.branchId });
+      return res.status(202).json({ pending: true, request: outcome.request });
+    }
+    audit(auditAction, req, { ...auditDetails, changedFields: outcome.changes.map((change) => change.field) });
+    return res.json(outcome.result);
+  } catch (e) {
+    return res.status(e instanceof CatalogChangeError ? e.status : 400).json({ error: publicError(e) });
+  }
+}
+
+app.get("/api/catalog-changes", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const status = isStr(req.query.status) && ["PENDING", "APPROVED", "REJECTED", "CANCELLED"].includes(String(req.query.status)) ? String(req.query.status) : undefined;
+  // Admins review everyone's requests; a manager follows their own.
+  const requestedByUserId = req.user?.role === "admin" ? undefined : req.user!.id;
+  return res.json({ items: await listCatalogChangeRequests({ status, requestedByUserId, limit: parseId(req.query.limit as string) ?? undefined }) });
+});
+app.get("/api/catalog-changes/pending-count", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const count = req.user?.role === "admin"
+    ? await countPendingCatalogChanges()
+    : await prisma.catalogChangeRequest.count({ where: { status: "PENDING", requestedByUserId: req.user!.id } });
+  return res.json({ count });
+});
+app.post("/api/catalog-changes/:id/approve", requireAdmin, async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const { request, result } = await approveCatalogChange(id, req.user!.id, isStr(req.body?.note) ? req.body.note.trim().slice(0, 500) : "");
+    audit("catalog_change.approved", req, { changeRequestId: id, kind: request.kind, targetId: request.targetId, branchId: request.branchId, requestedByUserId: request.requestedByUserId });
+    return res.json({ request, result });
+  } catch (e) {
+    return res.status(e instanceof CatalogChangeError ? e.status : 400).json({ error: publicError(e) });
+  }
+});
+app.post("/api/catalog-changes/:id/reject", requireAdmin, async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const request = await rejectCatalogChange(id, req.user!.id, isStr(req.body?.note) ? req.body.note.trim().slice(0, 500) : "");
+    audit("catalog_change.rejected", req, { changeRequestId: id, kind: request.kind, targetId: request.targetId, branchId: request.branchId, requestedByUserId: request.requestedByUserId });
+    return res.json({ request });
+  } catch (e) {
+    return res.status(e instanceof CatalogChangeError ? e.status : 400).json({ error: publicError(e) });
+  }
+});
+app.post("/api/catalog-changes/:id/cancel", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid id" });
+  const row = await getCatalogChangeRequest(id);
+  if (!row || row.requestedByUserId !== req.user!.id) return res.status(404).json({ error: "ไม่พบคำขอของคุณ" });
+  try {
+    const request = await cancelCatalogChange(id, req.user!.id);
+    audit("catalog_change.cancelled", req, { changeRequestId: id, kind: request.kind, targetId: request.targetId });
+    return res.json({ request });
+  } catch (e) {
+    return res.status(e instanceof CatalogChangeError ? e.status : 400).json({ error: publicError(e) });
+  }
+});
+
 /* ─── Menu ─── */
 app.get("/api/menu", async (req: AuthRequest, res) => res.json({ items: await getMenu(req.branchScope?.branchType) }));
-app.post("/api/menu", requireRole("admin", "manager"), async (req, res) => {
+app.post("/api/menu", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const name = isStr(req.body?.name) ? req.body.name.trim() : "";
   const category = isStr(req.body?.category) ? req.body.category.trim() : "";
   const basePrice = parseMoney(req.body?.basePrice);
   const taxRate = req.body?.taxRate === undefined || req.body?.taxRate === null || req.body?.taxRate === "" ? undefined : parseNonNegativeNumber(req.body.taxRate);
   if (req.body?.taxRate !== undefined && req.body?.taxRate !== null && req.body?.taxRate !== "" && taxRate === null) return res.status(400).json({ error: "ภาษีไม่ถูกต้อง" });
   if (!name || !category || basePrice === null) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+  // A manager adds menus only to their own kind of shop.
+  const requestedBranchType = parseBranchType(req.body?.branchType);
+  const managerBranchType = req.user?.role === "admin" ? null : req.branchScope?.branchType;
+  if (req.user?.role !== "admin" && (!managerBranchType || (requestedBranchType && requestedBranchType !== managerBranchType))) return res.status(403).json({ error: "เพิ่มเมนูได้เฉพาะประเภทร้านของสาขาคุณ" });
   const item = await addMenuItem({
     name,
     category,
@@ -347,17 +432,20 @@ app.post("/api/menu", requireRole("admin", "manager"), async (req, res) => {
     taxRate: taxRate ?? undefined,
     optionGroup: req.body?.optionGroup?.trim(),
     optionLabel: req.body?.optionLabel?.trim(),
-    branchType: parseBranchType(req.body?.branchType)
+    branchType: managerBranchType ?? requestedBranchType
   });
   audit("menu.created", req, { menuItemId: item.id, branchType: item.branchType });
   return res.status(201).json({ item });
 });
-app.put("/api/menu/:id", requireRole("admin", "manager"), async (req, res) => {
+app.put("/api/menu/:id", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
+  if (!(await managerOwnsMenuItem(req, id))) return res.status(403).json({ error: "แก้ได้เฉพาะเมนูของประเภทร้านสาขาคุณ" });
+  const branchType = parseBranchType(req.body?.branchType);
+  if (req.user?.role !== "admin" && branchType && branchType !== req.branchScope?.branchType) return res.status(403).json({ error: "ย้ายเมนูไปประเภทร้านอื่นได้เฉพาะผู้ดูแลระบบ" });
   const cost = req.body?.cost === null || req.body?.cost === "" ? null : req.body?.cost !== undefined ? parseMoney(req.body.cost) ?? undefined : undefined;
   const taxRate = req.body?.taxRate === null || req.body?.taxRate === "" ? null : req.body?.taxRate !== undefined ? parseNonNegativeNumber(req.body.taxRate) ?? undefined : undefined;
-  const item = await updateMenuItem(id, {
+  const payload = {
     name: req.body?.name?.trim(), category: req.body?.category?.trim(),
     basePrice: req.body?.basePrice !== undefined ? parseMoney(req.body.basePrice) ?? undefined : undefined,
     active: req.body?.active, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(),
@@ -367,29 +455,29 @@ app.put("/api/menu/:id", requireRole("admin", "manager"), async (req, res) => {
     taxRate,
     optionGroup: req.body?.optionGroup === null ? null : req.body?.optionGroup?.trim(),
     optionLabel: req.body?.optionLabel === null ? null : req.body?.optionLabel?.trim(),
-    branchType: parseBranchType(req.body?.branchType)
-  });
-  if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
-  audit("menu.updated", req, { menuItemId: id });
-  return res.json({ item });
+    branchType
+  };
+  return sendCatalogEdit(req, res, { kind: "menu.update", targetId: id, branchId: null, payload }, "menu.updated", { menuItemId: id });
 });
-app.delete("/api/menu/:id", requireRole("admin", "manager"), async (req, res) => {
+app.delete("/api/menu/:id", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
+  if (!(await managerOwnsMenuItem(req, id))) return res.status(403).json({ error: "เปิด/ปิดขายได้เฉพาะเมนูของประเภทร้านสาขาคุณ" });
   const item = await updateMenuItem(id, { active: false });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
   audit("menu.deactivated", req, { menuItemId: id });
   return res.json({ item });
 });
-app.post("/api/menu/:id/restore", requireRole("admin", "manager"), async (req, res) => {
+app.post("/api/menu/:id/restore", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
+  if (!(await managerOwnsMenuItem(req, id))) return res.status(403).json({ error: "เปิด/ปิดขายได้เฉพาะเมนูของประเภทร้านสาขาคุณ" });
   const item = await updateMenuItem(id, { active: true });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
   audit("menu.restored", req, { menuItemId: id });
   return res.json({ item });
 });
-app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req, res) => {
+app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const optionGroup = isStr(req.body?.optionGroup) ? req.body.optionGroup.trim() : "";
   const category = isStr(req.body?.category) ? req.body.category.trim() : "";
   const branchType = parseBranchType(req.body?.branchType);
@@ -397,6 +485,7 @@ app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req
   if (!optionGroup || !category || !branchType || typeof req.body?.active !== "boolean") {
     return res.status(400).json({ error: "ข้อมูลการ์ดเมนูไม่ครบ" });
   }
+  if (req.user?.role !== "admin" && branchType !== req.branchScope?.branchType) return res.status(403).json({ error: "เปิด/ปิดขายได้เฉพาะเมนูของประเภทร้านสาขาคุณ" });
   const items = await setMenuGroupActive({ optionGroup, category, branchType, active });
   if (!items.length) return res.status(404).json({ error: "ไม่พบการ์ดเมนู" });
   audit(active ? "menu.group.restored" : "menu.group.deactivated", req, { optionGroup, category, branchType, count: items.length });
@@ -426,16 +515,16 @@ app.post("/api/ingredients", requireRole("admin", "manager"), requireBranchAcces
   audit("ingredient.created", req, { ingredientId: ingredient?.id, branchId });
   return res.status(201).json({ ingredient });
 });
-app.put("/api/ingredients/:id", requireRole("admin", "manager"), async (req, res) => {
+app.put("/api/ingredients/:id", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid id" });
+  if (!(await managerSeesIngredient(req, id))) return res.status(403).json({ error: "ไม่พบวัตถุดิบนี้ในสาขาของคุณ" });
   let barcode: string | null | undefined;
   try { barcode = normalizeBarcode(req.body?.barcode); await assertBarcodeFree(barcode, id); }
   catch (e) { return res.status(409).json({ error: publicError(e) }); }
-  const ingredient = await updateIngredient(id, { name: req.body?.name?.trim(), unit: req.body?.unit?.trim(), costPerUnit: req.body?.costPerUnit !== undefined ? parseMoney(req.body.costPerUnit) ?? undefined : undefined, barcode });
-  if (!ingredient) return res.status(404).json({ error: "ไม่พบวัตถุดิบ" });
-  audit("ingredient.updated", req, { ingredientId: id, changedFields: Object.keys(req.body ?? {}) });
-  return res.json({ ingredient });
+  const payload = { name: req.body?.name?.trim(), unit: req.body?.unit?.trim(), costPerUnit: req.body?.costPerUnit !== undefined ? parseMoney(req.body.costPerUnit) ?? undefined : undefined, barcode };
+  if (req.user?.role === "admin" && Object.values(payload).every((value) => value === undefined)) return res.status(404).json({ error: "ไม่พบวัตถุดิบ" });
+  return sendCatalogEdit(req, res, { kind: "ingredient.update", targetId: id, branchId: null, payload }, "ingredient.updated", { ingredientId: id });
 });
 app.get("/api/inventory", requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
   const branchId = parseId(req.query.branchId as string);
@@ -462,19 +551,15 @@ app.put("/api/inventory/:ingredientId", requireRole("admin", "manager"), require
   const normalizedStockQty = stockQty === null ? undefined : stockQty;
   const normalizedReorderLevel = reorderLevel === null ? undefined : reorderLevel;
 
-  const item = await updateInventoryItem({
-    branchId,
-    ingredientId,
+  const payload = {
     name: req.body?.name?.trim(),
     unit: req.body?.unit?.trim(),
     costPerUnit: normalizedCostPerUnit,
     barcode,
     stockQty: normalizedStockQty,
     reorderLevel: normalizedReorderLevel
-  });
-  if (!item) return res.status(404).json({ error: "ไม่พบสินค้าในสต็อก" });
-  audit("inventory.updated", req, { branchId, ingredientId, changedFields: Object.keys(req.body ?? {}) });
-  return res.json({ item });
+  };
+  return sendCatalogEdit(req, res, { kind: "inventory.update", targetId: ingredientId, branchId, payload }, "inventory.updated", { branchId, ingredientId });
 });
 app.post("/api/stock-adjustments", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.body?.branchId)), async (req, res) => {
   const branchId = parseId(req.body?.branchId);
@@ -711,7 +796,7 @@ app.get("/api/cup-stock-settings", requireBranchAccess((req) => parseId(req.quer
   if (branchId === null) return res.status(400).json({ error: "ระบุสาขา" });
   return res.json({ settings: await getCupStockSettings(branchId) });
 });
-app.put("/api/cup-stock-settings", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req, res) => {
+app.put("/api/cup-stock-settings", requireRole("admin", "manager"), requireBranchAccess((req) => parseId(req.query.branchId as string)), async (req: AuthRequest, res) => {
   const branchId = parseId(req.query.branchId as string);
   if (branchId === null || !Array.isArray(req.body?.settings)) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
   const settings = req.body.settings.map((setting: any) => ({
@@ -721,16 +806,13 @@ app.put("/api/cup-stock-settings", requireRole("admin", "manager"), requireBranc
       ? setting.items.map((item: any) => ({
         ingredientId: parseId(item?.ingredientId) ?? 0,
         qty: parseNonNegativeNumber(item?.qty) ?? 0
-      }))
+      })).filter((item: { ingredientId: number; qty: number }) => item.ingredientId > 0 && item.qty > 0)
       : []
   }));
-  try {
-    const updated = await setCupStockSettings(branchId, settings);
-    audit("cup_stock_settings.updated", req, { branchId, settingCount: updated.length });
-    return res.json({ settings: updated });
-  } catch (e) {
-    return res.status(400).json({ error: publicError(e) });
-  }
+  // Validate before queueing, so an admin never receives a request that cannot be applied.
+  const invalid = settings.find((setting: { cupOption: string; deductStock: boolean; items: unknown[] }) => !isCupOption(setting.cupOption) || (setting.deductStock && !setting.items.length));
+  if (invalid) return res.status(400).json({ error: isCupOption(invalid.cupOption) ? `เลือกวัตถุดิบสำหรับ ${invalid.cupOption}` : "ชนิดแก้วไม่ถูกต้อง" });
+  return sendCatalogEdit(req, res, { kind: "cup_stock.update", targetId: branchId, branchId, payload: { settings } }, "cup_stock_settings.updated", { branchId, settingCount: settings.length });
 });
 
 /* ─── Recipes ─── */
@@ -748,12 +830,13 @@ app.get("/api/recipes/:menuItemId", async (req: AuthRequest, res) => {
   const recipe = await getRecipe(id);
   return res.json({ recipe });
 });
-app.put("/api/recipes/:menuItemId", requireRole("admin", "manager"), async (req, res) => {
+app.put("/api/recipes/:menuItemId", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.menuItemId);
   if (id === null || !Array.isArray(req.body?.ingredients)) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
-  const recipe = await setRecipe({ menuItemId: id, ingredients: req.body.ingredients });
-  audit("recipe.updated", req, { menuItemId: id, ingredientCount: req.body.ingredients.length });
-  return res.json({ recipe });
+  if (!(await managerOwnsMenuItem(req, id))) return res.status(403).json({ error: "แก้สูตรได้เฉพาะเมนูของประเภทร้านสาขาคุณ" });
+  const ingredients = req.body.ingredients.map((line: any) => ({ ingredientId: parseId(line?.ingredientId) ?? 0, qty: Number(line?.qty) }));
+  if (ingredients.some((line: { ingredientId: number; qty: number }) => !line.ingredientId || !Number.isFinite(line.qty) || line.qty <= 0)) return res.status(400).json({ error: "ตรวจวัตถุดิบและจำนวนในสูตร" });
+  return sendCatalogEdit(req, res, { kind: "recipe.update", targetId: id, branchId: null, payload: { ingredients } }, "recipe.updated", { menuItemId: id, ingredientCount: ingredients.length });
 });
 
 /* ─── Orders ─── */

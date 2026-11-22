@@ -13,6 +13,7 @@ const LABELS: Record<string, string> = {
   "order.created": "เปิดบิลขาย", "order.status_updated": "เปลี่ยนสถานะบิล",
   "stock.adjusted": "ปรับสต็อก", "inventory.updated": "แก้ยอด/ตั้งค่าสต็อก", "stock_count.created": "สร้างรอบนับสต็อก", "stock_count.posted": "บันทึกผลนับสต็อก",
   "stock_transfer.created": "สร้างใบโอนสต็อก", "stock_transfer.received": "รับของจากใบโอน",
+  "catalog_change.requested": "ขออนุมัติแก้เมนู/วัตถุดิบ", "catalog_change.approved": "อนุมัติคำขอแก้ไข", "catalog_change.rejected": "ไม่อนุมัติคำขอแก้ไข", "catalog_change.cancelled": "ยกเลิกคำขอแก้ไข",
   "ingredient.created": "เพิ่มสินค้า/วัตถุดิบ", "ingredient.updated": "แก้ไขสินค้า/วัตถุดิบ", "recipe.updated": "แก้สูตรตัดสต็อก", "cup_stock_settings.updated": "แก้การตัดสต็อกแก้ว",
   "menu.created": "เพิ่มเมนู", "menu.updated": "แก้ไขเมนู", "menu.deactivated": "ปิดขายเมนู", "menu.restored": "เปิดขายเมนู",
   "purchase.created": "สร้างใบสั่งซื้อ", "purchase.approved": "อนุมัติใบสั่งซื้อ",

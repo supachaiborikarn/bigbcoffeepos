@@ -48,10 +48,17 @@ export function requireRecordBranch(resolve: (req: AuthRequest) => Promise<{ bra
 }
 
 // Catalogs and promotions are shared master data in the current schema.
-// Only administrators may change a master record used by several branches.
+// Only administrators may change a master record used by several branches —
+// except the menu/recipe/ingredient routes below: there a manager may add new
+// records, and the route queues any change to an existing one for an admin to
+// approve (store/catalogChanges.ts). Those routes also keep a manager to the
+// catalog of their own kind of shop.
+const MANAGER_CATALOG_WRITE = /^\/(?:menu(?:\/\d+(?:\/restore)?|\/groups\/status)?|ingredients\/\d+|recipes\/\d+)$/;
+
 export async function protectSharedConfiguration(req: AuthRequest, res: Response, next: NextFunction) {
   if (req.user?.role === "admin") return next();
-  if (/^\/inventory\/\d+$/.test(req.path) && req.method !== "GET" && ["name", "unit", "costPerUnit", "barcode"].some((field) => req.body?.[field] !== undefined)) return res.status(403).json({ error: "ชื่อ หน่วย ต้นทุน และบาร์โค้ดเป็นข้อมูลส่วนกลาง ให้ผู้ดูแลระบบแก้ไข" });
+  if (req.user?.role === "manager" && req.method !== "GET" && MANAGER_CATALOG_WRITE.test(req.path)) return next();
+  if (/^\/inventory\/\d+$/.test(req.path) && req.method !== "GET" && req.user?.role !== "manager" && ["name", "unit", "costPerUnit", "barcode"].some((field) => req.body?.[field] !== undefined)) return res.status(403).json({ error: "ชื่อ หน่วย ต้นทุน และบาร์โค้ดเป็นข้อมูลส่วนกลาง ให้ผู้ดูแลระบบแก้ไข" });
   if ((/^\/inventory\/\d+$/.test(req.path) && req.method !== "GET") || req.path === "/stock-adjustments") {
     try {
       const ingredientId = Number(req.path.split("/")[2] || req.body?.ingredientId);

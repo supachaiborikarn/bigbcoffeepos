@@ -16,7 +16,10 @@ import {
   setMenuGroupActive,
   updateCupStockSettings,
   updateMenuItem,
-  updateRecipe
+  updateRecipe,
+  isPendingChange,
+  getPendingCatalogChangeCount,
+  PENDING_CHANGE_MESSAGE
 } from "../api";
 import type { CupStockSetting, Ingredient, InventoryItem, MenuItem, PurchaseOrder, RecipeCoverageReport, RecipeCoverageStatus, RecipeIngredient } from "../types";
 import { useBranch } from "../contexts/BranchContext";
@@ -25,6 +28,8 @@ import { printBarcodeLabels } from "../utils/barcode";
 import StockManager from "../components/inventory/StockManager";
 import StockLedger from "../components/inventory/StockLedger";
 import PurchaseReceiving from "../components/inventory/PurchaseReceiving";
+import CatalogChangeRequests from "../components/inventory/CatalogChangeRequests";
+import { useAuth } from "../contexts/AuthContext";
 import { needsRestock } from "../utils/stockAlert";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
@@ -112,7 +117,7 @@ type RecipeLineForm = {
   qty: string;
 };
 
-type TabType = "products" | "recipes" | "ingredients" | "movements";
+type TabType = "products" | "recipes" | "ingredients" | "movements" | "approvals";
 
 type MenuCardGroup = {
   key: string;
@@ -182,7 +187,7 @@ function normalizeText(value: string) {
 }
 
 function parseInventoryTab(value: string | null): TabType {
-  return value === "recipes" || value === "ingredients" || value === "movements" ? value : "products";
+  return value === "recipes" || value === "ingredients" || value === "movements" || value === "approvals" ? value : "products";
 }
 
 function getMenuCardKey(item: MenuItem) {
@@ -279,6 +284,12 @@ export default function InventoryPage() {
   const [cupStockDrafts, setCupStockDrafts] = useState<CupStockSetting[]>([]);
 
   const [activeTab, setActiveTabState] = useState<TabType>(() => parseInventoryTab(searchParams.get("tab")));
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  // Pending manager edits: every request for an admin, the manager's own otherwise.
+  const [pendingChangeCount, setPendingChangeCount] = useState(0);
+  const refreshPendingChangeCount = () => { getPendingCatalogChangeCount().then(setPendingChangeCount).catch(() => undefined); };
+  useEffect(refreshPendingChangeCount, [activeTab]);
 
   const setActiveTab = (tab: TabType) => {
     setActiveTabState(tab);
@@ -515,6 +526,7 @@ export default function InventoryPage() {
     }
 
     setIsSubmitting(true);
+    let sourceMovePending = false;
     try {
       const created = await createMenuItem({
         name: menuForm.name.trim(),
@@ -538,17 +550,19 @@ export default function InventoryPage() {
         && menuForm.optionGroup.trim()
       ) {
         const sourceItem = variantSourceGroup.items[0];
-        await updateMenuItem(sourceItem.id, {
+        sourceMovePending = isPendingChange(await updateMenuItem(sourceItem.id, {
           category: menuForm.category.trim(),
           optionGroup: menuForm.optionGroup.trim(),
           optionLabel: sourceItem.optionLabel || "เดิม"
-        });
+        }));
       }
       setMenuForm(createBlankProductForm(defaultBranchType));
       setVariantSourceCardKey(null);
       setSelectedMenuCardKey(getMenuCardKey(created));
       await refreshInventory();
-      toast.success("เพิ่มเมนูสำเร็จ");
+      if (sourceMovePending) refreshPendingChangeCount();
+      if (sourceMovePending) toast.info("เพิ่มเมนูสำเร็จ · การย้ายเมนูเดิมเข้าการ์ดนี้รอผู้ดูแลระบบอนุมัติ");
+      else toast.success("เพิ่มเมนูสำเร็จ");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -606,7 +620,7 @@ export default function InventoryPage() {
       const mergeTarget = findMergeTargetCard(selectedMenuCard.key, label, category, selectedMenuCard.branchType);
       if (mergeTarget) await convertSingleCardToGroup(mergeTarget, label, category);
 
-      const updatedItems = await Promise.all(selectedMenuCard.items.map((item) => updateMenuItem(item.id, mergeTarget
+      const results = await Promise.all(selectedMenuCard.items.map((item) => updateMenuItem(item.id, mergeTarget
         ? {
           category,
           optionGroup: label,
@@ -616,9 +630,14 @@ export default function InventoryPage() {
           ? { optionGroup: label, category }
           : { name: label, category }
       )));
-      setSelectedMenuCardKey(mergeTarget ? `group:${selectedMenuCard.branchType}:${category}:${label}` : getMenuCardKey(updatedItems[0]));
+      const firstUpdated = results.find((result): result is MenuItem => !isPendingChange(result));
+      const pending = results.some(isPendingChange);
+      if (!pending && firstUpdated) setSelectedMenuCardKey(mergeTarget ? `group:${selectedMenuCard.branchType}:${category}:${label}` : getMenuCardKey(firstUpdated));
       await refreshInventory();
-      toast.success(mergeTarget ? `รวมเข้าการ์ด ${label} แล้ว` : "บันทึกการ์ดเมนูแล้ว");
+      if (pending) {
+        toast.info(PENDING_CHANGE_MESSAGE);
+        refreshPendingChangeCount();
+      } else toast.success(mergeTarget ? `รวมเข้าการ์ด ${label} แล้ว` : "บันทึกการ์ดเมนูแล้ว");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -757,6 +776,11 @@ export default function InventoryPage() {
     setIsSubmitting(true);
     try {
       const recipe = await updateRecipe(selectedRecipeProduct.id, normalized);
+      if (isPendingChange(recipe)) {
+        toast.info(PENDING_CHANGE_MESSAGE);
+        refreshPendingChangeCount();
+        return;
+      }
       setRecipeLines((recipe?.ingredients ?? normalized).map((ingredient) => ({
         ingredientId: String(ingredient.ingredientId),
         qty: String(ingredient.qty)
@@ -834,6 +858,11 @@ export default function InventoryPage() {
     setIsSubmitting(true);
     try {
       const updated = await updateCupStockSettings(activeBranch.id, cupStockDrafts);
+      if (isPendingChange(updated)) {
+        toast.info(PENDING_CHANGE_MESSAGE);
+        refreshPendingChangeCount();
+        return;
+      }
       setCupStockDrafts(updated);
       await refreshInventory();
       toast.success("บันทึกการตัดสต็อกแก้วแล้ว");
@@ -913,6 +942,14 @@ export default function InventoryPage() {
         branchType: productEditForm.branchType,
         active: productEditForm.active
       });
+      if (isPendingChange(updated)) {
+        setSelectedProduct(null);
+        setProductEditForm(null);
+        setMergeTargetCardKey("");
+        toast.info(PENDING_CHANGE_MESSAGE);
+        refreshPendingChangeCount();
+        return;
+      }
       setSelectedMenuCardKey(getMenuCardKey(updated));
       await refreshInventory();
       setSelectedProduct(null);
@@ -979,6 +1016,14 @@ export default function InventoryPage() {
           style={{ borderRadius: "20px", padding: "8px 16px" }}
         >
           เข้า/ออกสต็อก
+        </button>
+        <button
+          className={`btn ${activeTab === "approvals" ? "btn--primary" : "btn--ghost"}`}
+          onClick={() => setActiveTab("approvals")}
+          style={{ borderRadius: "20px", padding: "8px 16px" }}
+        >
+          คำขอแก้ไข
+          {pendingChangeCount > 0 && <span className="inventory-tab-badge" aria-label={`รออนุมัติ ${pendingChangeCount} รายการ`}>{pendingChangeCount}</span>}
         </button>
       </div>
 
@@ -1595,6 +1640,10 @@ export default function InventoryPage() {
             </div>
           </section>
         </section>
+      )}
+
+      {activeTab === "approvals" && (
+        <CatalogChangeRequests isAdmin={isAdmin} onResolved={() => { refreshPendingChangeCount(); void refreshInventory(); }} />
       )}
     </main>
   );

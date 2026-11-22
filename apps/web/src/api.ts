@@ -501,14 +501,14 @@ export async function updateMenuItem(
     optionLabel: string | null;
     branchType: MenuItem["branchType"];
   }>
-) {
-  const payload = await fetchJson<{ item: MenuItem }>(`${API_URL}/menu/${id}`,
+): Promise<MenuItem | PendingCatalogChange> {
+  const payload = await fetchJson<{ item: MenuItem } | PendingCatalogChange>(`${API_URL}/menu/${id}`,
     {
       method: "PUT",
       body: JSON.stringify(input)
     }
   );
-  return payload.item;
+  return isPendingChange(payload) ? payload : payload.item;
 }
 
 export async function deactivateMenuItem(id: number) {
@@ -559,14 +559,14 @@ export async function updateInventoryItem(
     stockQty: number;
     reorderLevel: number;
   }>
-) {
-  const payload = await fetchJson<{ item: InventoryItem }>(`${API_URL}/inventory/${ingredientId}`,
+): Promise<InventoryItem | PendingCatalogChange> {
+  const payload = await fetchJson<{ item: InventoryItem } | PendingCatalogChange>(`${API_URL}/inventory/${ingredientId}`,
     {
       method: "PUT",
       body: JSON.stringify(input)
     }
   );
-  return payload.item;
+  return isPendingChange(payload) ? payload : payload.item;
 }
 
 export async function createIngredient(input: {
@@ -588,14 +588,14 @@ export async function createIngredient(input: {
 export async function updateIngredient(
   id: number,
   input: Partial<{ name: string; unit: string; costPerUnit: number; barcode: string | null }>
-) {
-  const payload = await fetchJson<{ ingredient: Ingredient }>(`${API_URL}/ingredients/${id}`,
+): Promise<Ingredient | PendingCatalogChange> {
+  const payload = await fetchJson<{ ingredient: Ingredient } | PendingCatalogChange>(`${API_URL}/ingredients/${id}`,
     {
       method: "PUT",
       body: JSON.stringify(input)
     }
   );
-  return payload.ingredient;
+  return isPendingChange(payload) ? payload : payload.ingredient;
 }
 
 export async function createStockAdjustment(input: {
@@ -667,12 +667,12 @@ export async function getRecipe(menuItemId: number) {
   return payload.recipe;
 }
 
-export async function updateRecipe(menuItemId: number, ingredients: Recipe["ingredients"]) {
-  const payload = await fetchJson<{ recipe: Recipe }>(`${API_URL}/recipes/${menuItemId}`, {
+export async function updateRecipe(menuItemId: number, ingredients: Recipe["ingredients"]): Promise<Recipe | PendingCatalogChange> {
+  const payload = await fetchJson<{ recipe: Recipe } | PendingCatalogChange>(`${API_URL}/recipes/${menuItemId}`, {
     method: "PUT",
     body: JSON.stringify({ ingredients })
   });
-  return payload.recipe;
+  return isPendingChange(payload) ? payload : payload.recipe;
 }
 
 export async function getCupStockSettings(branchId: number) {
@@ -682,8 +682,8 @@ export async function getCupStockSettings(branchId: number) {
   return payload.settings;
 }
 
-export async function updateCupStockSettings(branchId: number, settings: Pick<CupStockSetting, "cupOption" | "deductStock" | "items">[]) {
-  const payload = await fetchJson<{ settings: CupStockSetting[] }>(
+export async function updateCupStockSettings(branchId: number, settings: Pick<CupStockSetting, "cupOption" | "deductStock" | "items">[]): Promise<CupStockSetting[] | PendingCatalogChange> {
+  const payload = await fetchJson<{ settings: CupStockSetting[] } | PendingCatalogChange>(
     `${API_URL}/cup-stock-settings?branchId=${branchId}`,
     {
       method: "PUT",
@@ -699,7 +699,57 @@ export async function updateCupStockSettings(branchId: number, settings: Pick<Cu
       })
     }
   );
-  return payload.settings;
+  return isPendingChange(payload) ? payload : payload.settings;
+}
+
+/* ─── Catalog change requests (manager edits awaiting admin approval) ─── */
+export type CatalogChangeStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type CatalogChangeRequest = {
+  id: number;
+  kind: "menu.update" | "ingredient.update" | "inventory.update" | "recipe.update" | "cup_stock.update";
+  targetId: number;
+  branchId: number | null;
+  branchName: string | null;
+  targetName: string;
+  status: CatalogChangeStatus;
+  changes: { field: string; label: string; before: unknown; after: unknown }[];
+  requestedByUserId: number;
+  requestedByName: string | null;
+  reviewedByUserId: number | null;
+  reviewedByName: string | null;
+  reviewNote: string;
+  createdAt: string;
+  reviewedAt: string | null;
+  outdated: boolean;
+};
+export type PendingCatalogChange = { pending: true; request: CatalogChangeRequest };
+
+export const PENDING_CHANGE_MESSAGE = "ส่งคำขอแก้ไขแล้ว · รอผู้ดูแลระบบอนุมัติ (ดูสถานะที่แท็บคำขอแก้ไข)";
+
+export function isPendingChange(value: unknown): value is PendingCatalogChange {
+  return Boolean(value && typeof value === "object" && (value as { pending?: unknown }).pending === true);
+}
+
+export async function getCatalogChanges(status?: CatalogChangeStatus) {
+  const payload = await fetchJson<{ items: CatalogChangeRequest[] }>(`${API_URL}/catalog-changes${status ? `?status=${status}` : ""}`);
+  return payload.items;
+}
+
+export async function getPendingCatalogChangeCount() {
+  const payload = await fetchJson<{ count: number }>(`${API_URL}/catalog-changes/pending-count`);
+  return payload.count;
+}
+
+export async function approveCatalogChange(id: number, note = "") {
+  return fetchJson<{ request: CatalogChangeRequest }>(`${API_URL}/catalog-changes/${id}/approve`, { method: "POST", body: JSON.stringify({ note }) });
+}
+
+export async function rejectCatalogChange(id: number, note = "") {
+  return fetchJson<{ request: CatalogChangeRequest }>(`${API_URL}/catalog-changes/${id}/reject`, { method: "POST", body: JSON.stringify({ note }) });
+}
+
+export async function cancelCatalogChange(id: number) {
+  return fetchJson<{ request: CatalogChangeRequest }>(`${API_URL}/catalog-changes/${id}/cancel`, { method: "POST" });
 }
 
 export async function getOrders(branchId: number, limit?: number, filter: { status?: OrderStatus; shiftId?: number } = {}) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { CalendarClock, ChevronDown, ImagePlus, Link2, PackagePlus, ScanBarcode, Trash2, X } from "lucide-react";
-import { approvePurchase, createPurchase, getIngredients, getPurchaseAttachment, getPurchases, getRecipes, receivePurchase, updateIngredient, voidPurchase } from "../../api";
+import { approvePurchase, createPurchase, getIngredients, getPurchaseAttachment, getPurchases, getRecipes, receivePurchase, updateIngredient, voidPurchase, isPendingChange, PENDING_CHANGE_MESSAGE } from "../../api";
 import type { Ingredient, InventoryItem, MenuItem, PurchaseOrder } from "../../types";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -300,6 +300,8 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
     try {
       const updated = await updateIngredient(ingredientId, { barcode: code });
       if (!mountedRef.current) return;
+      // Replacing an existing barcode is a manager edit that waits for an admin.
+      if (isPendingChange(updated)) { setBindCode(null); toast.info(PENDING_CHANGE_MESSAGE); return; }
       setIngredients((list) => list.map((i) => i.id === ingredientId ? { ...i, barcode: updated.barcode ?? code } : i));
       setBindCode(null);
       toast.success(`ผูกบาร์โค้ด ${code} กับ ${item.name} แล้ว`);

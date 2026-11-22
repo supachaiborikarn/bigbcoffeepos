@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, ArrowLeftRight, ClipboardCheck, ClipboardList, History, Minus, Package, Plus, Search, Settings2, Warehouse, X } from "lucide-react";
-import { createIngredient, createStockAdjustment, getInventory, getMenu, getRecipes, getStockMovements, updateInventoryItem } from "../../api";
+import { createIngredient, createStockAdjustment, getInventory, getMenu, getRecipes, getStockMovements, isPendingChange, PENDING_CHANGE_MESSAGE, updateInventoryItem } from "../../api";
 import type { InventoryItem, StockMovement } from "../../types";
 import { useBranch } from "../../contexts/BranchContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -281,6 +281,7 @@ function AdjustDrawer({ item, branchId, canEditDetails, onClose, onSaved, onDocu
       const updated = await updateInventoryItem(item.ingredientId, canEditDetails
         ? { branchId, name: details.name.trim(), unit: details.unit.trim(), costPerUnit, barcode: details.barcode.trim() || null, reorderLevel }
         : { branchId, reorderLevel });
+      if (isPendingChange(updated)) { toast.info(PENDING_CHANGE_MESSAGE); onClose(); return; }
       toast.success("บันทึกการตั้งค่าแล้ว");
       onSaved(updated);
     } catch (err) { toast.error((err as Error).message); } finally { setSaving(false); }

@@ -61,5 +61,6 @@ export const router = createBrowserRouter([{ errorElement: <RouteErrorPage />, c
 
 function InventoryRoute() {
   const { user } = useAuth();
-  return user?.role === "admin" ? <InventoryPage /> : <BranchInventoryPage />;
+  // Managers get the full page too; their edits to existing records wait for admin approval.
+  return user?.role === "admin" || user?.role === "manager" ? <InventoryPage /> : <BranchInventoryPage />;
 }

@@ -867,3 +867,24 @@ model Migration {
 
   @@map("_migrations")
 }
+
+// A manager's edit to shared catalog data (menu, recipe, ingredient details,
+// cup stock) waits here until an admin approves or rejects it.
+model CatalogChangeRequest {
+  id                Int       @id @default(autoincrement())
+  kind              String
+  targetId          Int       @map("target_id")
+  branchId          Int?      @map("branch_id")
+  targetName        String    @default("") @map("target_name")
+  payload           String    @default("{}")
+  changes           String    @default("[]")
+  status            String    @default("PENDING")
+  requestedByUserId Int       @map("requested_by_user_id")
+  reviewedByUserId  Int?      @map("reviewed_by_user_id")
+  reviewNote        String    @default("") @map("review_note")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  reviewedAt        DateTime? @map("reviewed_at")
+
+  @@index([status, createdAt])
+  @@map("catalog_change_requests")
+}

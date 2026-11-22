@@ -6,6 +6,7 @@ import { buildPassPrntUrl, passPrntError, registerPrintReceiver, type ReceiptPri
 import { getPrinterMode, printerLabels, type PrinterMode } from '../utils/printerSettings';
 import { sendReceiptToNative } from '../utils/nativePrinter';
 import { sendRawbtText } from '../utils/rawbtPrinter';
+import { sendEpsonPrint } from '../utils/epsonPrinter';
 import { createReceiptJob, printWhenReady } from './ReceiptPrinter';
 import PrinterDeviceSettings from './settings/PrinterDeviceSettings';
 import { useDialogFocus } from '../utils/useDialogFocus';
@@ -50,6 +51,12 @@ export default function PrintCenter() {
         if (!sent) throw new Error('ส่งไปเครื่องพิมพ์ไม่ได้');
         update('กำลังพิมพ์ กรุณารอผลจากเครื่อง', true);
         timeout.current = window.setTimeout(() => update('ยังไม่ได้รับผลพิมพ์ ตรวจใบที่ออกก่อนพิมพ์ซ้ำ'), 90_000);
+        return;
+      }
+      if (value.mode === 'epson') {
+        popup?.close();
+        update('ส่งคำสั่งไปแอป Epson แล้ว กรุณาตรวจใบเสร็จที่เครื่อง · หากแอปไม่เปิด กดใบเสร็จ / พิมพ์ซ้ำ');
+        if (!sendEpsonPrint(value.job.escpos)) throw new Error('เปิด Epson TM Print Assistant ไม่สำเร็จ');
         return;
       }
       if (value.mode === 'rawbt') {

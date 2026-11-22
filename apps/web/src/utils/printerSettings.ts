@@ -1,20 +1,28 @@
 import { isNativePrintAvailable } from './nativePrinter';
-import { isRawbtEnabled } from './rawbtPrinter';
+import { isAndroidDevice } from './devicePlatform';
+export { isAndroidDevice } from './devicePlatform';
 
-export type PrinterMode = 'browser' | 'passprnt' | 'native' | 'rawbt';
+export type PrinterMode = 'browser' | 'passprnt' | 'native' | 'rawbt' | 'epson';
 export function isIOSDevice() {
   return typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
-}
-export function isAndroidDevice() {
-  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
 }
 export function getPrinterMode(): PrinterMode {
   if (isNativePrintAvailable()) return 'native';
   let saved: string | null = null;
-  try { saved = localStorage.getItem('bbpos.print.mode'); } catch { /* defaults */ }
+  let legacyRawbt: string | null = null;
+  try {
+    saved = localStorage.getItem('bbpos.print.mode');
+    legacyRawbt = localStorage.getItem('bbpos.print.rawbt');
+  } catch { /* defaults */ }
+  if (saved === 'epson') return 'epson';
   if (saved === 'browser') return 'browser';
   if (saved === 'passprnt' && isIOSDevice()) return 'passprnt';
-  if (isRawbtEnabled()) return 'rawbt';
+  if (isAndroidDevice()) {
+    if (saved === 'rawbt' || legacyRawbt === '1') return 'rawbt';
+    if (legacyRawbt === '0') return 'browser';
+    // Same companion app as credit billing on Pad 7; explicit choices stay intact.
+    return 'epson';
+  }
   // iOS requires an explicit PassPRNT setup; existing AirPrint users retain their route.
   return 'browser';
 }
@@ -39,12 +47,16 @@ export function setPaperWidth(width: 58 | 80) {
 }
 /** Print the receipt as soon as a sale is paid (per device). Off = print on demand from the order. */
 export function getAutoPrint(): boolean {
-  try { return localStorage.getItem('bbpos.print.auto') === '1'; } catch { return false; }
+  try {
+    const saved = localStorage.getItem('bbpos.print.auto');
+    if (saved === '0' || saved === '1') return saved === '1';
+  } catch { /* use the device default */ }
+  return getPrinterMode() === 'epson';
 }
 export function setAutoPrint(on: boolean) {
   localStorage.setItem('bbpos.print.auto', on ? '1' : '0');
   window.dispatchEvent(new Event('bbpos-printer-settings'));
 }
 export const printerLabels: Record<PrinterMode, string> = {
-  browser: 'พิมพ์ผ่านเบราว์เซอร์ / AirPrint', passprnt: 'Star PassPRNT · iPad USB', native: 'แอป iOS · Star USB', rawbt: 'RawBT · Android'
+  browser: 'พิมพ์ผ่านเบราว์เซอร์ / AirPrint', passprnt: 'Star PassPRNT · iPad USB', native: 'แอป iOS · Star USB', rawbt: 'RawBT · Android', epson: 'Epson TM Print Assistant'
 };

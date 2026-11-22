@@ -21,8 +21,9 @@ export default function PrinterDeviceSettings() {
   };
   return <section className="printer-settings">
     <p>ตั้งค่าเฉพาะอุปกรณ์นี้ และทดสอบก่อนเริ่มขาย</p>
-    <label>วิธีพิมพ์<select className="input" value={mode} disabled={mode==='native'} onChange={e=>{const value=e.target.value as PrinterMode;setPrinterMode(value);setMode(value);}}>
+    <label>วิธีพิมพ์<select className="input" value={mode} disabled={mode==='native'} onChange={e=>{const value=e.target.value as PrinterMode;setPrinterMode(value);setMode(value);setAuto(getAutoPrint());}}>
       <option value="browser">{printerLabels.browser}</option>
+      <option value="epson">{printerLabels.epson}</option>
       {isIOSDevice() && <option value="passprnt">{printerLabels.passprnt}</option>}
       {isAndroidDevice() && <option value="rawbt">{printerLabels.rawbt}</option>}
       {mode==='native' && <option value="native">{printerLabels.native}</option>}
@@ -39,6 +40,7 @@ export default function PrinterDeviceSettings() {
     </fieldset>
     {isIOSDevice() && <p>Star TSP143IIIU ต่อ USB: ติดตั้ง Star PassPRNT บน iPad เลือกเครื่องพิมพ์ในแอป แล้วเลือกวิธีพิมพ์ Star PassPRNT ด้านบน; AirPrint ใช้กับเครื่องพิมพ์ที่รองรับ AirPrint บนเครือข่าย</p>}
     {mode==='rawbt' && <p>ติดตั้ง RawBT และเลือกเครื่องพิมพ์ในแอปก่อนใช้งาน</p>}
+    {mode==='epson' && <p>เปิด Epson TM Print Assistant แล้วเลือกเครื่องพิมพ์ที่ใช้กับ credit billing จากนั้นกลับมากดพิมพ์ทดสอบที่นี่ · รายชื่อเครื่องพิมพ์อยู่ในแอป Epson</p>}
     <button className="btn btn--primary" onClick={test}>พิมพ์ทดสอบ · ไม่มีการขาย</button>
   </section>;
 }

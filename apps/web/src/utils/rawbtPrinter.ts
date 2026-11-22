@@ -6,13 +6,10 @@
 // paired printer. We send the receipt as ESC/POS *text* (data:text/plain;base64)
 // so RawBT converts the UTF-8 Thai to the printer's code page automatically.
 
+import { isAndroidDevice as isAndroid } from './devicePlatform';
+
 const RAWBT_PACKAGE = "ru.a402d.rawbtprinter";
 const STORAGE_KEY = "bbpos.print.rawbt"; // "1" = on, "0" = off, unset = auto
-
-function isAndroid(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /Android/i.test(navigator.userAgent);
-}
 
 /**
  * Whether receipts on THIS device should be routed to RawBT. The choice is

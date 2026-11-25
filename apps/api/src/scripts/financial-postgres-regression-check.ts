@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import prisma from "../prisma.js";
 import { createOrder, updateOrderStatusWithContext } from "../store/orders.js";
 import { getCurrentShift, getShiftSummary } from "../store/shifts.js";
+import { getDailyCloseReport } from "../store/reports.js";
 import { addCashEntry, ensureCashDrawerTable } from "../store/cashDrawer.js";
 import { updateStoreSetting } from "../store/settings.js";
 import { signDiscountApproval, verifyDiscountApproval } from "../middleware/auth.js";
@@ -85,6 +86,25 @@ async function main() {
     await assert.rejects(createOrder({ ...changedDraft, canApproveDiscount: Boolean(verifyDiscountApproval(token, branch.id, changedDraft)) }), /DISCOUNT_APPROVAL_REQUIRED/);
     assert.equal(await prisma.order.count({ where: { idempotencyKey: changedDraft.idempotencyKey } }), 0);
     console.log("PASS PostgreSQL cashier approval accepts its signed bill and rejects changed/replayed discounts");
+
+    const overnightShift = await prisma.shift.create({
+      data: { branchId: branch.id, openingCash: 200, openedAt: new Date("2024-11-24T09:00:00Z") }
+    });
+    const overnightSale = {
+      branchId: branch.id, shiftId: overnightShift.id, createdAt: new Date("2024-11-24T23:30:00Z"),
+      subtotal: 65, total: 65, paymentMethod: "CASH"
+    };
+    await prisma.order.createMany({ data: [overnightSale, { ...overnightSale, status: "CANCELLED" }] });
+    const daily = await getDailyCloseReport({ branchId: branch.id, date: "2024-11-25" });
+    assert.equal(daily.totals.totalRevenue, 65);
+    assert.equal(daily.totals.totalOrders, 1);
+    assert.equal(daily.cash.cashSales, 65);
+    const reportedShift = daily.shifts.find((row) => row.id === overnightShift.id);
+    assert.equal(reportedShift?.status, "OPEN");
+    assert.equal(reportedShift?.totalSales, 65);
+    assert.equal(reportedShift?.expectedCash, 265);
+    assert.equal(reportedShift?.closingCash, null);
+    console.log("PASS PostgreSQL daily report includes Bangkok-day sales and drawer totals for a shift still open from yesterday");
   } finally {
     await pause(30); // allow the checkout's queued outbox writes to finish before removing fixtures
     if (branchId) {

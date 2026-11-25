@@ -49,8 +49,8 @@ async function startWeb() {
   }
   throw new Error(`Vite did not start: ${serverOutput}`);
 }
-async function fixture({ viewport = { width: 1280, height: 900 }, native = false, storedPrint = null, hangingSession = false, refunded = false, currentAddOnPrice = null } = {}) {
-  const context = await browser.newContext({ viewport });
+async function fixture({ viewport = { width: 1280, height: 900 }, native = false, storedPrint = null, hangingSession = false, refunded = false, currentAddOnPrice = null, catalog = menu, productUnits = [], reportFixture = null } = {}) {
+  const context = await browser.newContext({ viewport, timezoneId: reportFixture ? 'UTC' : undefined });
   const writes = [];
   const errors = [];
   const orders = [{ ...structuredClone(oldOrder), status: refunded ? 'REFUNDED' : 'PAID' }];
@@ -78,11 +78,13 @@ async function fixture({ viewport = { width: 1280, height: 900 }, native = false
     if (endpoint === '/auth/me') body = { user };
     else if (endpoint === '/branches') body = { items: branches };
     else if (endpoint === '/users') body = { items: [user] };
-    else if (endpoint === '/menu') body = { items: currentAddOnPrice === null ? menu : [...menu, { ...menu[0], id: 32, name: 'ช็อกโกแลต', category: 'ADD ON', basePrice: currentAddOnPrice }] };
+    else if (endpoint === '/menu') body = { items: currentAddOnPrice === null ? catalog : [...catalog, { ...menu[0], id: 32, name: 'ช็อกโกแลต', category: 'ADD ON', basePrice: currentAddOnPrice }] };
+    else if (endpoint === '/product-units') body = { items: productUnits };
     else if (endpoint === '/settings/store') body = { settings: setting };
-    else if (endpoint === '/shifts/current') body = { shift };
+    else if (endpoint === '/shifts/current') body = { shift: reportFixture?.shift ?? shift };
     else if (endpoint === '/cup-stock-settings') body = { settings: [] };
     else if (endpoint === '/reports/summary') body = { summary };
+    else if (endpoint === '/reports/day-close' && reportFixture) body = { report: reportFixture.report(url.searchParams.get('date')) };
     else if (endpoint === '/reports/profit') body = { items: [], totalRevenue: 65, totalCost: 0, totalProfit: 65 };
     else if (endpoint === '/reports/staff') body = { staff: [] };
     else if (endpoint === '/integrations/summary') body = { summary: { byStatus: [] } };
@@ -125,6 +127,93 @@ try {
   await fs.mkdir(artifactDir, { recursive: true });
   await startWeb();
   browser = await chromium.launch({ headless: true });
+  await check('barcode scan adds the exact product or selling unit from either input', async () => {
+    const catalog = [
+      { ...menu[0], barcode: ' 0012345678905 ', sku: 'COOKIE' },
+      { ...menu[0], id: 32, name: 'บราวนี่ทดสอบ', sku: 'BROWNIE', barcode: '000222' },
+      { ...menu[0], id: 33, name: 'บราวนี่อีกรายการ', barcode: '000222' }
+    ];
+    const productUnits = [
+      { id: 1, menuItemId: 999, unitName: 'ลัง', factor: 10, price: 500, barcode: 'COOKIE', active: true },
+      { id: 2, menuItemId: 31, unitName: 'แพ็ก', factor: 2, price: 120, barcode: ' pack-001 ', active: true }
+    ];
+    const f = await fixture({ catalog, productUnits });
+    try {
+      await f.goto('/pos');
+      const scanner = f.page.getByRole('textbox', { name: 'ยิงบาร์โค้ด' });
+      const search = f.page.getByRole('textbox', { name: 'ค้นหาสินค้า' });
+      const feedback = f.page.locator('.studio-catalog-label [role="status"]');
+      await search.fill('0012345678905');
+      await f.page.getByRole('button', { name: `เพิ่ม ${menu[0].name}`, exact: true }).waitFor();
+      await search.clear();
+      await scanner.pressSequentially('0012345678905');
+      await scanner.press('Enter');
+      assert.match(await feedback.textContent(), /เพิ่ม คุกกี้ทดสอบ เข้าตะกร้าแล้ว/);
+      await search.fill('cookie');
+      await search.press('Tab');
+      await f.page.getByRole('button', { name: /^ชำระเงิน ฿130/ }).waitFor();
+      assert.equal(await search.inputValue(), '');
+      await scanner.fill('PACK-001');
+      await scanner.press('Tab');
+      assert.match(await feedback.textContent(), /เพิ่ม คุกกี้ทดสอบ \(แพ็ก\) เข้าตะกร้าแล้ว/);
+      await scanner.fill('000222');
+      await scanner.press('Enter');
+      assert.match(await feedback.textContent(), /ตรงกับสินค้าหลายรายการ/);
+      await f.page.getByRole('button', { name: /^ชำระเงิน ฿250/ }).waitFor();
+      await search.fill('คุกกี้');
+      await search.press('Enter');
+      assert.equal(await search.inputValue(), 'คุกกี้');
+      await f.page.getByRole('button', { name: `เพิ่ม ${menu[0].name}`, exact: true }).waitFor();
+      await f.page.setViewportSize({ width: 900, height: 900 });
+      await scanner.waitFor({ state: 'hidden' });
+      await search.clear();
+      await search.pressSequentially('0012345678905');
+      await search.press('Enter');
+      await f.page.getByRole('button', { name: /ตะกร้า 4 รายการ/ }).waitFor();
+      assert.deepEqual(f.errors, []);
+    } finally { await f.context.close(); }
+  });
+  await check('daily print defaults to the Bangkok date when a shift is still open from yesterday', async () => {
+    const today = '2026-11-25';
+    const yesterday = '2026-11-24';
+    const requestedDates = [];
+    const reportFixture = {
+      shift: { ...shift, openedAt: '2026-11-24T09:00:00.000Z' },
+      report(date) {
+        requestedDates.push(date);
+        const sales = date === today ? { orders: 1, revenue: 65 } : { orders: 0, revenue: 0 };
+        return {
+          date, generatedAt: '2026-11-24T23:30:00.000Z', source: 'system', branch,
+          sourceBreakdown: { system: sales, pospos: { orders: 0, revenue: 0 }, all: sales },
+          totals: { totalRevenue: sales.revenue, totalOrders: sales.orders, averageTicket: sales.revenue, subtotal: sales.revenue, discountAmount: 0, cancelledOrders: 0, refundedOrders: 0, loyaltyPointsUsed: 0 },
+          shifts: [], payments: [], topItems: [], cash: { cashSales: sales.revenue }
+        };
+      }
+    };
+    const f = await fixture({ reportFixture });
+    try {
+      await f.page.clock.setFixedTime(new Date('2026-11-24T23:30:00.000Z'));
+      await f.goto('/reports');
+      await f.page.getByRole('button', { name: 'ปิดกะ', exact: true }).waitFor();
+      const date = f.page.getByLabel('วันที่ใบส่งยอด');
+      assert.equal(await date.inputValue(), today);
+      await f.page.evaluate(async () => {
+        const { registerPrintReceiver } = await import('/src/utils/printJob.ts');
+        window.__dailyJobs = [];
+        registerPrintReceiver((job, popup) => { popup?.close(); window.__dailyJobs.push(job); });
+      });
+      const print = () => f.page.getByRole('button', { name: 'พิมพ์ใบส่งยอด', exact: true }).click();
+      await print();
+      await f.page.waitForFunction(() => window.__dailyJobs.length === 1);
+      assert.match(await f.page.evaluate(() => window.__dailyJobs[0].html), /<strong>฿65<\/strong>/);
+      await date.fill(yesterday);
+      await print();
+      await f.page.waitForFunction(() => window.__dailyJobs.length === 2);
+      assert.deepEqual(requestedDates, [today, yesterday]);
+      assert.deepEqual(f.writes, []);
+      assert.deepEqual(f.errors, []);
+    } finally { await f.context.close(); }
+  });
   await check('default receipt printing stays off after payment', async () => {
     const f = await fixture();
     try {

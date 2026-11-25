@@ -17,7 +17,8 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  // /android/ holds the app download page and .apk: never cache them for offline use.
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || /^\/android(\/|$)/.test(url.pathname)) return;
 
   // Hashed build assets never change: serve from cache so pages already visited
   // keep working offline, and never answer a missing chunk with index.html.

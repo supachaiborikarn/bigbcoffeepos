@@ -71,7 +71,9 @@ function buildOrderWhere(input: ReportInput) {
 }
 
 function buildDayRange(date?: string) {
-  const day = /^\d{4}-\d{2}-\d{2}$/.test(date ?? "") ? date! : new Date().toISOString().slice(0, 10);
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(date ?? "")
+    ? date!
+    : new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
   return {
     date: day,
     from: new Date(`${day}T00:00:00.000+07:00`),
@@ -372,10 +374,8 @@ export async function getDailyCloseReport(input: { date?: string; branchId?: num
     prisma.shift.findMany({
       where: {
         ...(input.branchId ? { branchId: input.branchId } : {}),
-        OR: [
-          { openedAt: { gte: range.from, lte: range.to } },
-          { closedAt: { gte: range.from, lte: range.to } }
-        ]
+        openedAt: { lte: range.to },
+        OR: [{ closedAt: { gte: range.from } }, { closedAt: null }]
       },
       include: {
         branch: { select: { name: true } },

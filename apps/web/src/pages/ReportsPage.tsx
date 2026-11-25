@@ -3,7 +3,7 @@ import { getSalesSummary, getDailyCloseReport, getOrdersCsvUrl, downloadAuthedFi
 import type { PaymentMethod, ReportSource, SalesSummary } from "../types";
 import { useBranch } from "../contexts/BranchContext";
 import { useToast } from "../contexts/ToastContext";
-import { useShift } from "../contexts/ShiftContext";
+import { bangkokDay } from "../utils/bangkokDate";
 import { submitPrintJob } from "../utils/printJob";
 import { getPaperWidth, getPrinterMode, setPaperWidth } from "../utils/printerSettings";
 import { createDailySummaryJob } from "../utils/dailySummaryPrint";
@@ -69,20 +69,14 @@ export default function ReportsPage() {
     return { from: formatDateInput(from), to: formatDateInput(today) };
   });
 
-  // ใบส่งยอด: default = the day the branch's current shift was opened (Bangkok),
-  // or today when no shift is open. Picking a date manually stops the auto-follow.
-  const { activeShift } = useShift();
-  const shiftDay = activeShift?.openedAt ? new Date(activeShift.openedAt).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" }) : null;
-  const [summaryDate, setSummaryDate] = useState(() => shiftDay ?? formatDateInput(new Date()));
-  const [summaryDateTouched, setSummaryDateTouched] = useState(false);
+  const [selectedSummaryDate, setSelectedSummaryDate] = useState<string | null>(null);
+  const summaryDate = selectedSummaryDate ?? bangkokDay();
   const [paperWidth, setPaperWidthState] = useState(getPaperWidth);
   useEffect(() => {
     const sync = () => setPaperWidthState(getPaperWidth());
     window.addEventListener("bbpos-printer-settings", sync);
     return () => window.removeEventListener("bbpos-printer-settings", sync);
   }, []);
-  useEffect(() => { if (shiftDay && !summaryDateTouched) setSummaryDate(shiftDay); }, [shiftDay, summaryDateTouched]);
-
   const queryStr = useMemo(() => {
     const params = new URLSearchParams();
     params.set("from", reportRange.from);
@@ -141,7 +135,7 @@ export default function ReportsPage() {
     // (iOS app / PassPRNT / RawBT) don't use a window at all.
     let popup: Window | null = getPrinterMode() === "browser" ? window.open("", "bbpos_receipt", "width=420,height=760") : null;
     try {
-      const report = await getDailyCloseReport({ date: summaryDate, branchId: reportBranchId ?? activeBranch.id, source: reportSource });
+      const report = await getDailyCloseReport({ date: selectedSummaryDate ?? bangkokDay(), branchId: reportBranchId ?? activeBranch.id, source: reportSource });
       if (!submitPrintJob(createDailySummaryJob(report, activeBranch.id), popup)) throw new Error("ระบบพิมพ์ยังไม่พร้อม ลองใหม่อีกครั้ง");
       popup = null;
     } catch (error) {
@@ -196,7 +190,7 @@ export default function ReportsPage() {
             {rangeError && <span role="alert" className="negative" style={{ fontSize: 13, alignSelf: "center" }}>{rangeError}</span>}
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
               วันที่ใบส่งยอด
-              <input className="input" type="date" value={summaryDate} title={shiftDay === summaryDate ? "วันที่เปิดกะปัจจุบัน" : undefined} onChange={e => { setSummaryDateTouched(true); setSummaryDate(e.target.value); }} />
+              <input className="input" type="date" value={summaryDate} onChange={e => setSelectedSummaryDate(e.target.value)} />
             </label>
             <div className="seg-paper" role="group" aria-label="ขนาดกระดาษ">
               {([58, 80] as const).map((w) => <button key={w} type="button" aria-pressed={paperWidth === w} className={paperWidth === w ? "is-active" : ""} onClick={() => setPaperWidth(w)}>{w} มม.</button>)}

@@ -147,7 +147,6 @@ export default function POSPage() {
     removeHeldBill
   } = useCart();
 
-  const scannerInputRef = useRef<HTMLInputElement | null>(null);
   const loadMenu = useCallback(() => {
     setMenuState("loading");
     getMenu()
@@ -255,10 +254,7 @@ export default function POSPage() {
   };
 
   /** Return true only after a unique, exact SKU/barcode/name was selected. */
-  const processBarcodeScan = (rawCode: string, focusScanner = true): boolean => {
-    const code = normalizeProductCode(rawCode);
-    if (!code) return false;
-
+  const processBarcodeScan = (code: string, codesOnly: boolean): boolean => {
     const matchingUnits = productUnits.filter((unit) =>
       unit.active &&
       normalizeProductCode(unit.barcode) === code &&
@@ -293,12 +289,11 @@ export default function POSPage() {
         modifiers: []
       });
       setScanFeedback({ tone: "success", message: `เพิ่ม ${parent.name} (${unit.unitName}) เข้าตะกร้าแล้ว`, code });
-      if (focusScanner) window.requestAnimationFrame(() => scannerInputRef.current?.focus());
       return true;
     }
 
     // Keep the previous full-name Enter shortcut, without guessing between duplicates.
-    const namedItems = matchingItems.length ? [] : menu.filter(
+    const namedItems = matchingItems.length || codesOnly ? [] : menu.filter(
       (item) => item.active && normalizeProductCode(item.name) === code
     );
     if (namedItems.length > 1) {
@@ -308,23 +303,25 @@ export default function POSPage() {
 
     const item = matchingItems[0] ?? namedItems[0];
     if (!item) {
-      setScanFeedback({ tone: "error", message: `ไม่พบรหัสตรงตัว: ${code} — ลองเลือกสินค้าจากผลค้นหา`, code });
+      if (!codesOnly) setScanFeedback({ tone: "error", message: `ไม่พบรหัสตรงตัว: ${code} — ลองเลือกสินค้าจากผลค้นหา`, code });
       return false;
     }
     handleMenuItemClick(item);
-    if (focusScanner) window.requestAnimationFrame(() => scannerInputRef.current?.focus());
     return true;
   };
 
-  const handleProductSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Enter") return;
-    const query = search.trim();
-    if (!query) return;
+  const handleScanKeyDown = (event: KeyboardEvent<HTMLInputElement>, inSearch = false) => {
+    const tab = event.key === "Tab" && !event.shiftKey;
+    if (event.nativeEvent.isComposing || (event.key !== "Enter" && !tab)) return;
+    const code = normalizeProductCode(event.currentTarget.value);
+    if (!code) return;
+    const found = processBarcodeScan(code, inSearch && tab);
+    if (inSearch && tab && !found) return;
     event.preventDefault();
-    // Preserve partial searches and ambiguous codes so the cashier can tap the correct result.
-    if (processBarcodeScan(query, false)) {
-      setSearch("");
-      window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    if (inSearch) {
+      if (found) setSearch("");
+    } else {
+      event.currentTarget.value = "";
     }
   };
 
@@ -517,8 +514,8 @@ export default function POSPage() {
         {heldBills.length > 0 && <div className="studio-held-bills" aria-label="บิลที่พักไว้">{heldBills.map((bill) => <div key={bill.id}><button onClick={() => restoreHeldBill(bill.id)}><PauseCircle size={15} />{bill.label} · {formatMoney(bill.total)}</button><button aria-label={`ลบ ${bill.label}`} onClick={() => removeHeldBill(bill.id)}><X size={14} /></button></div>)}</div>}
         <div className="studio-catalog-toolbar">
         <div className="studio-search-row">
-          <label className="studio-search"><Search size={20} /><input ref={searchInputRef} aria-label="ค้นหาสินค้า" placeholder={profile.type === "coffee" ? "ค้นหาชื่อสินค้า หรือรหัส เช่น C1, D2" : "ค้นหาชื่อสินค้า / รหัส เช่น C1, D2 / บาร์โค้ด"} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={handleProductSearchKeyDown} /><kbd>F1</kbd></label>
-          <label className="studio-scanner"><ScanBarcode size={20} /><input ref={scannerInputRef} aria-label="ยิงบาร์โค้ด" inputMode="none" placeholder="สแกนบาร์โค้ด" onKeyDown={(e) => { if (e.key === "Enter") { processBarcodeScan(e.currentTarget.value); e.currentTarget.value = ""; } }} /></label>
+          <label className="studio-search"><Search size={20} /><input ref={searchInputRef} aria-label="ค้นหาสินค้า" placeholder={profile.type === "coffee" ? "ค้นหาชื่อสินค้า หรือรหัส เช่น C1, D2" : "ค้นหาชื่อสินค้า / รหัส เช่น C1, D2 / บาร์โค้ด"} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(event) => handleScanKeyDown(event, true)} /><kbd>F1</kbd></label>
+          <label className="studio-scanner"><ScanBarcode size={20} /><input aria-label="ยิงบาร์โค้ด" inputMode="none" placeholder="สแกนบาร์โค้ด" onKeyDown={(event) => handleScanKeyDown(event)} /></label>
         </div>
         <div className="studio-categories" aria-label="หมวดสินค้า">{categories.map((item) => <button key={item} aria-pressed={category === item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{displayCategoryLabel(item)}<span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span></button>)}</div>
         </div>

@@ -58,5 +58,5 @@ export function setAutoPrint(on: boolean) {
   window.dispatchEvent(new Event('bbpos-printer-settings'));
 }
 export const printerLabels: Record<PrinterMode, string> = {
-  browser: 'พิมพ์ผ่านเบราว์เซอร์ / AirPrint', passprnt: 'Star PassPRNT · iPad USB', native: 'แอป iOS · Star USB', rawbt: 'RawBT · Android', epson: 'Epson TM Print Assistant'
+  browser: 'พิมพ์ผ่านเบราว์เซอร์ / AirPrint', passprnt: 'Star PassPRNT · iPad USB', native: 'แอป BigB POS · พิมพ์ตรงจากแอป', rawbt: 'RawBT · Android', epson: 'Epson TM Print Assistant'
 };

@@ -1070,7 +1070,7 @@ export default function InventoryPage() {
                 const statusText = isInactive ? "ปิดขาย" : group.inactiveCount > 0 ? "เปิดบางส่วน" : "เปิดขาย";
                 const leadItem = group.items[0];
                 const leadThumb = resolveMenuImageUrl(group.items.find((it) => it.imageUrl)?.imageUrl);
-                const leadCode = leadItem ? getProductDisplayCode(leadItem) : null;
+                const leadCode = group.branchType === "oil_service" && leadItem ? getProductDisplayCode(leadItem) : null;
                 return (
                   <div key={group.key} className={`menu-manager-card ${isSelected ? "is-selected" : ""} ${isInactive ? "is-inactive" : ""}`}>
                     <button type="button" className="menu-manager-card__main" onClick={() => handleMenuCardSelect(group)}>
@@ -1254,7 +1254,8 @@ export default function InventoryPage() {
                       <ProductImageField
                         value={productEditForm.imageUrl}
                         onChange={(imageUrl) => setProductEditForm({ ...productEditForm, imageUrl })}
-                        fallbackCode={getProductDisplayCode({ sku: productEditForm.sku, barcode: productEditForm.barcode })}
+                        fallbackCode={productEditForm.branchType === "oil_service" ? getProductDisplayCode({ sku: productEditForm.sku, barcode: productEditForm.barcode }) : null}
+                        fallbackLabel={productEditForm.branchType !== "oil_service" ? (productEditForm.optionGroup.trim() || productEditForm.name.trim() || null) : null}
                         disabled={isSubmitting}
                         onError={(message) => toast.error(message)}
                       />
@@ -1327,7 +1328,8 @@ export default function InventoryPage() {
                 <ProductImageField
                   value={menuForm.imageUrl}
                   onChange={(imageUrl) => setMenuForm({ ...menuForm, imageUrl })}
-                  fallbackCode={getProductDisplayCode({ sku: menuForm.sku, barcode: menuForm.barcode })}
+                  fallbackCode={menuForm.branchType === "oil_service" ? getProductDisplayCode({ sku: menuForm.sku, barcode: menuForm.barcode }) : null}
+                  fallbackLabel={menuForm.branchType !== "oil_service" ? (menuForm.optionGroup.trim() || menuForm.name.trim() || null) : null}
                   disabled={isSubmitting}
                   onError={(message) => toast.error(message)}
                 />

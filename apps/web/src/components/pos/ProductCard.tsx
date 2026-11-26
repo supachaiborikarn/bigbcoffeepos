@@ -72,25 +72,26 @@ function ProductCard({ item, onClick, variantCount = 0, priceLabel, cartQty = 0 
 
   const topSeller = isTopSeller(item);
   const hasPhoto = Boolean(imageSrc) && !imgError;
-  const code = getProductDisplayCode(item);
+  const isOilService = item.branchType === "oil_service";
+  // Only oil-service products show SKU/short-code tiles (e.g. C6, D2); coffee shops show the menu name instead.
+  const code = isOilService ? getProductDisplayCode(item) : null;
   const tone = getCategoryTone(item.category, item.branchType);
-  // Oil-service products with a SKU/short code show a crisp typographic code tile (e.g. C6)
-  // rather than generic placeholder artwork until a real photo is uploaded.
-  const useCodeTile = !hasPhoto && Boolean(code) && (item.branchType === "oil_service" || illustrationIndex(item) === null);
+  const useCodeTile = !hasPhoto && Boolean(code);
   const illustration = hasPhoto || useCodeTile ? null : illustrationIndex(item);
-  const Icon = item.branchType === "oil_service" ? (/บริการ|ค่าแรง/.test(item.category) ? Wrench : Package) : /เบเกอรี่|ขนม/.test(item.category) ? Croissant : /กาแฟ/.test(item.category) ? Coffee : CupSoda;
+  const useNameTile = !hasPhoto && !useCodeTile && illustration === null && !isOilService;
+  const Icon = isOilService ? (/บริการ|ค่าแรง/.test(item.category) ? Wrench : Package) : /เบเกอรี่|ขนม/.test(item.category) ? Croissant : /กาแฟ/.test(item.category) ? Coffee : CupSoda;
   const metaLabel = variantCount > 1 ? `${variantCount} ตัวเลือก` : item.optionLabel || displayCategoryLabel(item.category);
   const isStandIn = !hasPhoto && illustration === null;
 
   return (
     <button
       type="button"
-      className={`menu-card menu-card--pos${cartQty > 0 ? " is-in-cart" : ""}`}
+      className={`menu-card menu-card--pos${cartQty > 0 ? " is-in-cart" : ""}${useNameTile ? " menu-card--name-tile" : ""}`}
       data-tone={tone}
       onClick={() => onClick(item)}
       aria-label={`เพิ่ม ${item.name}`}
     >
-      <div className={`menu-card__thumb${hasPhoto ? "" : " menu-card__thumb--text"}${isStandIn ? " menu-card__thumb--stand-in" : ""}${useCodeTile ? " menu-card__thumb--code" : ""}`}>
+      <div className={`menu-card__thumb${hasPhoto ? "" : " menu-card__thumb--text"}${isStandIn ? " menu-card__thumb--stand-in" : ""}${useCodeTile ? " menu-card__thumb--code" : ""}${useNameTile ? " menu-card__thumb--name" : ""}`}>
         {hasPhoto ? (
           <img src={imageSrc ?? ""} alt="" loading="lazy" onError={() => setImgError(true)} />
         ) : useCodeTile && code ? (
@@ -98,6 +99,11 @@ function ProductCard({ item, onClick, variantCount = 0, priceLabel, cartQty = 0 
             <Icon className="studio-product-code-tile__icon" size={18} strokeWidth={1.8} />
             <strong className={`studio-product-code-tile__code${code.length > 6 ? " is-long" : ""}`}>{code}</strong>
             <small>{displayCategoryLabel(item.category)}</small>
+          </span>
+        ) : useNameTile ? (
+          <span className="studio-product-name-tile">
+            <Icon className="studio-product-code-tile__icon" size={17} strokeWidth={1.8} aria-hidden="true" />
+            <strong className={`studio-product-name-tile__text${item.name.length > 16 ? " is-long" : ""}`}>{item.name}</strong>
           </span>
         ) : illustration !== null ? (
           <div className="studio-product-art" aria-hidden="true">

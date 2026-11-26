@@ -6,6 +6,7 @@ interface ProductImageFieldProps {
   value: string;
   onChange: (nextValue: string) => void;
   fallbackCode?: string | null;
+  fallbackLabel?: string | null;
   disabled?: boolean;
   onError?: (message: string) => void;
 }
@@ -14,6 +15,7 @@ export default function ProductImageField({
   value,
   onChange,
   fallbackCode,
+  fallbackLabel,
   disabled,
   onError
 }: ProductImageFieldProps) {
@@ -56,8 +58,14 @@ export default function ProductImageField({
           />
         ) : (
           <span className="product-image-field__fallback">
-            {fallbackCode ? <strong>{fallbackCode.toUpperCase()}</strong> : <ImagePlus size={22} aria-hidden="true" />}
-            <small>{fallbackCode ? "แสดงรหัสแทนรูป" : "ยังไม่มีรูป"}</small>
+            {fallbackCode ? (
+              <strong>{fallbackCode.toUpperCase()}</strong>
+            ) : fallbackLabel ? (
+              <strong style={{ fontSize: 13 }}>{fallbackLabel}</strong>
+            ) : (
+              <ImagePlus size={22} aria-hidden="true" />
+            )}
+            <small>{fallbackCode ? "แสดงรหัสแทนรูป" : fallbackLabel ? "แสดงชื่อเมนูแทนรูป" : "ยังไม่มีรูป"}</small>
           </span>
         )}
       </div>
@@ -72,7 +80,9 @@ export default function ProductImageField({
                 ? `ใช้รูปที่อัปโหลด${lastSizeKb ? ` (${lastSizeKb} KB)` : ""}`
                 : value.trim()
                   ? "ใช้รูปจากลิงก์ภายนอก"
-                  : "ถ้ายังไม่ใส่รูป การ์ดจะแสดงรหัสสินค้าแทน"}
+                  : fallbackCode
+                    ? "ถ้ายังไม่ใส่รูป การ์ดจะแสดงรหัสสินค้าแทน"
+                    : "ถ้ายังไม่ใส่รูป การ์ดจะแสดงชื่อเมนูแทน"}
           </small>
         </div>
 

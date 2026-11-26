@@ -12,6 +12,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,6 +22,7 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -77,6 +79,23 @@ public class MainActivity extends Activity {
         pos = new WebView(this);
         root.addView(pos, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         setContentView(root);
+        // Fullscreen Android activities (especially Android 10 / EMUI on MatePad T8) do not
+        // apply windowSoftInputMode="adjustResize" to WebViews. Reserve the IME height via
+        // bottomMargin whenever the soft keyboard is up so product cards remain scrollable.
+        root.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            Rect visible = new Rect();
+            root.getWindowVisibleDisplayFrame(visible);
+            int totalHeight = root.getRootView().getHeight();
+            if (totalHeight <= 0) return;
+            int keypadHeight = Math.max(0, totalHeight - visible.bottom);
+            int targetBottom = keypadHeight > totalHeight * 0.15 ? keypadHeight : 0;
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) pos.getLayoutParams();
+            if (lp.bottomMargin != targetBottom) {
+                lp.bottomMargin = targetBottom;
+                pos.setLayoutParams(lp);
+                if (targetBottom == 0) hideSystemBars();
+            }
+        });
 
         WebSettings s = pos.getSettings();
         s.setJavaScriptEnabled(true);
@@ -106,6 +125,15 @@ public class MainActivity extends Activity {
 
     void reloadPos() {
         pos.loadUrl(POS_URL);
+    }
+
+    void hideKeyboard() {
+        pos.clearFocus();
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(pos.getWindowToken(), 0);
+        }
+        hideSystemBars();
     }
 
     private final class PosClient extends WebViewClient {

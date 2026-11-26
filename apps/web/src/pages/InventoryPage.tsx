@@ -29,8 +29,11 @@ import StockManager from "../components/inventory/StockManager";
 import StockLedger from "../components/inventory/StockLedger";
 import PurchaseReceiving from "../components/inventory/PurchaseReceiving";
 import CatalogChangeRequests from "../components/inventory/CatalogChangeRequests";
+import ProductImageField from "../components/inventory/ProductImageField";
 import { useAuth } from "../contexts/AuthContext";
 import { needsRestock } from "../utils/stockAlert";
+import { getProductDisplayCode } from "../utils/categoryTone";
+import { resolveMenuImageUrl } from "../utils/menuImage";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -1065,11 +1068,21 @@ export default function InventoryPage() {
                 const isInactive = group.activeCount === 0;
                 const isSelected = selectedMenuCardKey === group.key;
                 const statusText = isInactive ? "ปิดขาย" : group.inactiveCount > 0 ? "เปิดบางส่วน" : "เปิดขาย";
+                const leadItem = group.items[0];
+                const leadThumb = resolveMenuImageUrl(group.items.find((it) => it.imageUrl)?.imageUrl);
+                const leadCode = leadItem ? getProductDisplayCode(leadItem) : null;
                 return (
                   <div key={group.key} className={`menu-manager-card ${isSelected ? "is-selected" : ""} ${isInactive ? "is-inactive" : ""}`}>
                     <button type="button" className="menu-manager-card__main" onClick={() => handleMenuCardSelect(group)}>
                       <span className="menu-manager-card__top">
-                        <strong>{group.label}</strong>
+                        <span className="menu-manager-card__lead">
+                          {leadThumb ? (
+                            <img className="menu-manager-card__thumb" src={leadThumb} alt="" loading="lazy" />
+                          ) : leadCode ? (
+                            <span className="menu-manager-card__code">{leadCode}</span>
+                          ) : null}
+                          <strong>{group.label}</strong>
+                        </span>
                         <span className={`status-badge ${isInactive ? "status-badge--inactive" : "status-badge--active"}`}>{statusText}</span>
                       </span>
                       <small>{displayCategoryLabel(group.category)} · {branchTypeLabels[group.branchType]} · {group.items.length} ตัวเลือก</small>
@@ -1235,9 +1248,17 @@ export default function InventoryPage() {
                     <input className="input" type="number" value={productEditForm.cost} onChange={(e) => setProductEditForm({ ...productEditForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
                     <input className="input" value={productEditForm.sku} onChange={(e) => setProductEditForm({ ...productEditForm, sku: e.target.value })} placeholder="SKU" />
                     <input className="input" value={productEditForm.barcode} onChange={(e) => setProductEditForm({ ...productEditForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
-                    <input className="input" value={productEditForm.imageUrl} onChange={(e) => setProductEditForm({ ...productEditForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
                     <input className="input" value={productEditForm.unit} onChange={(e) => setProductEditForm({ ...productEditForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
                     <input className="input" type="number" value={productEditForm.taxRate} onChange={(e) => setProductEditForm({ ...productEditForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <ProductImageField
+                        value={productEditForm.imageUrl}
+                        onChange={(imageUrl) => setProductEditForm({ ...productEditForm, imageUrl })}
+                        fallbackCode={getProductDisplayCode({ sku: productEditForm.sku, barcode: productEditForm.barcode })}
+                        disabled={isSubmitting}
+                        onError={(message) => toast.error(message)}
+                      />
+                    </div>
                     <select
                       className="input"
                       value={mergeTargetCardKey}
@@ -1300,9 +1321,17 @@ export default function InventoryPage() {
               <input className="input" value={menuForm.optionLabel} onChange={(e) => setMenuForm({ ...menuForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
               <input className="input" value={menuForm.sku} onChange={(e) => setMenuForm({ ...menuForm, sku: e.target.value })} placeholder="SKU" />
               <input className="input" value={menuForm.barcode} onChange={(e) => setMenuForm({ ...menuForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
-              <input className="input" value={menuForm.imageUrl} onChange={(e) => setMenuForm({ ...menuForm, imageUrl: e.target.value })} placeholder="URL รูปสินค้า" />
               <input className="input" value={menuForm.unit} onChange={(e) => setMenuForm({ ...menuForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />
               <input className="input" type="number" value={menuForm.taxRate} onChange={(e) => setMenuForm({ ...menuForm, taxRate: e.target.value })} placeholder="ภาษี %" min="0" step="0.01" />
+              <div style={{ gridColumn: "1 / -1" }}>
+                <ProductImageField
+                  value={menuForm.imageUrl}
+                  onChange={(imageUrl) => setMenuForm({ ...menuForm, imageUrl })}
+                  fallbackCode={getProductDisplayCode({ sku: menuForm.sku, barcode: menuForm.barcode })}
+                  disabled={isSubmitting}
+                  onError={(message) => toast.error(message)}
+                />
+              </div>
               <select className="input" value={menuForm.branchType} onChange={(e) => setMenuForm({ ...menuForm, branchType: e.target.value as MenuItem["branchType"] })} style={{ display: "none" }}>
                 <option value="coffee">ร้านกาแฟ</option>
                 <option value="oil_service">ศูนย์บริการน้ำมัน</option>

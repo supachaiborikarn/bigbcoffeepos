@@ -14,7 +14,7 @@ if (!databaseUrl || databaseUrl.startsWith("file:") || databaseUrl.includes("pla
 
 import {
   getBranches, getCustomers, getCustomerInsights, addCustomer, updateCustomer,
-  getMenu, addMenuItem, setMenuGroupActive, updateMenuItem,
+  getMenu, getMenuItemImage, addMenuItem, setMenuGroupActive, updateMenuItem,
   getIngredients, addIngredient, updateIngredient,
   getInventoryItems, updateInventoryItem, adjustStock, getStockMovements, normalizeBarcode, assertBarcodeFree,
   getCentralWarehouses, ensureCentralWarehouse, getWarehouseInventory, adjustWarehouseStock,
@@ -136,6 +136,26 @@ async function readAuditRows(input: { limit?: number; action?: string; branchId?
 log("info", "db_mode", { mode: isProduction ? "production" : "development", provider: "postgresql_prisma" });
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+import { isSelfMenuImageUrl, parseMenuDataImage, serializeMenuItem, validateMenuImageInput } from "./lib/menuImage.js";
+app.get("/api/menu/:id/image", async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).end();
+  const row = await getMenuItemImage(id);
+  const parsed = parseMenuDataImage(row?.imageUrl);
+  if (!parsed) return res.status(404).end();
+  const etag = `"${parsed.version}"`;
+  res.setHeader("Content-Type", parsed.mime);
+  res.setHeader("ETag", etag);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader(
+    "Cache-Control",
+    req.query.v === parsed.version ? "public, max-age=31536000, immutable" : "public, max-age=300"
+  );
+  if (req.headers["if-none-match"] === etag) return res.status(304).end();
+  return res.send(parsed.buffer);
+});
 
 import { normalizeThaiTaxId } from "./lib/taxId.js";
 import { publicError } from "./lib/publicError.js";
@@ -420,6 +440,12 @@ app.post("/api/menu", requireRole("admin", "manager"), async (req: AuthRequest, 
   const requestedBranchType = parseBranchType(req.body?.branchType);
   const managerBranchType = req.user?.role === "admin" ? null : req.branchScope?.branchType;
   if (req.user?.role !== "admin" && (!managerBranchType || (requestedBranchType && requestedBranchType !== managerBranchType))) return res.status(403).json({ error: "เพิ่มเมนูได้เฉพาะประเภทร้านของสาขาคุณ" });
+  let imageUrl: string | undefined;
+  try {
+    imageUrl = validateMenuImageInput(req.body?.imageUrl) ?? undefined;
+  } catch (e) {
+    return res.status(400).json({ error: publicError(e) });
+  }
   const item = await addMenuItem({
     name,
     category,
@@ -427,7 +453,7 @@ app.post("/api/menu", requireRole("admin", "manager"), async (req: AuthRequest, 
     sku: req.body?.sku?.trim(),
     barcode: req.body?.barcode?.trim(),
     cost: parseMoney(req.body?.cost) ?? undefined,
-    imageUrl: req.body?.imageUrl?.trim(),
+    imageUrl,
     unit: req.body?.unit?.trim(),
     taxRate: taxRate ?? undefined,
     optionGroup: req.body?.optionGroup?.trim(),
@@ -435,7 +461,7 @@ app.post("/api/menu", requireRole("admin", "manager"), async (req: AuthRequest, 
     branchType: managerBranchType ?? requestedBranchType
   });
   audit("menu.created", req, { menuItemId: item.id, branchType: item.branchType });
-  return res.status(201).json({ item });
+  return res.status(201).json({ item: serializeMenuItem(item) });
 });
 app.put("/api/menu/:id", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
@@ -445,12 +471,29 @@ app.put("/api/menu/:id", requireRole("admin", "manager"), async (req: AuthReques
   if (req.user?.role !== "admin" && branchType && branchType !== req.branchScope?.branchType) return res.status(403).json({ error: "ย้ายเมนูไปประเภทร้านอื่นได้เฉพาะผู้ดูแลระบบ" });
   const cost = req.body?.cost === null || req.body?.cost === "" ? null : req.body?.cost !== undefined ? parseMoney(req.body.cost) ?? undefined : undefined;
   const taxRate = req.body?.taxRate === null || req.body?.taxRate === "" ? null : req.body?.taxRate !== undefined ? parseNonNegativeNumber(req.body.taxRate) ?? undefined : undefined;
+  let imageUrl: string | null | undefined;
+  if (req.body?.imageUrl === null) {
+    imageUrl = null;
+  } else if (req.body?.imageUrl !== undefined) {
+    const rawImage = String(req.body.imageUrl).trim();
+    if (!rawImage) {
+      imageUrl = null;
+    } else if (isSelfMenuImageUrl(id, rawImage)) {
+      imageUrl = undefined;
+    } else {
+      try {
+        imageUrl = validateMenuImageInput(rawImage);
+      } catch (e) {
+        return res.status(400).json({ error: publicError(e) });
+      }
+    }
+  }
   const payload = {
     name: req.body?.name?.trim(), category: req.body?.category?.trim(),
     basePrice: req.body?.basePrice !== undefined ? parseMoney(req.body.basePrice) ?? undefined : undefined,
     active: req.body?.active, sku: req.body?.sku?.trim(), barcode: req.body?.barcode?.trim(),
     cost,
-    imageUrl: req.body?.imageUrl === null ? null : req.body?.imageUrl?.trim(),
+    imageUrl,
     unit: req.body?.unit === null ? null : req.body?.unit?.trim(),
     taxRate,
     optionGroup: req.body?.optionGroup === null ? null : req.body?.optionGroup?.trim(),
@@ -466,7 +509,7 @@ app.delete("/api/menu/:id", requireRole("admin", "manager"), async (req: AuthReq
   const item = await updateMenuItem(id, { active: false });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
   audit("menu.deactivated", req, { menuItemId: id });
-  return res.json({ item });
+  return res.json({ item: serializeMenuItem(item) });
 });
 app.post("/api/menu/:id/restore", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const id = parseId(req.params.id);
@@ -475,7 +518,7 @@ app.post("/api/menu/:id/restore", requireRole("admin", "manager"), async (req: A
   const item = await updateMenuItem(id, { active: true });
   if (!item) return res.status(404).json({ error: "ไม่พบสินค้า" });
   audit("menu.restored", req, { menuItemId: id });
-  return res.json({ item });
+  return res.json({ item: serializeMenuItem(item) });
 });
 app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req: AuthRequest, res) => {
   const optionGroup = isStr(req.body?.optionGroup) ? req.body.optionGroup.trim() : "";
@@ -489,7 +532,7 @@ app.patch("/api/menu/groups/status", requireRole("admin", "manager"), async (req
   const items = await setMenuGroupActive({ optionGroup, category, branchType, active });
   if (!items.length) return res.status(404).json({ error: "ไม่พบการ์ดเมนู" });
   audit(active ? "menu.group.restored" : "menu.group.deactivated", req, { optionGroup, category, branchType, count: items.length });
-  return res.json({ items });
+  return res.json({ items: items.map(serializeMenuItem) });
 });
 
 /* ─── Ingredients & Inventory ─── */

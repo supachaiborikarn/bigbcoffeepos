@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { PauseCircle, Settings, ShoppingCart, X, Search, ScanBarcode, ArrowUpRight, CarFront, CheckCircle2 } from "lucide-react";
+import { PauseCircle, Settings, ShoppingCart, X, Search, ScanBarcode, ArrowUpRight, CarFront, CheckCircle2, KeyboardOff } from "lucide-react";
 import { createCustomer, getCustomers, getMenu, getProductUnits, getRecipes, getStoreSetting } from "../api";
 import type { Customer, DiscountRule, MenuItem, PaymentMethod, ProductUnit, StoreSetting, Order } from "../types";
 import { useAuth } from "../contexts/AuthContext";
@@ -16,9 +16,11 @@ import CartPanel from "../components/pos/CartPanel";
 import ModifierModal from "../components/pos/ModifierModal";
 import CupStockStrip, { useCupStock } from "../components/pos/CupStockStrip";
 import { businessProfile } from "../utils/business";
-import { drinkAddOns, shouldUseModifierModal } from "../utils/menuRules";
+import { drinkAddOns, isCupVariantMenuItem, shouldUseModifierModal } from "../utils/menuRules";
 import { displayCategoryLabel } from "../utils/categoryLabel";
-import { findExactProductCodeMatches, normalizeProductCode } from "../utils/productSearch";
+import { getCategoryTone } from "../utils/categoryTone";
+import { hideNativeKeyboard } from "../utils/nativePrinter";
+import { filterPosMenuProducts, findExactProductCodeMatches, normalizeProductCode } from "../utils/productSearch";
 
 const moneyFormatter = new Intl.NumberFormat("th-TH", {
   style: "currency",
@@ -107,12 +109,24 @@ export default function POSPage() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   // Keep a side cart on landscape tablets; narrower screens use the payment sheet.
   const isCompact = useMediaQuery("(max-width: 999px)");
+  const isCoarsePointer = useMediaQuery("(pointer: coarse)");
   const [showCartSheet, setShowCartSheet] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [modifierProduct, setModifierProduct] = useState<MenuItem | null>(null);
   const [recipeCount, setRecipeCount] = useState<number | null>(null);
   const [storeSetting, setStoreSetting] = useState<StoreSetting | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const dismissKeyboard = useCallback(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+      active.blur();
+    }
+    searchInputRef.current?.blur();
+    setSearchFocused(false);
+    hideNativeKeyboard();
+  }, []);
 
   const { activeBranch } = useBranch();
   const { activeShift, loaded: shiftLoaded } = useShift();
@@ -303,18 +317,66 @@ export default function POSPage() {
 
     const item = matchingItems[0] ?? namedItems[0];
     if (!item) {
-      if (!codesOnly) setScanFeedback({ tone: "error", message: `ไม่พบรหัสตรงตัว: ${code} — ลองเลือกสินค้าจากผลค้นหา`, code });
+      if (!codesOnly) {
+        const partialCount = filterPosMenuProducts(menu, {
+          search: code,
+          category,
+          branchType: activeBranch?.branchType,
+          isHiddenByDefault: isCupVariantMenuItem
+        }).length;
+        if (partialCount > 0) {
+          setScanFeedback({ tone: "idle", message: `พบ ${partialCount} รายการ — แตะสินค้าเพื่อเพิ่ม`, code });
+        } else {
+          setScanFeedback({ tone: "error", message: `ไม่พบรหัสตรงตัว: ${code} — ลองเลือกสินค้าจากผลค้นหา`, code });
+        }
+      }
       return false;
     }
     handleMenuItemClick(item);
     return true;
   };
 
+  const submitSearchQuery = (rawValue: string) => {
+    const code = normalizeProductCode(rawValue);
+    if (!code) {
+      dismissKeyboard();
+      return;
+    }
+    const found = processBarcodeScan(code, false);
+    if (found) {
+      setSearch("");
+      if (isCoarsePointer) dismissKeyboard();
+    } else {
+      // Partial search or non-exact keyword: dismiss the virtual keyboard so the
+      // filtered product cards underneath are immediately visible and tappable.
+      dismissKeyboard();
+    }
+  };
+
+  const handleSearchFormSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    submitSearchQuery(search);
+  };
+
   const handleScanKeyDown = (event: KeyboardEvent<HTMLInputElement>, inSearch = false) => {
     const tab = event.key === "Tab" && !event.shiftKey;
-    if (event.nativeEvent.isComposing || (event.key !== "Enter" && !tab)) return;
+    const isEnter = event.key === "Enter";
+    if (!isEnter && !tab) return;
+    // IME-safe check (covers standard isComposing and Safari/mobile VK_PROCESSKEY 229).
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     const code = normalizeProductCode(event.currentTarget.value);
-    if (!code) return;
+    if (!code) {
+      if (inSearch && isEnter) {
+        event.preventDefault();
+        dismissKeyboard();
+      }
+      return;
+    }
+    if (inSearch && isEnter) {
+      event.preventDefault();
+      submitSearchQuery(event.currentTarget.value);
+      return;
+    }
     const found = processBarcodeScan(code, inSearch && tab);
     if (inSearch && tab && !found) return;
     event.preventDefault();
@@ -490,6 +552,13 @@ export default function POSPage() {
 
 
   const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+  const cartQtyByMenuId = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const item of cart) {
+      map.set(item.menuItemId, (map.get(item.menuItemId) ?? 0) + item.qty);
+    }
+    return map;
+  }, [cart]);
 
   return (
     <main className="pos-layout studio-pos">
@@ -500,7 +569,7 @@ export default function POSPage() {
             <p>{profile.type === "coffee" ? "เลือกเมนู ปรับรสชาติ แล้วส่งต่อความอร่อย" : "เลือกสินค้าและบริการสำหรับรถคันนี้"}</p>
           </div>
           <div className="studio-heading-actions">
-            <button className="btn btn--ghost" onClick={() => holdCart()} disabled={!cart.length} title="พักบิล (F9)"><PauseCircle size={17} /><span>พักบิล</span></button>
+            <button type="button" className="btn btn--ghost" onClick={() => { dismissKeyboard(); holdCart(); }} disabled={!cart.length} title="พักบิล (F9)"><PauseCircle size={17} /><span>พักบิล</span></button>
             {canManageMenu && <Link to="/inventory?tab=products&manage=menu" className="studio-icon-button" aria-label="จัดการสินค้า"><Settings size={18} /></Link>}
           </div>
         </div>
@@ -510,22 +579,132 @@ export default function POSPage() {
           <CupStockStrip cups={cupStock} />
           <Link to="/orders">ดูรายการ <ArrowUpRight size={14} /></Link>
         </div>
-        {profile.type === "oil_service" && <div className="studio-service-note"><CarFront size={22} /><label htmlFor="service-note"><span>รายละเอียดรถ / งานบริการ</span><input id="service-note" value={orderNote} maxLength={300} onChange={(e) => setOrderNote(e.target.value)} placeholder="ทะเบียนรถ · เลขไมล์ · งานที่ลูกค้าแจ้ง" /></label></div>}
-        {lastOrder && <div className="studio-sale-success" role="status"><CheckCircle2 size={18} /><span>{lastOrder.id < 0 ? "บันทึกบิลออฟไลน์แล้ว" : `บันทึกบิล #${lastOrder.id} แล้ว`} · {formatMoney(lastOrder.total)}</span><Link className="btn btn--ghost" to="/orders">ดูบิล / พิมพ์ซ้ำ</Link><button aria-label="ปิดข้อความ" onClick={() => setLastOrder(null)}><X size={16} /></button></div>}
-        {heldBills.length > 0 && <div className="studio-held-bills" aria-label="บิลที่พักไว้">{heldBills.map((bill) => <div key={bill.id}><button onClick={() => restoreHeldBill(bill.id)}><PauseCircle size={15} />{bill.label} · {formatMoney(bill.total)}</button><button aria-label={`ลบ ${bill.label}`} onClick={() => removeHeldBill(bill.id)}><X size={14} /></button></div>)}</div>}
+        {profile.type === "oil_service" && (
+          <div className="studio-service-note">
+            <span className="studio-service-note__badge" aria-hidden="true"><CarFront size={20} /></span>
+            <label htmlFor="service-note">
+              <span>รายละเอียดรถ / งานบริการ</span>
+              <input
+                id="service-note"
+                value={orderNote}
+                maxLength={300}
+                enterKeyHint="done"
+                onChange={(e) => setOrderNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                    e.preventDefault();
+                    dismissKeyboard();
+                  }
+                }}
+                placeholder="ทะเบียนรถ · เลขไมล์ · งานที่ลูกค้าแจ้ง"
+              />
+            </label>
+            {orderNote && (
+              <button type="button" className="studio-search__clear" aria-label="ล้างรายละเอียดรถ" onClick={() => setOrderNote("")}>
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        )}
+        {lastOrder && <div className="studio-sale-success" role="status"><CheckCircle2 size={18} /><span>{lastOrder.id < 0 ? "บันทึกบิลออฟไลน์แล้ว" : `บันทึกบิล #${lastOrder.id} แล้ว`} · {formatMoney(lastOrder.total)}</span><Link className="btn btn--ghost" to="/orders">ดูบิล / พิมพ์ซ้ำ</Link><button type="button" aria-label="ปิดข้อความ" onClick={() => setLastOrder(null)}><X size={16} /></button></div>}
+        {heldBills.length > 0 && <div className="studio-held-bills" aria-label="บิลที่พักไว้">{heldBills.map((bill) => <div key={bill.id}><button type="button" onClick={() => restoreHeldBill(bill.id)}><PauseCircle size={15} />{bill.label} · {formatMoney(bill.total)}</button><button type="button" aria-label={`ลบ ${bill.label}`} onClick={() => removeHeldBill(bill.id)}><X size={14} /></button></div>)}</div>}
         <div className="studio-catalog-toolbar">
         <div className="studio-search-row">
-          <label className="studio-search"><Search size={20} /><input ref={searchInputRef} aria-label="ค้นหาสินค้า" placeholder={profile.type === "coffee" ? "ค้นหาชื่อสินค้า หรือรหัส เช่น C1, D2" : "ค้นหาชื่อสินค้า / รหัส เช่น C1, D2 / บาร์โค้ด"} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(event) => handleScanKeyDown(event, true)} /><kbd>F1</kbd></label>
+          <form className={`studio-search${searchFocused ? " is-focused" : ""}`} onSubmit={handleSearchFormSubmit} role="search">
+            <Search size={19} aria-hidden="true" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              aria-label="ค้นหาสินค้า"
+              enterKeyHint="search"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder={profile.type === "coffee" ? "ค้นหาชื่อสินค้า หรือรหัส เช่น C1, D2" : "ค้นหาชื่อสินค้า / รหัส เช่น C6, D2 / บาร์โค้ด"}
+              value={search}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(event) => handleScanKeyDown(event, true)}
+            />
+            {search && (
+              <button
+                type="button"
+                className="studio-search__clear"
+                aria-label="ล้างคำค้นหา"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setSearch("");
+                  setScanFeedback({ tone: "idle", message: "แตะสินค้าเพื่อเพิ่มรายการ" });
+                }}
+              >
+                <X size={16} />
+              </button>
+            )}
+            {(search.trim().length > 0 || (searchFocused && isCoarsePointer)) ? (
+              <button
+                type="submit"
+                className="studio-search__submit"
+                aria-label={search.trim() ? "ค้นหาและซ่อนคีย์บอร์ด" : "ซ่อนคีย์บอร์ด"}
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                {search.trim() ? "ค้นหา" : <><KeyboardOff size={15} /><span>ซ่อน</span></>}
+              </button>
+            ) : (
+              <kbd>F1</kbd>
+            )}
+          </form>
           <label className="studio-scanner"><ScanBarcode size={20} /><input aria-label="ยิงบาร์โค้ด" inputMode="none" placeholder="สแกนบาร์โค้ด" onKeyDown={(event) => handleScanKeyDown(event)} /></label>
         </div>
-        <div className="studio-categories" aria-label="หมวดสินค้า">{categories.map((item) => <button key={item} aria-pressed={category === item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{displayCategoryLabel(item)}<span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span></button>)}</div>
+        <div className="studio-categories" aria-label="หมวดสินค้า">
+          {categories.map((item) => {
+            const catTone = item === "ทั้งหมด" ? "all" : getCategoryTone(item, profile.type);
+            return (
+              <button
+                key={item}
+                type="button"
+                data-tone={catTone}
+                aria-pressed={category === item}
+                className={category === item ? "is-active" : ""}
+                onClick={() => {
+                  dismissKeyboard();
+                  setCategory(item);
+                }}
+              >
+                {item !== "ทั้งหมด" && <i className="studio-category-dot" aria-hidden="true" />}
+                {displayCategoryLabel(item)}
+                <span>{menu.filter((product) => product.active && (item === "ทั้งหมด" || product.category === item)).length}</span>
+              </button>
+            );
+          })}
+        </div>
         </div>
         <div className="studio-catalog-label"><strong>{category === "ทั้งหมด" ? "สินค้าทั้งหมด" : displayCategoryLabel(category)}</strong><span role="status" className={scanFeedback.tone === "error" ? "negative" : ""}>{scanFeedback.tone === "idle" ? "แตะสินค้าเพื่อเพิ่มรายการ" : scanFeedback.message}</span></div>
-        <div className="pos-products-scroll studio-products-scroll"><ProductGrid menu={menu} category={category} search={search} branchType={activeBranch?.branchType} onItemClick={handleMenuItemClick} status={menuState} onRetry={loadMenu} /></div>
+        <div
+          className="pos-products-scroll studio-products-scroll"
+          onTouchMove={() => {
+            if (searchFocused || document.activeElement instanceof HTMLInputElement) {
+              dismissKeyboard();
+            }
+          }}
+        >
+          <ProductGrid
+            menu={menu}
+            category={category}
+            search={search}
+            branchType={activeBranch?.branchType}
+            cartQtyByMenuId={cartQtyByMenuId}
+            onInteract={dismissKeyboard}
+            onItemClick={handleMenuItemClick}
+            status={menuState}
+            onRetry={loadMenu}
+          />
+        </div>
         {recipeCount === 0 && profile.type === "coffee" && <div className="studio-recipe-note">ยังไม่มีสูตรสำหรับตัดวัตถุดิบอัตโนมัติ</div>}
         {isCompact && (cart.length > 0
-          ? <button className="pos-cart-fab" onClick={() => setShowCartSheet(true)}><span className="pos-cart-fab__info"><ShoppingCart size={20} /><span>ตะกร้า {cartCount} รายการ</span></span><span className="pos-cart-fab__pay">{formatMoney(payableTotal)} · ชำระเงิน →</span></button>
-          : <button className="pos-cart-fab is-empty" onClick={() => setShowCartSheet(true)}><span className="pos-cart-fab__info"><ShoppingCart size={20} /><span>ตะกร้าว่าง</span></span><span className="pos-cart-fab__pay">แตะสินค้าเพื่อเพิ่ม</span></button>)}
+          ? <button type="button" className="pos-cart-fab" onClick={() => { dismissKeyboard(); setShowCartSheet(true); }}><span className="pos-cart-fab__info"><ShoppingCart size={20} /><span>ตะกร้า {cartCount} รายการ</span></span><span className="pos-cart-fab__pay">{formatMoney(payableTotal)} · ชำระเงิน →</span></button>
+          : <button type="button" className="pos-cart-fab is-empty" onClick={() => { dismissKeyboard(); setShowCartSheet(true); }}><span className="pos-cart-fab__info"><ShoppingCart size={20} /><span>ตะกร้าว่าง</span></span><span className="pos-cart-fab__pay">แตะสินค้าเพื่อเพิ่ม →</span></button>)}
       </section>
 
       {/* Right Panel: Cart & Payment.

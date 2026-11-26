@@ -34,7 +34,17 @@ interface WebkitMessageHandler {
 interface NativeBridgeWindow extends Window {
   webkit?: { messageHandlers?: { starPrint?: WebkitMessageHandler } };
   // Generic fallback hook (e.g. an Android wrapper or a custom shell).
-  BBPOSNative?: { printReceipt?: (json: string) => void };
+  BBPOSNative?: { printReceipt?: (json: string) => void; hideKeyboard?: () => void };
+}
+
+/** Ask the Android WebView wrapper (if present) to collapse the soft keyboard immediately. */
+export function hideNativeKeyboard(): void {
+  if (typeof window === "undefined") return;
+  try {
+    (window as NativeBridgeWindow).BBPOSNative?.hideKeyboard?.();
+  } catch {
+    // Non-native browsers ignore this safely.
+  }
 }
 
 /** True when running inside a native wrapper that can drive the Star printer. */

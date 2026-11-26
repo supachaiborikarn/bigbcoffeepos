@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, RotateCcw, X } from "lucide-react";
 import { approveCatalogChange, cancelCatalogChange, getCatalogChanges, rejectCatalogChange, type CatalogChangeRequest, type CatalogChangeStatus } from "../../api";
 import { useToast } from "../../contexts/ToastContext";
+import { resolveMenuImageUrl } from "../../utils/menuImage";
 import "./CatalogChangeRequests.css";
 
 const KIND_LABEL: Record<CatalogChangeRequest["kind"], string> = {
@@ -16,8 +17,19 @@ const STATUS_LABEL: Record<CatalogChangeStatus, string> = {
 };
 const BRANCH_TYPE_LABEL: Record<string, string> = { coffee: "ร้านกาแฟ", oil_service: "ศูนย์บริการน้ำมัน" };
 
-function formatValue(field: string, value: unknown) {
+function renderValue(field: string, value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
+  if (field === "imageUrl" && typeof value === "string") {
+    const src = resolveMenuImageUrl(value);
+    if (src) {
+      return (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <img src={src} alt="รูปสินค้า" style={{ width: 42, height: 42, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />
+          <span>{value.startsWith("data:image/") || value.includes("/menu/") ? "รูปภาพที่อัปโหลด" : value}</span>
+        </span>
+      );
+    }
+  }
   if (typeof value === "boolean") return value ? "เปิด" : "ปิด";
   if (typeof value === "number") return value.toLocaleString("th-TH", { maximumFractionDigits: 4 });
   if (field === "branchType") return BRANCH_TYPE_LABEL[String(value)] ?? String(value);
@@ -110,8 +122,8 @@ export default function CatalogChangeRequests({ isAdmin, onResolved }: { isAdmin
                 {request.changes.map((change) => (
                   <tr key={change.field}>
                     <th scope="row">{change.label}</th>
-                    <td className="ccr__before">{formatValue(change.field, change.before)}</td>
-                    <td className="ccr__after">{formatValue(change.field, change.after)}</td>
+                    <td className="ccr__before">{renderValue(change.field, change.before)}</td>
+                    <td className="ccr__after">{renderValue(change.field, change.after)}</td>
                   </tr>
                 ))}
               </tbody>

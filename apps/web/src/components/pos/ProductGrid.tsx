@@ -18,12 +18,14 @@ interface ProductGridProps {
   search: string;
   branchType?: string;
   onItemClick: (item: MenuItem) => void;
+  cartQtyByMenuId?: Map<number, number>;
+  onInteract?: () => void;
   /** menu fetch state: show loading / retry rather than "ไม่พบสินค้า" before the menu arrives */
   status?: "loading" | "ready" | "error";
   onRetry?: () => void;
 }
 
-export default function ProductGrid({ menu, category, search, branchType, onItemClick, status = "ready", onRetry }: ProductGridProps) {
+export default function ProductGrid({ menu, category, search, branchType, onItemClick, cartQtyByMenuId, onInteract, status = "ready", onRetry }: ProductGridProps) {
   const [variantGroup, setVariantGroup] = useState<{ label: string; variants: MenuItem[] } | null>(null);
   // Defer the search term so heavy grid filtering/re-rendering never blocks the
   // search/scan input — keeps characters appearing instantly on iPad.
@@ -80,18 +82,25 @@ export default function ProductGrid({ menu, category, search, branchType, onItem
         </div>
       ) : (
         <>
-          {renderedTiles.map((tile) => (
-            <ProductCard
-              key={tile.key}
-              item={tile.primary}
-              variantCount={tile.variants.length}
-              priceLabel={tile.priceLabel}
-              onClick={() => {
-                if (tile.variants.length > 1) setVariantGroup({ label: tile.label, variants: tile.variants });
-                else onItemClick(tile.variants[0]);
-              }}
-            />
-          ))}
+          {renderedTiles.map((tile) => {
+            const tileCartQty = cartQtyByMenuId
+              ? tile.variants.reduce((sum, variant) => sum + (cartQtyByMenuId.get(variant.id) ?? 0), 0)
+              : 0;
+            return (
+              <ProductCard
+                key={tile.key}
+                item={tile.primary}
+                variantCount={tile.variants.length}
+                priceLabel={tile.priceLabel}
+                cartQty={tileCartQty}
+                onClick={() => {
+                  onInteract?.();
+                  if (tile.variants.length > 1) setVariantGroup({ label: tile.label, variants: tile.variants });
+                  else onItemClick(tile.variants[0]);
+                }}
+              />
+            );
+          })}
           {hiddenCount > 0 && (
             <div className="empty" style={{ gridColumn: "1 / -1", padding: "16px" }}>
               แสดง {renderedTiles.length} จาก {productTiles.length} กลุ่มสินค้า ใช้ช่องค้นหาหรือเลือกหมวดเพื่อกรองสินค้าเพิ่มเติม

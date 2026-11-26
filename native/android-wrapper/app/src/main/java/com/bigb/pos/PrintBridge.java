@@ -72,6 +72,13 @@ public final class PrintBridge {
         main.post(activity::reloadPos);
     }
 
+    /** Dismisses the Android IME immediately after search/selection on touch tablets. */
+    @JavascriptInterface
+    public void hideKeyboard() {
+        if (!activity.isPosPage()) return;
+        main.post(activity::hideKeyboard);
+    }
+
     @JavascriptInterface
     public String appInfo() {
         try {

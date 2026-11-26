@@ -2,6 +2,7 @@ import prisma from "../prisma.js";
 import { getMenuItem, updateMenuItem } from "./menu.js";
 import { assertBarcodeFree, getRecipe, setRecipe, updateIngredient, updateInventoryItem } from "./inventory.js";
 import { getCupStockSettings, setCupStockSettings } from "./cupStockSettings.js";
+import { isSelfMenuImageUrl, publicMenuImageUrl, serializeMenuItem } from "../lib/menuImage.js";
 
 // Managers may add catalog records directly, but a change to an existing one
 // (menu details, recipes, ingredient details, cup stock) waits for an admin.
@@ -83,9 +84,25 @@ async function describe(kind: CatalogChangeKind, targetId: number, branchId: num
   if (kind === "menu.update") {
     const item = await getMenuItem(targetId);
     if (!item) throw new CatalogChangeError("ไม่พบสินค้า", 404);
-    const changes = fieldChanges(item as unknown as Record<string, unknown>, payload, MENU_LABELS);
-    const changed = Object.fromEntries(changes.map((change) => [change.field, payload[change.field]]));
-    return { targetName: item.name, changes, needsApproval: changes.some((change) => !MENU_DIRECT_FIELDS.has(change.field)), payload: changed };
+    const normalizedPayload = payload && typeof payload === "object" ? { ...payload } : {};
+    if (normalizedPayload.imageUrl !== undefined && isSelfMenuImageUrl(targetId, normalizedPayload.imageUrl)) {
+      delete normalizedPayload.imageUrl;
+    }
+    const rawChanges = fieldChanges(item as unknown as Record<string, unknown>, normalizedPayload, MENU_LABELS);
+    const changes = rawChanges.map((change) =>
+      change.field === "imageUrl"
+        ? {
+            ...change,
+            before: typeof change.before === "string" ? publicMenuImageUrl(targetId, change.before) : change.before
+          }
+        : change
+    );
+    const changed = Object.fromEntries(rawChanges.map((change) => [change.field, normalizedPayload[change.field]]));
+    // Filling a missing product photo counts as adding data (like linking a first barcode).
+    const needsApproval = rawChanges.some((change) =>
+      !MENU_DIRECT_FIELDS.has(change.field) && !(change.field === "imageUrl" && blank(change.before))
+    );
+    return { targetName: item.name, changes, needsApproval, payload: changed };
   }
   if (kind === "ingredient.update" || kind === "inventory.update") {
     const ingredient = await prisma.ingredient.findUnique({ where: { id: targetId } });
@@ -134,9 +151,13 @@ async function describe(kind: CatalogChangeKind, targetId: number, branchId: num
 
 async function apply(kind: CatalogChangeKind, targetId: number, branchId: number | null, payload: any): Promise<Record<string, unknown>> {
   if (kind === "menu.update") {
-    const item = await updateMenuItem(targetId, payload);
+    const safePayload = payload && typeof payload === "object" ? { ...payload } : {};
+    if (safePayload.imageUrl !== undefined && isSelfMenuImageUrl(targetId, safePayload.imageUrl)) {
+      delete safePayload.imageUrl;
+    }
+    const item = await updateMenuItem(targetId, safePayload);
     if (!item) throw new CatalogChangeError("ไม่พบสินค้า", 404);
-    return { item };
+    return { item: serializeMenuItem(item) };
   }
   if (kind === "ingredient.update") {
     await assertBarcodeFree(payload.barcode, targetId);

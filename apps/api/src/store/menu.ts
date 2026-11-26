@@ -1,11 +1,70 @@
+import { Prisma } from "@prisma/client";
 import prisma from "../prisma.js";
 
 export async function getMenu(branchType?: string) {
-  return prisma.menuItem.findMany({ where: branchType ? { branchType } : {}, orderBy: { id: "asc" } });
+  const [items, imageRows] = await Promise.all([
+    prisma.menuItem.findMany({
+      where: branchType ? { branchType } : {},
+      select: {
+        id: true,
+        sku: true,
+        barcode: true,
+        name: true,
+        category: true,
+        basePrice: true,
+        cost: true,
+        unit: true,
+        taxRate: true,
+        source: true,
+        sourceId: true,
+        optionGroup: true,
+        optionLabel: true,
+        metadata: true,
+        branchType: true,
+        active: true,
+        createdAt: true
+      },
+      orderBy: { id: "asc" }
+    }),
+    branchType
+      ? prisma.$queryRaw<{ id: number; imageUrl: string | null }[]>(Prisma.sql`
+          SELECT id,
+                 CASE
+                   WHEN image_url LIKE 'data:image/%'
+                     THEN '/menu/' || id || '/image?v=' || left(md5(image_url), 10)
+                   ELSE image_url
+                 END AS "imageUrl"
+          FROM menu_items
+          WHERE branch_type = ${branchType}
+            AND image_url IS NOT NULL
+            AND image_url <> ''
+        `)
+      : prisma.$queryRaw<{ id: number; imageUrl: string | null }[]>(Prisma.sql`
+          SELECT id,
+                 CASE
+                   WHEN image_url LIKE 'data:image/%'
+                     THEN '/menu/' || id || '/image?v=' || left(md5(image_url), 10)
+                   ELSE image_url
+                 END AS "imageUrl"
+          FROM menu_items
+          WHERE image_url IS NOT NULL
+            AND image_url <> ''
+        `)
+  ]);
+
+  const imageById = new Map(imageRows.map((row) => [row.id, row.imageUrl]));
+  return items.map((item) => ({
+    ...item,
+    imageUrl: imageById.get(item.id) ?? null
+  }));
 }
 
 export async function getMenuItem(id: number) {
   return prisma.menuItem.findUnique({ where: { id } });
+}
+
+export async function getMenuItemImage(id: number) {
+  return prisma.menuItem.findUnique({ where: { id }, select: { id: true, imageUrl: true } });
 }
 
 export async function setMenuGroupActive(input: {

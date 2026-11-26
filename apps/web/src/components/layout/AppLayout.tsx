@@ -55,7 +55,7 @@ export default function AppLayout() {
   if ((ADMIN_ROUTES.includes(location.pathname) && user.role !== "admin") || (MANAGER_ROUTES.includes(location.pathname) && user.role === "cashier") || (location.pathname === "/queue" && !profile.queue)) return <Navigate to="/pos" replace />;
   const isPOSPage = location.pathname.startsWith("/pos");
 
-  return <div className="app-layout studio-app" data-business={profile.type} data-appearance={appearance}>
+  return <div className={`app-layout studio-app${!sidebarCollapsed && !drawerNav ? " studio-app--sidebar-open" : ""}`} data-business={profile.type} data-appearance={appearance}>
     <div className="app-layout__body">
       <Sidebar collapsed={sidebarCollapsed && !drawerNav} onToggle={toggleSidebar} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
       <div className="app-layout__main">

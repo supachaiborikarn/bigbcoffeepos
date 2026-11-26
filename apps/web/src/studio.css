@@ -738,6 +738,8 @@ span.rcv-costopt { cursor:default; color:var(--text-muted); font-size:12px; }
 .app__grid>* { min-width:0; }
 /* A toast must never sit on a dialog's confirm buttons: while a dialog or the cart sheet is open it moves to the top. */
 :root:has([role="dialog"],.modal-backdrop,.stk-backdrop,.pos-cart-sheet.is-open) .toast-container { top:max(12px,env(safe-area-inset-top)); bottom:auto; }
+/* same, set from ToastContext for WebViews without :has() */
+.toast-container.toast-container--top { top:max(12px,env(safe-area-inset-top)); bottom:auto; }
 .inventory-toolbar>select.input,.report-filters>.input { width:auto; flex:0 1 190px; }
 .inventory-add-form { padding:0 24px 24px; }
 /* a flex:1 search box with a zero basis collapses to nothing when its row is full */
@@ -861,8 +863,8 @@ span.rcv-costopt { cursor:default; color:var(--text-muted); font-size:12px; }
 }
 /* An expanded sidebar leaves less room: the time-clock / cash buttons go icon-only. */
 @media(max-width:1280px) {
-  .studio-app:has(.sidebar:not(.sidebar--collapsed)) .topbar-cash-btn span { display:none; }
-  .studio-app:has(.sidebar:not(.sidebar--collapsed)) .topbar-cash-btn { padding:0 11px; }
+  .studio-app--sidebar-open .topbar-cash-btn span { display:none; }
+  .studio-app.studio-app--sidebar-open .topbar-cash-btn { padding:0 11px; }
 }
 
 /* Cart: the payment area reads more clearly (solid buttons, larger amounts). */
@@ -971,8 +973,8 @@ span.rcv-costopt { cursor:default; color:var(--text-muted); font-size:12px; }
 }
 /* Very short screens (Huawei Browser in landscape ≈ 440px): drop the stand-in pictures of products without a photo. */
 @media (pointer:coarse) and (max-height:560px) {
-  .studio-product-grid .menu-card__thumb:has(.studio-product-placeholder) { display:none; }
-  .studio-product-grid .menu-card__thumb:has(.studio-product-placeholder)+.studio-product-category { margin-top:12px; }
+  .studio-product-grid .menu-card__thumb--stand-in { display:none; }
+  .studio-product-grid .menu-card__thumb--stand-in+.studio-product-category { margin-top:12px; }
 }
 
 /* Small portrait: the top bar stays on one row (it wrapped to two rows below 769px). */

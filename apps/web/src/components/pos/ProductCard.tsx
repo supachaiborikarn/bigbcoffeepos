@@ -77,7 +77,7 @@ function ProductCard({ item, onClick, variantCount = 0, priceLabel }: Props) {
       onClick={() => onClick(item)}
       aria-label={`เพิ่ม ${item.name}`}
     >
-      <div className={`menu-card__thumb${hasPhoto ? "" : " menu-card__thumb--text"}`}>
+      <div className={`menu-card__thumb${hasPhoto ? "" : " menu-card__thumb--text"}${!hasPhoto && illustration === null ? " menu-card__thumb--stand-in" : ""}`}>
         {hasPhoto ? (
           <img src={item.imageUrl ?? ""} alt="" loading="lazy" onError={() => setImgError(true)} />
         ) : illustration !== null ? (

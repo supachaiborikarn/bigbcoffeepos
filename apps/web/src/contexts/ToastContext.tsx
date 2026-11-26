@@ -55,7 +55,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       {/* Toast container */}
       {toasts.length > 0 && (
-        <div className="toast-container" aria-live="polite" aria-atomic="false">
+        <div className={`toast-container${typeof document !== "undefined" && document.querySelector('[role="dialog"],.modal-backdrop,.stk-backdrop,.pos-cart-sheet.is-open') ? " toast-container--top" : ""}`} aria-live="polite" aria-atomic="false">
           {toasts.map((t) => (
             <div key={t.id} className={`toast toast--${t.type}`} role="status">
               <span className="toast__icon" aria-hidden="true">

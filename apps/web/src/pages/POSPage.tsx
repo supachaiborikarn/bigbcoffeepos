@@ -420,6 +420,7 @@ export default function POSPage() {
         cashReceived: order.cashReceived ?? cashReceived,
         changeAmount: order.changeAmount ?? changeAmt,
         storeSetting,
+        branchType: activeBranch?.branchType,
         // บ่อถ่ายน้ำมัน (oil_service): พิมพ์ 3 ใบแยก — สำนักงาน / ร้าน / ลูกค้า
         copies: activeBranch?.branchType === "oil_service" ? 3 : 1,
         copyLabels: activeBranch?.branchType === "oil_service"

@@ -106,6 +106,7 @@ export default function OrdersPage() {
       total: order.total,
       pointsUsed: order.loyaltyPointsUsed,
       paymentMethod: order.paymentMethod,
+      branchType: activeBranch?.branchType,
       cashReceived: order.cashReceived ?? undefined,
       changeAmount: order.changeAmount ?? undefined,
       storeSetting,

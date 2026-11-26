@@ -15,7 +15,7 @@ export default function PrinterDeviceSettings() {
     if (!activeBranch) return;
     const now=new Date().toISOString();
     try {
-      const ok=printReceipt({order:{id:0,branchId:activeBranch.id,createdAt:now} as Order,cart:[{id:'test',menuItemId:0,name:'ทดสอบภาษาไทย · กาแฟ น้ำมันเครื่อง ๑๒๓',category:'',basePrice:65,qty:1,modifiers:[]}],discountRules:[],subtotal:65,discountAmount:0,total:65,pointsUsed:0,paymentMethod:'CASH',cashReceived:100,changeAmount:35,storeSetting:{shopName:activeBranch.name,receiptHeader:'ทดสอบเครื่องพิมพ์',receiptFooter:'ไม่มีการขายหรือรับเงินจริง',vatMode:'NONE'} as any},activeBranch.name);
+      const ok=printReceipt({branchType:activeBranch.branchType,order:{id:0,branchId:activeBranch.id,createdAt:now} as Order,cart:[{id:'test',menuItemId:0,name:'ทดสอบภาษาไทย · กาแฟ น้ำมันเครื่อง ๑๒๓',category:'',basePrice:65,qty:1,modifiers:[]}],discountRules:[],subtotal:65,discountAmount:0,total:65,pointsUsed:0,paymentMethod:'CASH',cashReceived:100,changeAmount:35,storeSetting:{shopName:activeBranch.name,receiptHeader:'ทดสอบเครื่องพิมพ์',receiptFooter:'ไม่มีการขายหรือรับเงินจริง',vatMode:'NONE'} as any},activeBranch.name);
       if (!ok) toast.error('เปิดหน้าทดสอบพิมพ์ไม่ได้');
     } catch { toast.error('เปิดหน้าทดสอบพิมพ์ไม่ได้'); }
   };

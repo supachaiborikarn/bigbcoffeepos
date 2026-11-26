@@ -2,7 +2,7 @@ import { modifierLabel } from "../utils/modifierLabel";
 import { useState } from "react";
 import type { CartItem, DiscountRule, Order, StoreSetting } from "../types";
 import Numpad from "./ui/Numpad";
-import { logoUrl } from "./BrandLogo";
+import { receiptLogoFor } from "./BrandLogo";
 import { getPaperWidth, PAPER_SPECS } from "../utils/printerSettings";
 import { submitPrintJob } from "../utils/printJob";
 import { useDialogFocus } from "../utils/useDialogFocus";
@@ -21,6 +21,8 @@ export type ReceiptData = {
   storeSetting?: StoreSetting | null;
   copies?: number;
   copyLabels?: string[];
+  /** The branch's business ("coffee" / "oil_service"): picks the logo printed on the slip. */
+  branchType?: string;
 };
 
 function formatMoney(v: number) {
@@ -114,7 +116,7 @@ function renderSlip(data: ReceiptData, branchName: string, copyLabel?: string) {
   const footer = escapeHtml(ss?.receiptFooter?.trim() || "ขอบคุณที่ใช้บริการ");
 
   return `
-    <img class="r-logo" src="${escapeHtml(typeof window === 'undefined' ? logoUrl : new URL(logoUrl, window.location.origin).href)}" alt="" />
+    <img class="r-logo" src="${escapeHtml(typeof window === 'undefined' ? receiptLogoFor(data.branchType) : new URL(receiptLogoFor(data.branchType), window.location.origin).href)}" alt="" />
     <div class="r-shop">${shopNameHtml}</div>
     ${showBranchLine ? `<div class="r-sub">${escapeHtml(branchName)}</div>` : ""}
     ${sub.map((s) => `<div class="r-sub">${s}</div>`).join("")}
@@ -369,7 +371,7 @@ export function buildReceiptHtml(data: ReceiptData, branchName: string, widthMm:
     .r-slip { width: ${device ? "100%" : `${spec.printableMm}mm`}; margin: 0 auto; padding: 4mm ${spec.gutterMm}mm 7mm; overflow-wrap: anywhere; }
     .r-item-top > span:last-child, .r-row > span:last-child { white-space: nowrap; padding-left: 2mm; }
     .r-slip--break { page-break-after: always; }
-    .r-logo { display: block; width: 18mm; height: auto; margin: 0 auto 1mm; image-rendering: auto; }
+    .r-logo { display: block; width: auto; height: auto; max-width: 34mm; max-height: 18mm; margin: 0 auto 1mm; image-rendering: auto; } /* square Big B logo → 18 mm; wide Havoline logo → 34 mm */
     .r-shop { text-align: center; font-size: 18px; font-weight: 700; line-height: 1.45; margin-bottom: 0.6mm; }
     .r-sub { text-align: center; font-size: 11px; line-height: 1.5; }
     .r-nobreak { white-space: nowrap; }

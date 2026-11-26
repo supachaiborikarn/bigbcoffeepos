@@ -50,6 +50,14 @@ function escapeHtml(value: unknown) {
 function renderSlip(data: ReceiptData, branchName: string, copyLabel?: string) {
   const ss = data.storeSetting ?? null;
   const shopName = escapeHtml(ss?.shopName?.trim() || "Big B Coffee");
+  // A shop named after its branch (e.g. "บ่อถ่ายน้ำมัน วัชรเกียรติ") would otherwise print the
+  // same name three times: as the shop, as the branch line, and again in the footer.
+  const sameName = (a: string, b: string) => a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
+  const showBranchLine = !sameName(ss?.shopName?.trim() || "Big B Coffee", branchName);
+  // Wrap the big shop name only between words ("บ่อถ่ายน้ำมัน / วัชรเกียรติ", not "วัชร / เกียรติ").
+  const shopNameHtml = (ss?.shopName?.trim() || "Big B Coffee").split(/\s+/)
+    .map((word) => word.length <= 16 ? `<span class="r-nobreak">${escapeHtml(word)}</span>` : escapeHtml(word))
+    .join(" ");
   const hasTaxId = Boolean(ss?.taxId?.trim());
   const now = new Date(data.order.createdAt);
   const dateStr = now.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Bangkok" });
@@ -107,8 +115,8 @@ function renderSlip(data: ReceiptData, branchName: string, copyLabel?: string) {
 
   return `
     <img class="r-logo" src="${escapeHtml(typeof window === 'undefined' ? logoUrl : new URL(logoUrl, window.location.origin).href)}" alt="" />
-    <div class="r-shop">${shopName}</div>
-    <div class="r-sub">${escapeHtml(branchName)}</div>
+    <div class="r-shop">${shopNameHtml}</div>
+    ${showBranchLine ? `<div class="r-sub">${escapeHtml(branchName)}</div>` : ""}
     ${sub.map((s) => `<div class="r-sub">${s}</div>`).join("")}
     <div class="r-title">${title}</div>
     ${copyHtml}
@@ -121,7 +129,7 @@ function renderSlip(data: ReceiptData, branchName: string, copyLabel?: string) {
     ${vatHtml}
     <div class="r-div"></div>
     ${payHtml}
-    <div class="r-foot">${footer}<br/>${shopName}</div>
+    <div class="r-foot">${footer}${showBranchLine ? `<br/>${shopName}` : ""}</div>
   `;
 }
 
@@ -329,6 +337,12 @@ export function buildEpsonReceiptEscPos(data: ReceiptData, branchName: string, w
   return buildThermalReceipt(data, branchName, widthMm === 80 ? 40 : 30, true, firstCopy);
 }
 
+// Receipts printed as a picture by the native apps. Android's built-in Thai font is the
+// loop-less style, which at receipt size makes บ look like ป and ว like ร, so the Android app
+// loads Sarabun (looped). iPad keeps its own Thonburi, so its slips look the same as before.
+const RECEIPT_DEVICE_FONT_URL = "https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap";
+const RECEIPT_DEVICE_FONTS = "'Thonburi', 'Sarabun', 'IBM Plex Sans Thai', sans-serif";
+
 export function buildReceiptHtml(data: ReceiptData, branchName: string, widthMm: 58 | 80 = getPaperWidth(), device = false) {
   const spec = PAPER_SPECS[widthMm];
   const copies = Math.max(1, Math.floor(data.copies ?? 1));
@@ -346,17 +360,19 @@ export function buildReceiptHtml(data: ReceiptData, branchName: string, widthMm:
   <meta name="format-detection" content="telephone=no" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Receipt #${data.order.id}</title>
+  ${device ? `<link rel="stylesheet" href="${RECEIPT_DEVICE_FONT_URL}" />` : ""}
   <style>
     @page { margin: 0; size: ${widthMm}mm auto; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 0; ${device ? "" : `width: ${widthMm}mm;`} font-family: 'IBM Plex Sans Thai', 'Sarabun', 'Prompt', sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { margin: 0; padding: 0; ${device ? "" : `width: ${widthMm}mm;`} font-family: ${device ? RECEIPT_DEVICE_FONTS : "'IBM Plex Sans Thai', 'Sarabun', 'Prompt', sans-serif"}; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     /* Printable width (not the roll width), centred, with an inner gutter so edge text isn't clipped. */
     .r-slip { width: ${device ? "100%" : `${spec.printableMm}mm`}; margin: 0 auto; padding: 4mm ${spec.gutterMm}mm 7mm; overflow-wrap: anywhere; }
     .r-item-top > span:last-child, .r-row > span:last-child { white-space: nowrap; padding-left: 2mm; }
     .r-slip--break { page-break-after: always; }
     .r-logo { display: block; width: 18mm; height: auto; margin: 0 auto 1mm; image-rendering: auto; }
-    .r-shop { text-align: center; font-size: 18px; font-weight: 700; line-height: 1.2; }
-    .r-sub { text-align: center; font-size: 11px; line-height: 1.35; }
+    .r-shop { text-align: center; font-size: 18px; font-weight: 700; line-height: 1.45; margin-bottom: 0.6mm; }
+    .r-sub { text-align: center; font-size: 11px; line-height: 1.5; }
+    .r-nobreak { white-space: nowrap; }
     .r-title { text-align: center; font-size: 12px; font-weight: 700; margin-top: 2mm; }
     .r-copy { text-align: center; font-size: 13px; font-weight: 800; border: 1.5px solid #000; border-radius: 4px; padding: 1mm 0; margin: 1.5mm 0 0; letter-spacing: 1px; }
     .r-meta { display: flex; justify-content: space-between; font-size: 11px; margin-top: 1.5mm; }

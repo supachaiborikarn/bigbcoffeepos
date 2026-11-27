@@ -53,6 +53,7 @@ const recipeStatusLabels: Record<RecipeCoverageStatus, string> = {
 };
 
 const PRODUCT_PAGE_SIZE = 50;
+const NEW_MENU_CATEGORY = "__new_menu_category__";
 
 const recipePresets = [
   {
@@ -264,6 +265,7 @@ export default function InventoryPage() {
   const [recipeCoverage, setRecipeCoverage] = useState<RecipeCoverageReport | null>(null);
 
   const [menuForm, setMenuForm] = useState<ProductFormState>(() => createBlankProductForm(defaultBranchType));
+  const [creatingMenuCategory, setCreatingMenuCategory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [productSearch, setProductSearch] = useState("");
@@ -309,10 +311,11 @@ export default function InventoryPage() {
     return menu.filter((item) => !branchType || item.branchType === branchType);
   }, [activeBranch?.branchType, menu]);
 
-  const categoryOptions = useMemo(() => {
+  const branchCategories = useMemo(() => {
     const categories = new Set(branchProducts.map((item) => item.category).filter(Boolean));
-    return ["ทั้งหมด", ...Array.from(categories).sort((a, b) => a.localeCompare(b, "th"))];
+    return [...categories].sort((a, b) => a.localeCompare(b, "th"));
   }, [branchProducts]);
+  const showNewMenuCategory = creatingMenuCategory || (menuForm.category !== "" && !branchCategories.includes(menuForm.category));
 
   const menuCardGroups = useMemo(() => groupMenuCards(branchProducts), [branchProducts]);
 
@@ -560,6 +563,7 @@ export default function InventoryPage() {
         }));
       }
       setMenuForm(createBlankProductForm(defaultBranchType));
+      setCreatingMenuCategory(false);
       setVariantSourceCardKey(null);
       setSelectedMenuCardKey(getMenuCardKey(created));
       await refreshInventory();
@@ -591,12 +595,14 @@ export default function InventoryPage() {
   const handlePrepareNewMenu = () => {
     setVariantSourceCardKey(null);
     setMenuForm(createBlankProductForm(defaultBranchType));
+    setCreatingMenuCategory(false);
     setMergeTargetCardKey("");
   };
 
   const handlePrepareNewVariant = (group: MenuCardGroup) => {
     setMergeTargetCardKey("");
     setVariantSourceCardKey(group.key);
+    setCreatingMenuCategory(false);
     setMenuForm({
       ...createBlankProductForm(group.branchType),
       name: "",
@@ -1054,7 +1060,8 @@ export default function InventoryPage() {
                 <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="ค้นหาการ์ด / ตัวเลือก / SKU / บาร์โค้ด" />
               </label>
               <select className="input" value={productCategory} onChange={(e) => setProductCategory(e.target.value)}>
-                {categoryOptions.map((category) => <option key={category} value={category}>{displayCategoryLabel(category)}</option>)}
+                <option value="ทั้งหมด">ทั้งหมด</option>
+                {branchCategories.map((category) => <option key={category} value={category}>{displayCategoryLabel(category)}</option>)}
               </select>
               <select className="input" value={productStatus} onChange={(e) => setProductStatus(e.target.value as typeof productStatus)}>
                 <option value="all">ทุกสถานะ</option>
@@ -1315,11 +1322,28 @@ export default function InventoryPage() {
             <div className="inventory-add-form">
             <div className="inventory-form-grid inventory-form-grid--compact">
               <input className="input" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} placeholder="ชื่อสินค้า (เช่น ลาเต้เย็น)" />
-              <input className="input" value={menuForm.category} onChange={(e) => setMenuForm({ ...menuForm, category: e.target.value })} placeholder="หมวดหมู่ (เช่น กาแฟ)" />
+              <div className="inventory-category-field">
+                <select className="input" aria-label="หมวดหมู่เมนู" required value={showNewMenuCategory ? NEW_MENU_CATEGORY : menuForm.category} onChange={(e) => {
+                  const value = e.target.value;
+                  const creating = value === NEW_MENU_CATEGORY;
+                  setCreatingMenuCategory(creating);
+                  setMenuForm((current) => ({ ...current, category: creating ? "" : value }));
+                }}>
+                  <option value="" disabled>เลือกหมวดหมู่</option>
+                  {branchCategories.map((category) => <option key={category} value={category}>{displayCategoryLabel(category)}</option>)}
+                  <option value={NEW_MENU_CATEGORY}>เพิ่มหมวดหมู่ใหม่</option>
+                </select>
+                {showNewMenuCategory && <input className="input" aria-label="ชื่อหมวดหมู่ใหม่" placeholder="ชื่อหมวดหมู่ใหม่" required value={menuForm.category}
+                  onChange={(e) => setMenuForm({ ...menuForm, category: e.target.value })} />}
+              </div>
               <input className="input" type="number" value={menuForm.basePrice} onChange={(e) => setMenuForm({ ...menuForm, basePrice: e.target.value })} placeholder="ราคาขาย" min="0" step="0.01" />
               <input className="input" type="number" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} placeholder="ต้นทุนอ้างอิง" min="0" step="0.01" />
               <input className="input" value={menuForm.optionGroup} onChange={(e) => setMenuForm({ ...menuForm, optionGroup: e.target.value })} placeholder="ชื่อการ์ดเมนู" />
-              <input className="input" value={menuForm.optionLabel} onChange={(e) => setMenuForm({ ...menuForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือก เช่น เย็น / ปั่น" />
+              <input className="input" aria-label="ชื่อตัวเลือกบนการ์ด" aria-describedby={menuForm.branchType === "coffee" ? "menu-option-help" : undefined}
+                value={menuForm.optionLabel} onChange={(e) => setMenuForm({ ...menuForm, optionLabel: e.target.value })} placeholder="ชื่อตัวเลือกบนการ์ด เช่น เย็น" />
+              {menuForm.branchType === "coffee" && <p className="inventory-option-help muted" id="menu-option-help">
+                เพิ่มร้อน เย็น หรือปั่นทีละรายการโดยใช้ชื่อการ์ดเดียวกัน ส่วนแก้วจะตัดตามที่เลือกตอนขายและการตั้งค่าของสาขา
+              </p>}
               <input className="input" value={menuForm.sku} onChange={(e) => setMenuForm({ ...menuForm, sku: e.target.value })} placeholder="SKU" />
               <input className="input" value={menuForm.barcode} onChange={(e) => setMenuForm({ ...menuForm, barcode: e.target.value })} placeholder="บาร์โค้ด" />
               <input className="input" value={menuForm.unit} onChange={(e) => setMenuForm({ ...menuForm, unit: e.target.value })} placeholder="หน่วยขาย เช่น แก้ว / ชิ้น" />

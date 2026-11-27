@@ -746,6 +746,10 @@ span.rcv-costopt { cursor:default; color:var(--text-muted); font-size:12px; }
 .activity-tools>.studio-search { flex:1 1 220px; }
 /* placeholders are the only labels here, so a column must be wide enough to show them */
 .inventory-add-form>.inventory-form-grid { grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
+.inventory-category-field { display:grid; align-content:start; gap:8px; min-width:0; }
+.inventory-category-field .input { min-height:44px; }
+.inventory-category-field select.input { appearance:auto; background-image:none; }
+.inventory-option-help { grid-column:1 / -1; margin:0; font-size:13px; }
 .inventory-toolbar { margin-bottom:12px; }
 @media(max-width:1024px) {
   .inventory-layout { align-items:stretch; }

@@ -1230,15 +1230,19 @@ app.post("/api/purchases", requireRole("admin", "manager"), requireBranchAccess(
   if (branchId === null) return res.status(400).json({ error: "กรุณาเลือกสาขา" });
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "กรุณาเพิ่มรายการสินค้า" });
   if (items.length > 100 || items.some((item: unknown) => !item || typeof item !== "object")) return res.status(400).json({ error: "รายการรับของเข้าไม่ถูกต้อง" });
-  const normalizedItems = items.map((item: Record<string, unknown>) => ({
-    ingredientId: parseId(item.ingredientId as number | string | undefined),
-    qty: Number(item.qty),
-    unitCost: parseMoney(item.unitCost),
-    description: isStr(item.description) ? item.description.trim() : "",
-    lotNo: isStr(item.lotNo) ? item.lotNo.trim() : "",
-    expiryDate: isStr(item.expiryDate) && item.expiryDate ? item.expiryDate : null,
-    packSize: item.packSize === undefined ? 1 : Number(item.packSize)
-  }));
+  const normalizedItems = items.map((item: Record<string, unknown>) => {
+    const unitCost = Number(item.unitCost);
+    return {
+      ingredientId: parseId(item.ingredientId as number | string | undefined),
+      qty: Number(item.qty),
+      // A VAT-inclusive line total divided by the stock quantity can need extra decimals.
+      unitCost: item.preserveUnitCostPrecision === true && Number.isFinite(unitCost) && unitCost >= 0 ? unitCost : parseMoney(item.unitCost),
+      description: isStr(item.description) ? item.description.trim() : "",
+      lotNo: isStr(item.lotNo) ? item.lotNo.trim() : "",
+      expiryDate: isStr(item.expiryDate) && item.expiryDate ? item.expiryDate : null,
+      packSize: item.packSize === undefined ? 1 : Number(item.packSize)
+    };
+  });
   if (normalizedItems.some((item) => item.ingredientId === null || !Number.isFinite(item.qty) || item.qty <= 0 || item.unitCost === null)) {
     return res.status(400).json({ error: "รายการรับของเข้าไม่ถูกต้อง" });
   }

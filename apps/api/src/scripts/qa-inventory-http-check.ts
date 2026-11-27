@@ -194,6 +194,17 @@ async function main() {
   assert.equal(await balance(shopId, milk.id), 15);
   pass("HTTP attachment access is authenticated and branch-scoped; full 2 MiB JSON image passes, oversized/invalid images and malformed receipt items fail without changing stock");
 
+  const vatUnitCost = 107.15 / 2400;
+  const vatReceipt = (await expected("/purchases", managerToken, 201, "POST", {
+    branchId: shopId, supplier: orderPayload.supplier, invoiceNumber: "VAT-001", requestKey: key(),
+    items: [{ ingredientId: milk.id, qty: 2400, unitCost: vatUnitCost, preserveUnitCostPrecision: true }]
+  })).purchase;
+  assert.equal(Math.round(vatReceipt.items[0].unitCost * 2400 * 100), 10715);
+  assert.equal(vatReceipt.items[0].lineTotal, 107.15);
+  assert.equal(vatReceipt.totalCost, 107.15);
+  assert.equal(await balance(shopId, milk.id), 2415);
+  pass("VAT-inclusive receipt retains the exact line and document totals");
+
   await prisma.stockMovement.createMany({ data: [
     { branchId: shopId, ingredientId: milk.id, qty: -1, beforeQty: 10, afterQty: 9, actorUserId: manager.id, reason: "SALE-901", createdAt: new Date("2026-10-12T16:59:59.999Z") },
     { branchId: shopId, ingredientId: milk.id, qty: -1, beforeQty: 9, afterQty: 8, actorUserId: manager.id, reason: "SALE-902", createdAt: new Date("2026-10-12T17:00:00.000Z") }

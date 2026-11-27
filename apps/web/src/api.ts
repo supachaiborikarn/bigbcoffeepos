@@ -1036,7 +1036,7 @@ export async function createPurchase(input: {
   branchId: number;
   supplier: string;
   note: string;
-  items: PurchaseOrderItem[];
+  items: Array<PurchaseOrderItem & { preserveUnitCostPrecision?: boolean }>;
   /** Admin only (server enforces): set each item's cost to this receipt's price. */
   updateCost?: boolean;
   mode?: "RECEIPT" | "ORDER";

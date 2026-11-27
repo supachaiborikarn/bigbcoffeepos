@@ -19,11 +19,12 @@ import "./PurchaseReceiving.css";
 
 // totalInput keeps the line total exactly as typed (e.g. "10.") while it drives unitCost
 // qty and unitCost are per purchase unit; packSize = stock units in one purchase unit
-type Line = { ingredientId: number; qty: string; unitCost: string; totalInput?: string; packSize?: string; expiryDate?: string; lotNo?: string; showLot?: boolean };
+type Line = { ingredientId: number; qty: string; unitCost: string; totalInput?: string; savedStockCost?: number; packSize?: string; expiryDate?: string; lotNo?: string; showLot?: boolean };
 
 /** Units that are counted, so 2.5 of them is a typo (mirrors the server). */
 const COUNTED_UNITS = new Set(["ชิ้น", "ขวด", "กระป๋อง", "แพ็ค", "ใบ", "ซอง", "กล่อง", "ลัง", "ถุง", "แก้ว", "อัน", "ห่อ", "หลอด", "ฝา", "ถ้วย", "ลูก", "ตัว", "แผ่น", "ม้วน", "คู่"]);
-type Draft = { supplier: string; invoiceNumber: string; documentDate: string; receivedAt: string; dueDate: string; note: string; mode: "RECEIPT" | "ORDER"; attachmentDataUrl: string; attachmentName: string; requestKey: string; updateCost: boolean; lines: Line[] };
+const PURCHASE_VAT_RATE = 7;
+type Draft = { supplier: string; invoiceNumber: string; documentDate: string; receivedAt: string; dueDate: string; note: string; mode: "RECEIPT" | "ORDER"; attachmentDataUrl: string; attachmentName: string; requestKey: string; updateCost: boolean; addVat: boolean; lines: Line[] };
 type ReceiptDraft = { requestKey: string; receivedAt: string; updateCost: boolean; quantities: Record<number, string> };
 type CodeHit = { ingredientId: number; step: number; productName: string };
 
@@ -37,7 +38,7 @@ const looksLikeCode = (q: string) => /^[A-Za-z]*\d{5,}$/.test(q);
 const draftKey = (branchId: number) => `bbpos.purchase.draft:${branchId}`;
 const receiptDraftKey = (branchId: number) => `bbpos.purchase.receive.draft:${branchId}`;
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const emptyDraft = (): Draft => ({ supplier: "", invoiceNumber: "", documentDate: today(), receivedAt: today(), dueDate: "", note: "", mode: "RECEIPT", attachmentDataUrl: "", attachmentName: "", requestKey: crypto.randomUUID(), updateCost: true, lines: [] });
+const emptyDraft = (): Draft => ({ supplier: "", invoiceNumber: "", documentDate: today(), receivedAt: today(), dueDate: "", note: "", mode: "RECEIPT", attachmentDataUrl: "", attachmentName: "", requestKey: crypto.randomUUID(), updateCost: true, addVat: false, lines: [] });
 const hasDraft = (draft: Draft) => Boolean(draft.lines.length || draft.supplier.trim() || draft.invoiceNumber.trim() || draft.note.trim() || draft.attachmentDataUrl);
 const validImage = (value: unknown): value is string => typeof value === "string" && value.length <= 2_800_000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
 const statusLabels: Record<PurchaseOrder["status"], string> = { PENDING: "รออนุมัติ", APPROVED: "อนุมัติแล้ว · รอรับของ", PARTIAL: "รับแล้วบางส่วน", RECEIVED: "รับครบแล้ว", VOID: "ยกเลิก" };
@@ -49,6 +50,7 @@ function loadDraft(branchId: number): Draft {
     const textFields = ["supplier", "invoiceNumber", "documentDate", "receivedAt", "dueDate", "note", "attachmentName", "requestKey"] as const;
     for (const field of textFields) if (typeof raw[field] === "string" && (field !== "requestKey" || raw[field])) base[field] = raw[field];
     if (typeof raw.updateCost === "boolean") base.updateCost = raw.updateCost;
+    base.addVat = raw.addVat === true;
     if (raw.mode === "ORDER") base.mode = "ORDER";
     if (validImage(raw.attachmentDataUrl)) base.attachmentDataUrl = raw.attachmentDataUrl;
     if (Array.isArray(raw.lines)) {
@@ -56,6 +58,7 @@ function loadDraft(branchId: number): Draft {
       for (const line of raw.lines.slice(0, 200)) {
         if (!line || !Number.isInteger(line.ingredientId) || line.ingredientId <= 0 || seen.has(line.ingredientId) || typeof line.qty !== "string" || typeof line.unitCost !== "string") continue;
         const clean: Line = { ingredientId: line.ingredientId, qty: line.qty, unitCost: line.unitCost, showLot: Boolean(line.showLot) };
+        if (Number.isFinite(line.savedStockCost) && line.savedStockCost >= 0) clean.savedStockCost = line.savedStockCost;
         for (const field of ["totalInput", "packSize", "expiryDate", "lotNo"] as const) if (typeof line[field] === "string") clean[field] = line[field];
         seen.add(clean.ingredientId);
         base.lines.push(clean);
@@ -309,19 +312,32 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
     } catch (err) { toast.error((err as Error).message); }
   }
 
+  const addVat = draft.mode === "RECEIPT" && draft.addVat;
+  let subtotal = 0;
+  let subtotalSatang = 0;
+  let grossSatang = 0;
   const rows = draft.lines.map((line) => {
     const qty = num(line.qty);
     const cost = num(line.unitCost);
     const pack = line.packSize === undefined || line.packSize === "" ? 1 : num(line.packSize);
-    const total = Number.isFinite(qty) && Number.isFinite(cost) ? qty * cost : NaN;
     const ingredient = ingredientById.get(line.ingredientId);
     const stockQty = qty > 0 && pack > 0 ? round(qty * pack, 4) : NaN;
-    const stockCost = cost >= 0 && pack > 0 ? round(cost / pack, 4) : NaN;
+    const total = line.savedStockCost === undefined ? qty * cost : stockQty * line.savedStockCost;
+    let stockCost = line.savedStockCost ?? (cost >= 0 && pack > 0 ? round(cost / pack, 4) : NaN);
+    const billLineTotal = line.totalInput === undefined ? total : num(line.totalInput);
+    if (addVat && Number.isFinite(stockQty) && stockQty > 0 && Number.isFinite(billLineTotal) && billLineTotal >= 0) {
+      const previousGrossSatang = grossSatang;
+      subtotal += billLineTotal;
+      subtotalSatang = Math.round((subtotal + Number.EPSILON * subtotal) * 100);
+      grossSatang = subtotalSatang + Math.round(subtotalSatang * PURCHASE_VAT_RATE / 100);
+      // Allocate the rounded bill total across lines without rounding the cost per stock unit.
+      stockCost = (grossSatang - previousGrossSatang) / 100 / stockQty;
+    }
     const fraction = Boolean(ingredient && COUNTED_UNITS.has(ingredient.unit.trim()) && Number.isFinite(stockQty) && Math.abs(stockQty - Math.round(stockQty)) > 1e-9);
     const valid = Boolean(ingredient) && Number.isFinite(qty) && qty > 0 && Number.isFinite(cost) && cost >= 0 && Number.isFinite(pack) && pack > 0 && Number.isFinite(stockQty) && Number.isFinite(stockCost) && !fraction;
     return { line, ingredient, qty, cost, pack, total, stockQty, stockCost, fraction, valid };
   });
-  const grandTotal = rows.reduce((sum, r) => sum + (Number.isFinite(r.total) ? r.total : 0), 0);
+  const grandTotal = addVat ? grossSatang / 100 : rows.reduce((sum, r) => sum + (Number.isFinite(r.total) ? r.total : 0), 0);
   const invalidCount = rows.filter((r) => !r.valid).length;
   const canSubmit = rows.length > 0 && invalidCount === 0 && !busy && !readingImage && !loadingItems && !loadError;
   // lines whose price differs from the item's current shared cost (฿0 lines never change it)
@@ -377,7 +393,7 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
     const supplier = draft.supplier.trim() || "ไม่ระบุผู้ขาย";
     const isOrder = draft.mode === "ORDER";
     const costLine = !isOrder && willUpdateCost ? `\nและอัปเดตทุนแบบถัวเฉลี่ยกับราคาบิลนี้ ${costDiffs.length} รายการ` : "";
-    if (!window.confirm(`${isOrder ? "ส่งใบสั่งซื้อรออนุมัติ" : "รับสินค้าเข้าสต็อก"} ${rows.length} รายการ รวม ${money(grandTotal)}\nจาก ${supplier}?${costLine}${isOrder ? "\nสต็อกจะเพิ่มเมื่อรับของจริง" : ""}`)) return;
+    if (!window.confirm(`${isOrder ? "ส่งใบสั่งซื้อรออนุมัติ" : "รับสินค้าเข้าสต็อก"} ${rows.length} รายการ รวม ${money(grandTotal)}${addVat ? " (รวม VAT แล้ว)" : ""}\nจาก ${supplier}?${costLine}${isOrder ? "\nสต็อกจะเพิ่มเมื่อรับของจริง" : ""}`)) return;
     setBusy(true);
     try {
       const po = await createPurchase({
@@ -396,6 +412,7 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
           ingredientId: r.line.ingredientId,
           qty: r.stockQty,
           unitCost: r.stockCost,
+          preserveUnitCostPrecision: addVat || r.line.savedStockCost !== undefined ? true : undefined,
           description: r.pack !== 1 ? `${fmt(r.qty)} × ${fmt(r.pack)} ${r.ingredient?.unit ?? ""}`.trim() : "",
           packSize: r.pack,
           expiryDate: r.line.expiryDate || null,
@@ -408,7 +425,7 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
       saveDraft(branchId, nextDraft);
       setDraft(nextDraft);
       const changed = po.costChanges?.length ?? 0;
-      toast.success(`${isOrder ? "ส่งใบสั่งซื้อรออนุมัติแล้ว" : "รับสินค้าเข้าสต็อกแล้ว"} ${rows.length} รายการ · ${money(grandTotal)}${changed ? ` · อัปเดตทุน ${changed} รายการ` : ""}`);
+      toast.success(`${isOrder ? "ส่งใบสั่งซื้อรออนุมัติแล้ว" : "รับสินค้าเข้าสต็อกแล้ว"} ${rows.length} รายการ · ${money(po.totalCost)}${changed ? ` · อัปเดตทุน ${changed} รายการ` : ""}`);
       if (changed) void loadIngredients().catch((error: unknown) => { if (mountedRef.current) toast.error(error instanceof Error ? error.message : "โหลดต้นทุนล่าสุดไม่สำเร็จ"); });
       await refreshAfterSave();
       scanRef.current?.focus();
@@ -436,7 +453,16 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
           attachmentDataUrl: validImage(attachment?.attachmentDataUrl) ? attachment.attachmentDataUrl : "",
           attachmentName: attachment?.attachmentName || po.attachmentName || "",
           note: po.note,
-          lines: (po.items ?? []).filter((i) => i.ingredientId).map((i) => ({ ingredientId: i.ingredientId, qty: String(round(i.qty / (i.packSize || 1), 4)), unitCost: String(round(i.unitCost * (i.packSize || 1), 4)), packSize: String(i.packSize || 1), expiryDate: i.expiryDate?.slice(0, 10) || "", lotNo: i.lotNo || "", showLot: Boolean(i.expiryDate || i.lotNo) }))
+          lines: (po.items ?? []).filter((i) => i.ingredientId).map((i) => ({
+            ingredientId: i.ingredientId,
+            qty: String(round(i.qty / (i.packSize || 1), 8)),
+            unitCost: String(round(i.unitCost * (i.packSize || 1), 4)),
+            savedStockCost: round(i.unitCost, 2) === i.unitCost ? undefined : i.unitCost,
+            packSize: String(i.packSize || 1),
+            expiryDate: i.expiryDate?.slice(0, 10) || "",
+            lotNo: i.lotNo || "",
+            showLot: Boolean(i.expiryDate || i.lotNo)
+          }))
         });
         toast.success(`ยกเลิกใบรับ #${po.id} แล้ว · แก้รายการด้านบนแล้วกดรับเข้าใหม่`);
       } else toast.success(`ยกเลิกเอกสาร #${po.id} แล้ว`);
@@ -566,7 +592,7 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
 
     <div className="rcv-table" role="table" aria-label="รายการรับเข้า">
       <div className="rcv-row rcv-row--head" role="row">
-        <span role="columnheader">สินค้า</span><span role="columnheader">จำนวน</span><span role="columnheader">ทุน/หน่วยที่ซื้อ</span><span role="columnheader">รวม</span><span role="columnheader" aria-label="ลบ" />
+        <span role="columnheader">สินค้า</span><span role="columnheader">จำนวน</span><span role="columnheader">ทุน/หน่วยที่ซื้อ</span><span role="columnheader">{addVat ? "รวมก่อน VAT" : "รวม"}</span><span role="columnheader" aria-label="ลบ" />
       </div>
       {rows.map(({ line, ingredient, qty, total, pack, stockQty, stockCost, fraction }) => {
         const stock = stockById.get(line.ingredientId)?.stockQty ?? 0;
@@ -591,25 +617,24 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
               onChange={(e) => {
                 // keep the cost per stock unit; the price per pack scales with the pack size
                 const nextPack = num(e.target.value);
-                const cost = num(line.unitCost);
-                patch({ packSize: e.target.value, totalInput: undefined, ...(nextPack > 0 && pack > 0 && Number.isFinite(cost) ? { unitCost: String(round(cost / pack * nextPack, 4)) } : {}) });
+                const cost = line.savedStockCost ?? num(line.unitCost) / pack;
+                patch({ packSize: e.target.value, totalInput: undefined, ...(nextPack > 0 && pack > 0 && Number.isFinite(cost) ? { unitCost: String(round(cost * nextPack, 4)) } : {}) });
               }} /> {unit} ต่อหน่วยซื้อ</label>
             {pack !== 1 && stockQty > 0 && <small>= {fmt(stockQty)} {unit}</small>}
           </span>
           <span role="cell" className="rcv-num" data-label="ทุน/หน่วย">
             <input className="input" type="number" inputMode="decimal" min="0" step="any" value={line.unitCost} placeholder="0.00"
               aria-label={`ต้นทุนต่อหน่วย ${ingredient?.name}`}
-              onChange={(e) => setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, unitCost: e.target.value, totalInput: undefined } : l))} />
-            {pack !== 1 && stockCost >= 0 && <small>= {money(stockCost)}/{unit}</small>}
+              onChange={(e) => patch({ unitCost: e.target.value, totalInput: undefined, savedStockCost: undefined })} />
+            {(addVat || pack !== 1) && stockCost >= 0 && <small>{addVat ? "รวม VAT" : "="} {money(stockCost)}/{unit}</small>}
             {costChanged && <small className={stockCost > oldCost ? "negative" : "positive"}>ทุนเดิม {money(oldCost)}/{unit}</small>}
           </span>
-          <span role="cell" className="rcv-num" data-label="รวม">
+          <span role="cell" className="rcv-num" data-label={addVat ? "รวมก่อน VAT" : "รวม"}>
             {/* typing the bill's line total back-fills the unit cost */}
             <input className="input" type="number" inputMode="decimal" min="0" step="any" placeholder="0.00"
               value={line.totalInput ?? (Number.isFinite(total) ? String(round(total, 2)) : "")} disabled={!(qty > 0)}
               aria-label={`ยอดรวมบรรทัด ${ingredient?.name}`}
-              onBlur={() => setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, totalInput: undefined } : l))}
-              onChange={(e) => { const raw = e.target.value; const t = num(raw); setLines((ls) => ls.map((l) => l.ingredientId === line.ingredientId ? { ...l, totalInput: raw, unitCost: Number.isFinite(t) && qty > 0 ? String(round(t / qty, 4)) : "" } : l)); }} />
+              onChange={(e) => { const raw = e.target.value; const t = num(raw); patch({ totalInput: raw, savedStockCost: undefined, unitCost: Number.isFinite(t) && qty > 0 ? String(round(t / qty, 4)) : "" }); }} />
           </span>
           <span role="cell"><button type="button" className="studio-icon-button" aria-label={`เอา ${ingredient?.name} ออก`} onClick={() => setLines((ls) => ls.filter((l) => l.ingredientId !== line.ingredientId))}><Trash2 size={16} /></button></span>
           {line.showLot && <span role="cell" className="rcv-lot">
@@ -624,9 +649,14 @@ function BranchPurchaseReceiving({ branchId, branchType, inventory, menu, purcha
 
     <div className="rcv-bar">
       <div>
-        <strong>{rows.length} รายการ · {money(grandTotal)}</strong>
+        <strong>{rows.length} รายการ · {addVat && "ยอดสุทธิ "}{money(grandTotal)}</strong>
+        {addVat && <span>ก่อน VAT {money(subtotalSatang / 100)} · VAT {PURCHASE_VAT_RATE}% {money((grossSatang - subtotalSatang) / 100)}</span>}
         <span>{invalidCount ? `แก้จำนวน/ต้นทุนให้ถูกต้องอีก ${invalidCount} รายการ` : rows.length ? draft.mode === "ORDER" ? "พร้อมส่งอนุมัติ · สต็อกเพิ่มเมื่อรับของ" : "พร้อมรับเข้าสต็อก" : "ร่างบิลจะถูกจำไว้ในเครื่องนี้"}</span>
       </div>
+      {draft.mode === "RECEIPT" && <label className="rcv-vatopt">
+        <input type="checkbox" checked={draft.addVat} onChange={(e) => setDraft((current) => ({ ...current, addVat: e.target.checked }))} />
+        บวก VAT {PURCHASE_VAT_RATE}%
+      </label>}
       {draft.mode === "RECEIPT" && costDiffs.length > 0 && (isAdmin
         ? <label className="rcv-costopt"><input type="checkbox" checked={draft.updateCost} onChange={(e) => setDraft((current) => ({ ...current, updateCost: e.target.checked }))} /> อัปเดตทุนแบบถัวเฉลี่ย (ของเดิมในสต็อก + บิลนี้) {costDiffs.length} รายการ</label>
         : <span className="rcv-costopt">ราคาต่างจากทุนเดิม {costDiffs.length} รายการ · ทุนกลางแก้ได้โดยผู้ดูแลระบบ</span>)}

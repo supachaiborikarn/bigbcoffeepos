@@ -6,6 +6,14 @@ export type PrinterMode = 'browser' | 'passprnt' | 'native' | 'rawbt' | 'epson';
 export function isIOSDevice() {
   return typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 }
+/**
+ * Epson TM Print Assistant is a phone/tablet app (Android, iOS). On a Mac or PC its
+ * tmprintassistant:// link opens nothing, so there the Epson is reached through the
+ * computer's own print dialog instead.
+ */
+export function canUseEpsonApp(): boolean {
+  return isAndroidDevice() || isIOSDevice();
+}
 export function getPrinterMode(): PrinterMode {
   if (isNativePrintAvailable()) return 'native';
   let saved: string | null = null;
@@ -14,7 +22,8 @@ export function getPrinterMode(): PrinterMode {
     saved = localStorage.getItem('bbpos.print.mode');
     legacyRawbt = localStorage.getItem('bbpos.print.rawbt');
   } catch { /* defaults */ }
-  if (saved === 'epson') return 'epson';
+  // A computer left on the Epson app option printed nothing at all; use the print dialog.
+  if (saved === 'epson') return canUseEpsonApp() ? 'epson' : 'browser';
   if (saved === 'browser') return 'browser';
   if (saved === 'passprnt' && isIOSDevice()) return 'passprnt';
   if (isAndroidDevice()) {

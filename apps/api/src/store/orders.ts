@@ -2,6 +2,7 @@ import prisma from "../prisma.js";
 import { getCustomer } from "./customers.js";
 import { getCupStockRequirements, getCupStockRequirementsByOption } from "./cupStockSettings.js";
 import { getStoreSetting } from "./settings.js";
+import { getBranchPackagedStockRequirements } from "./branchPackagedStock.js";
 import { log } from "../logger.js";
 import { getShiftSalesTotals } from "./shiftTotals.js";
 import { isIntegrationConfigured } from "./integrations.js";
@@ -977,6 +978,14 @@ export async function createOrder(input: {
     }));
     for (const recipe of recipes) {
       addRequiredStock(requiredStock, recipe.ingredientId, recipe.qty * (qtyByMenuItemId.get(recipe.menuItemId) ?? 0));
+    }
+    // Apply branch-specific packaged stock only when booking a new paid sale.
+    // Refunds restore captured SALE movements, not today's fallback mapping.
+    const branchPackagedStock = getBranchPackagedStockRequirements(
+      input.branchId, branch.branchType, qtyByMenuItemId, new Set(recipes.map(recipe => recipe.menuItemId))
+    );
+    for (const requirement of branchPackagedStock) {
+      addRequiredStock(requiredStock, requirement.ingredientId, requirement.qty);
     }
     await measureCheckoutStep("modifierStock", () => addModifierStockRequirementsForItems(tx, flexibleStock, orderItems, input.branchId));
     strictStockItems = requiredStock.size;
